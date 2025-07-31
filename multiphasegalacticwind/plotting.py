@@ -95,7 +95,9 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     
     # Panel 1: Velocity
     ax1.loglog(solution.r, solution.v, 'k-', lw=1.5, label=r'$v_{\rm wind}$')
-    ax1.loglog(solution.r, solution.v_cl, 'k--', lw=1, label=r'$v_{\rm clouds}$')
+    if show_clouds:
+        for i in range(solution.model.N_cloud_species):
+            ax1.loglog(solution.r, solution.v_cl[i], color=cloud_colors[i], lw=1)
     if show_hot_only:
         ax1.loglog(solution.r_hot, solution.v_hot, '-', color='grey', lw=1, 
                    label=r'$v_{\rm hot,\,only}$')
@@ -118,10 +120,10 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     # Cloud mass flux
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
-            Mdot_cl_i = 4 * np.pi * solution.sol.t**2 * solution.rho * solution.v_cl * 1e5 * \
+            Mdot_cl_i = 4 * np.pi * solution.sol.t**2 * solution.rho * solution.v_cl[i] * 1e5 * \
                         solution.M_clouds[i] / solution.M_cloud_tot / (solution.model.SFR)
             # Mask where clouds don't exist
-            Mdot_cl_i = np.ma.masked_where(solution.M_clouds[i] < 1.1*solution.model.M_cloud0[i], 
+            Mdot_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, 
                                            Mdot_cl_i)
             ax2.loglog(solution.r, Mdot_cl_i, '-', color=cloud_colors[i], lw=0.8)
     
@@ -133,9 +135,8 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     # Panel 3: Cloud masses
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
-            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < 1.1*solution.model.M_cloud0[i],
-                                       solution.M_clouds[i])
-            ax3.loglog(solution.r, M_cl_i/1e3, '-', color=cloud_colors[i], lw=0.8)
+            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, solution.M_clouds[i])
+            ax3.loglog(solution.r, solution.M_clouds[i], '-', color=cloud_colors[i], lw=0.8)
         
         # Add cloud mass colorbar
         cax = inset_axes(ax3, width="50%", height="5%", loc='lower left',

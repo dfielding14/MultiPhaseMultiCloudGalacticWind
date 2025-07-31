@@ -6,7 +6,8 @@ moments, which are useful for comparing model predictions with observations.
 """
 
 import numpy as np
-from .core_physics import mp, mu_mol, kpc, Omwind
+from .constants import mp, kpc
+from .config import get_default_config
 
 
 def calculate_cloud_density(solution, cloud_index=None, 
@@ -51,6 +52,7 @@ def calculate_cloud_density(solution, cloud_index=None,
     
     # Calculate cloud density
     # Number conservation: Ndot = Omega * r^2 * v * n
+    Omwind = solution.model.config.Omwind
     cloud_density = (Ndot_cloud * injection_profile * M_cloud / 
                     (Omwind * r**2 * v_cloud))
     
@@ -105,7 +107,9 @@ def calculate_velocity_distribution(solution, cloud_index=None,
     cloud_density_use = cloud_density[mask]
     
     # Convert to number density
-    n_cloud = cloud_density_use / (mu_mol * mp)
+    # Get mu from model config
+    mu = solution.model.config.mu
+    n_cloud = cloud_density_use / (mu * mp)
     
     # Get cloud velocity
     v_cloud = solution.sol.y[3 + solution.model.N_cloud_species, mask]  # cm/s
@@ -225,7 +229,9 @@ def calculate_column_density_distribution(solution, cloud_index=None,
     cloud_density_use = cloud_density[mask]
     
     # Convert to number density
-    n_cloud = cloud_density_use / (mu_mol * mp)
+    # Get mu from model config
+    mu = solution.model.config.mu
+    n_cloud = cloud_density_use / (mu * mp)
     
     # Get cloud velocity
     v_cloud = solution.sol.y[3 + solution.model.N_cloud_species, mask] / 1e5  # km/s

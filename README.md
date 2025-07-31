@@ -4,193 +4,254 @@ A fast Python package for simulating multiphase galactic winds with embedded clo
 
 Based on: **"The Structure of Multiphase Galactic Winds"** by Drummond B. Fielding & Greg L. Bryan (*Astrophysical Journal*, 2024)
 
-## Overview
+## Features
 
-This code simulates the steady-state evolution of multiphase galactic winds consisting of a hot, volume-filling phase and cold, embedded clouds. The model accounts for bidirectional mass, momentum, and energy exchange between phases mediated by turbulent radiative mixing layers (TRMLs), providing a physically realistic treatment of galactic wind structure and evolution.
-
-## Physical Model
-
-### Hot Phase Evolution
-
-The hot, volume-filling wind component evolves according to:
-
-**Mass Conservation:**
-```
-∂/∂r(r² ρ v) = ρ̇
-```
-
-**Momentum Conservation:**
-```
-∂/∂r(r² ρ v²) + ∂P/∂r = -ρ v_c²/r + ṗ
-```
-
-**Energy Conservation:**
-```
-∂/∂r[r² ρ v (½v² + γ/(γ-1) P/ρ - ½v_esc²)] = ε̇ - L
-```
-
-where:
-- `ρ`, `v`, `P` are hot phase density, velocity, and pressure
-- `ρ̇`, `ṗ`, `ε̇` are source/sink terms from cloud-wind interaction
-- `L = n²Λ - nΓ` represents radiative cooling/heating
-- `v_c` is the circular velocity, `v_esc` is the escape velocity
-
-### Cloud Evolution
-
-Cold clouds evolve through mass exchange with the hot phase:
-
-**Mass Evolution:**
-```
-Ṁ_cl = 3 f_turb f_cool (M_cl v_rel)/(χ^(1/2) r_cl) (ξ^α - 1)
-```
-
-where:
-- `ξ = r_cl/(v_turb τ_cool)` controls growth (ξ > 1) vs destruction (ξ < 1)
-- `α = 1/4` for rapid cooling (ξ ≥ 1), `α = 1/2` for slow cooling (ξ < 1)
-- `χ = ρ_cl/ρ` is the density contrast
-- `f_turb ≈ 0.1` is the turbulent mixing efficiency
-- `f_cool = 1/3` accounts for cloud elongation
-
-**Velocity Evolution:**
-```
-v̇_cl = (v-v_cl) Ṁ_cl,grow/M_cl + (3C_drag/8)(v-v_cl)²/(χ r_cl) - v_c²/r
-```
-
-**Metallicity Evolution:**
-```
-Ż_cl = (Z-Z_cl) Ṁ_cl,grow/M_cl
-```
-
-### Key Physical Parameters
-
-- **Hot phase mass loading**: `η_M = Ṁ_wind/Ṁ_star`
-- **Cold phase mass loading**: `η_M,cold = Ṁ_cold/Ṁ_star`
-- **Energy loading**: `η_E = Ė_wind/Ė_star`
-- **Cloud temperature**: `T_cl = 10^4 K` (photoionization equilibrium)
-- **Sonic radius**: `r_star = 300 pc` (typical)
-
-## Code Structure
-
-### Main Components
-
-1. **`Multiphase_Wind_Evolution.py`** - Original single-cloud simulation module containing:
-   - Physical constants and unit definitions
-   - Cooling function interpolations (`cooling_function_*`)
-   - Wind evolution ODEs (`Wind_Evo`, `Hot_Wind_Evo`)
-   - Cloud dynamics (`dMcl_dt`, `dvcl_dt`, `dZcl_dt`)
-   - Field length calculations for thermal conduction
-   - Integration routines with termination conditions
-
-2. **`Multiphase_Wind_Evolution_Multicloud.py`** - Extended multicloud version supporting:
-   - Multiple cloud species with power-law mass distributions (dN/dM ∝ M^-α)
-   - Cloud population setup function (`setup_cloud_powerlaw_distribution`)
-   - Statistical analysis tools (`calculate_cloud_moments`, `get_cloud_mass_spectrum`)
-   - Full backward compatibility with single-cloud mode
-
-3. **Analysis Notebooks**:
-   - **`Multiphase_Wind_Fitting_function_for_Classy.ipynb`** - Generates fitting functions for galaxy evolution models and computes velocity moments
-   - **`multicloud.ipynb`** - Interactive multicloud simulations and analysis
-
-4. **Data Files**:
-   - **`Lambda_tab_redshifts.npz`** - Pre-computed cooling function lookup table (81×352×15×49 array) with metallicity and redshift dependence
-
-### Key Functions
-
-- `Wind_Evo(s, y, params)` - Main ODE system for supersonic wind region
-- `Hot_Wind_Evo(s, y, params)` - ODE system for hot phase only
-- `cooling_function_Wiersma(*)` - Cooling curves with metallicity/redshift dependence
-- `dMcl_dt()` - Cloud mass evolution rate
-- `field_length_*()` - Various thermal conduction prescriptions
-- `calculate_moments()` - Velocity moment calculations (notebook)
-
-## Usage
-
-### Single Cloud Example
-
-```python
-import numpy as np
-from Multiphase_Wind_Evolution import *
-
-# Set initial conditions at sonic radius
-n_star = 0.1  # cm^-3, hot phase density
-v_star = 200  # km/s, initial velocity
-T_star = 5e6  # K, hot phase temperature
-Z_star = 1.0  # solar metallicity
-eta_M = 0.1   # hot phase mass loading
-eta_M_cold = 1.0  # cold phase mass loading
-
-# Cloud properties
-r_cl_0 = 10  # pc, initial cloud radius
-n_cl = 100   # cm^-3, cloud density
-
-# Run simulation (see notebooks for complete examples)
-```
-
-### Multicloud Example
-
-```python
-from Multiphase_Wind_Evolution_Multicloud import *
-
-# Set up power-law cloud distribution
-log_M_cloud_min = 0   # 10^0 = 1 Msun
-log_M_cloud_max = 5   # 10^5 Msun  
-N_cloud_species = 10  # Number of mass bins
-alpha_cloud = 2.0     # Power-law exponent
-
-# Generate cloud population
-M_cloud0, eta_M_cold, Mdot_cold0, Ndot_cloud0 = setup_cloud_powerlaw_distribution(
-    log_M_cloud_min, log_M_cloud_max, N_cloud_species, 
-    alpha_cloud=alpha_cloud, eta_M_cold_tot=1.0, SFR=20*Msun/yr
-)
-
-# See multicloud.ipynb for complete implementation
-```
-
-### Parameter Ranges
-
-Typical parameter ranges for galactic winds:
-- Hot phase density: `n ~ 10^-3 - 10^-1 cm^-3`
-- Hot phase temperature: `T ~ 10^6 - 10^7 K`
-- Wind velocity: `v ~ 100 - 1000 km/s`
-- Cloud radius: `r_cl ~ 0.1 - 100 pc`
-- Cloud density: `n_cl ~ 10 - 10^4 cm^-3`
-- Mass loading: `η_M ~ 0.01 - 10`
+- **Clean API**: Simple `WindModel` class with configurable physics via `WindConfig`
+- **Fast Integration**: Optimized for MCMC parameter exploration
+- **Observables**: Built-in velocity and column density distributions
+- **Publication-Ready Plots**: Matplotlib-based plotting with customizable styles
+- **Flexible Configuration**: All physics parameters easily adjustable
+- **No Global Variables**: Clean module design with proper parameter flow
 
 ## Installation
 
-### Dependencies
-
 ```bash
-pip install numpy scipy matplotlib cmasher h5py jupyter
+# Clone the repository
+git clone https://github.com/dfielding14/MultiPhaseMultiCloudGalacticWind.git
+cd MultiPhaseMultiCloudGalacticWind
+
+# Install the package
+pip install -e .
+
+# Install dependencies
+pip install numpy scipy matplotlib cmasher h5py
 ```
 
-Required packages:
-- `numpy` - Numerical computations
-- `scipy` - ODE integration and interpolation
-- `matplotlib` - Plotting and visualization
-- `cmasher` - Scientific colormaps (replaces deprecated palettable)
-- `h5py` - For HDF5 data I/O
-- `jupyter` - For running analysis notebooks
+## Quick Start
 
-## Physics Notes
+```python
+from multiphasegalacticwind import WindModel, WindConfig
+
+# Create and run a basic wind model
+model = WindModel(SFR=20.0)  # Star formation rate in Msun/yr
+solution = model.run()
+
+# Get key results
+print(f"Wind velocity at 10 kpc: {solution.v_at_10kpc:.1f} km/s")
+print(f"Mass loading at 10 kpc: {solution.mass_loading_at_10kpc:.2f}")
+
+# Plot the solution
+from multiphasegalacticwind import plot_wind_solution
+fig, axes = plot_wind_solution(solution)
+```
+
+## Configuration System
+
+The package uses a flexible configuration system via `WindConfig` to manage all model parameters:
+
+```python
+from multiphasegalacticwind import WindModel, WindConfig
+
+# Method 1: Create custom configuration
+config = WindConfig(
+    f_turb0=0.2,           # Turbulent mixing efficiency
+    drag_coeff=0.3,        # Cloud drag coefficient  
+    metallicity=0.5,       # Wind metallicity (solar units)
+    mu=0.62,               # Mean molecular weight
+)
+model = WindModel(SFR=10.0, config=config)
+
+# Method 2: Pass parameters directly as kwargs (forwarded to WindConfig)
+model = WindModel(
+    SFR=10.0,
+    f_turb0=0.2,
+    drag_coeff=0.3,
+    metallicity=0.5
+)
+
+# Method 3: Mix both approaches
+config = WindConfig(f_turb0=0.2)
+model = WindModel(SFR=10.0, config=config, drag_coeff=0.3)
+
+# View default configuration
+from multiphasegalacticwind import get_default_config
+default_config = get_default_config()
+print(default_config.to_dict())
+```
+
+## Key Parameters
+
+### Galaxy and Wind Properties
+```python
+model = WindModel(
+    # Galaxy properties
+    v_circ=150.0,              # Circular velocity [km/s]
+    redshift=0.0,              # Redshift
+    
+    # Wind launch properties
+    SFR=20.0,                  # Star formation rate [Msun/yr]
+    eta_M=0.1,                 # Hot phase mass loading
+    eta_M_cold=1.0,            # Cold phase mass loading
+    eta_E=1.0,                 # Energy loading
+    
+    # Sonic point properties
+    r_star_kpc=0.3,            # Sonic radius [kpc]
+    Z_star=1.0,                # Initial metallicity (solar)
+    
+    # Cloud properties
+    cloud_mass_range=(1, 1e5), # Cloud mass range [Msun]
+    cloud_alpha=2.0,           # Power law slope
+    N_cloud_species=10,        # Number of cloud mass bins
+    T_cl=1e4,                  # Cloud temperature [K]
+    
+    # Solver settings
+    r_max_kpc=100.0,           # Maximum radius [kpc]
+    rtol=1e-8,                 # Relative tolerance
+    atol=1e-10,                # Absolute tolerance
+)
+```
+
+### Configurable Physics Parameters
+
+All physics parameters can be customized via `WindConfig`:
+
+```python
+# Common parameters to modify
+config = WindConfig(
+    # Thermodynamics
+    mu=0.62,                   # Mean molecular weight
+    gamma=5/3,                 # Adiabatic index
+    
+    # Mixing and turbulence
+    f_turb0=0.1,               # Turbulent mixing efficiency (key parameter!)
+    drag_coeff=0.5,            # Cloud drag coefficient
+    Mdot_coefficient=1/3,      # Mass transfer coefficient
+    
+    # Cooling
+    metallicity=1.0,           # Metallicity (solar units)
+    Cooling_Factor=1.0,        # Cooling strength (0=off, 1=standard)
+    
+    # Cloud evolution
+    M_cloud_min=0.01,          # Minimum cloud mass [Msun]
+    geometric_factor=1.0,      # Cloud geometry factor
+    
+    # Power law indices
+    TurbulentVelocityChiPower=0.0,  # v_turb ∝ χ^α
+    CoolingAreaChiPower=0.5,        # A_cool ∝ χ^β
+    ColdTurbulenceChiPower=-0.5,    # v_turb_cold ∝ χ^γ
+)
+```
+
+See `docs/windconfig_parameters.md` for complete parameter documentation.
+
+## Calculating Observables
+
+### Velocity Distributions
+
+Calculate velocity distributions for comparison with absorption line observations:
+
+```python
+# Basic velocity distribution (number per velocity)
+v_cloud, dN_dv = solution.calculate_velocity_distribution()
+
+# Column density distribution in standard observational units
+v_cloud, dN_dv_column = solution.calculate_column_density_distribution()
+# Returns dN/dv in cm^-2 / (km/s) - ready for comparison with observations
+
+# Get contributions from each cloud species separately
+v_cloud, dN_dv_dict = solution.calculate_column_density_by_species()
+# Returns dict with:
+#   'total': Total column density distribution
+#   'species': List of distributions for each cloud mass
+#   'M_cloud0': Initial cloud masses
+
+# Calculate velocity moments for characterizing distributions
+moments = solution.calculate_velocity_moments()
+print(f"Mean velocity: {moments['mean']:.1f} km/s")
+print(f"Velocity dispersion: {moments['dispersion']:.1f} km/s")
+print(f"Skewness: {moments['skewness']:.2f}")
+print(f"Kurtosis: {moments['kurtosis']:.2f}")
+```
+
+### Plotting
+
+Create publication-quality plots:
+
+```python
+from multiphasegalacticwind import (
+    plot_wind_solution,
+    plot_velocity_distribution,
+    plot_column_density_distribution
+)
+
+# Plot wind evolution
+fig1, axes = plot_wind_solution(solution)
+
+# Plot velocity distribution
+fig2, ax = plot_velocity_distribution(solution, show_moments=True)
+
+# Plot column density distribution
+fig3, ax = plot_column_density_distribution(solution, log_scale=True)
+```
+
+## Examples
+
+See the `examples/` directory for complete examples:
+- `simple_example.py` - Minimal working example
+- `basic_example.py` - Parameter studies and plotting  
+- `observational_comparison.py` - Velocity distributions
+- `column_density_example.py` - Column density calculations
+- `tutorial_wind_models.ipynb` - Comprehensive Jupyter notebook tutorial
+- `observational_comparison_notebook.ipynb` - Mock observations notebook
+
+## Physical Model
+
+This code simulates the steady-state evolution of multiphase galactic winds with:
+- A hot, volume-filling phase that drives the wind
+- Cold embedded clouds that exchange mass, momentum, and energy
+- Turbulent radiative mixing layers (TRMLs) mediating the interaction
+- Radiative cooling and heating via tabulated cooling functions
+- Gravitational deceleration in an isothermal potential
+
+The model solves coupled ODEs for:
+- **Hot phase**: Euler equations with cooling/heating and cloud interactions
+- **Cold clouds**: Mass exchange, drag, and radiative acceleration
+
+### Key Physical Processes
+
+1. **Turbulent Mixing**: Mass transfer rate ∝ f_turb × v_rel × A_cloud / r_cloud
+2. **Radiative Cooling**: Using Wiersma+09 cooling tables (redshift-dependent)
+3. **Cloud Drag**: F_drag = C_d × ρ_hot × v_rel² × A_cloud
+4. **Sonic Point**: Calculated from energy and mass conservation (not user-specified)
 
 ### Key Assumptions
+- Steady-state solutions (∂/∂t = 0)
+- Spherical symmetry within solid angle Ω_wind
+- Pressure equilibrium between phases
+- Clouds maintain T_cl = 10^4 K via rapid cooling
+- Power-law cloud mass distribution: dN/dM ∝ M^(-α)
 
-1. **Steady-state** - Time-independent solutions
-2. **Spherical symmetry** - Within solid angle Ω_wind
-3. **Pressure equilibrium** - Clouds adjust instantaneously
-4. **Thermal equilibrium** - Clouds maintain T_cl = 10^4 K
-5. **Turbulent mixing** - f_turb = 0.1 (constant)
-6. **No thermal conduction** between phases (can be enabled)
-7. **No magnetic fields** (future extension)
+## Performance Notes
 
-### Termination Conditions
+For MCMC applications or parameter studies, consider adjusting tolerances:
+```python
+# Faster integration (suitable for parameter exploration)
+model = WindModel(
+    SFR=10.0,
+    rtol=1e-6,      # Default is 1e-8
+    atol=1e-8,      # Default is 1e-10
+    r_max_kpc=50    # Default is 100 kpc
+)
 
-Simulations terminate when:
-- Hot phase cools to cloud temperature (T → T_cl)
-- Wind stalls (v → 0)
-- Clouds completely evaporate (M_cl → 0)
-- Integration reaches large radius (r ~ 100 kpc)
+# For production runs with strict accuracy
+model = WindModel(
+    SFR=10.0,
+    rtol=1e-10,
+    atol=1e-12
+)
+```
+
+**Note**: The default tolerances (rtol=1e-8) may cause long integration times for some parameter combinations. We recommend starting with rtol=1e-6 for initial explorations.
 
 ## Citation
 
@@ -205,174 +266,30 @@ If you use this code in your research, please cite:
 }
 ```
 
-## Installation
+## Architecture Notes
 
-```bash
-# Clone the repository
-git clone https://github.com/dfielding14/MultiPhaseMultiCloudGalacticWind.git
-cd MultiPhaseMultiCloudGalacticWind
+### Module Structure
+- `wind_model.py` - High-level API and `WindModel` class
+- `config.py` - Configuration via `WindConfig` class
+- `constants.py` - Physical constants (kb, mp, Msun, etc.)
+- `core_physics.py` - ODE system and physics functions
+- `cooling.py` - Cooling functions and interpolators
+- `observables.py` - Velocity and column density distributions
+- `plotting.py` - Publication-quality plotting functions
 
-# Install the package
-pip install -e .
+### Key Design Principles
+- No global variables - all parameters flow through config
+- Lazy loading - cooling tables load on first use
+- Clean separation - physics, configuration, and plotting are separate
+- Type safety - parameters validated in WindConfig
 
-# For plotting features (optional)
-pip install -e ".[plotting]"
-```
+## Migration from Legacy Code
 
-## Quick Start
-
-### Simple Example
-
-```python
-from multiphasegalacticwind import WindModel, plot_wind_solution, plot_velocity_distribution
-
-# Create and run a wind model
-model = WindModel(SFR=20.0, eta_M=0.1, eta_M_cold=1.0)
-solution = model.run()
-
-# Get key results
-print(f"Wind velocity at 10 kpc: {solution.v_at_10kpc:.1f} km/s")
-print(f"Mass loading at 10 kpc: {solution.mass_loading_at_10kpc:.2f}")
-
-# Calculate velocity distribution and moments
-moments = solution.calculate_velocity_moments()
-print(f"Mean velocity: {moments['mean']:.1f} km/s")
-print(f"Velocity dispersion: {moments['dispersion']:.1f} km/s")
-
-# Create plots
-fig1, axes = plot_wind_solution(solution)
-fig2, ax = plot_velocity_distribution(solution)
-```
-
-### Detailed Example
-
-```python
-# Create a more detailed model
-model = WindModel(
-    # Galaxy properties
-    v_circ=150.0,              # Circular velocity [km/s]
-    redshift=0.0,              # Redshift
-    
-    # Wind properties  
-    SFR=20.0,                  # Star formation rate [Msun/yr]
-    eta_M=0.1,                 # Hot phase mass loading
-    eta_M_cold=1.0,            # Cold phase mass loading
-    eta_E=1.0,                 # Energy loading
-    
-    # Initial conditions
-    r_star_kpc=0.3,            # Sonic radius [kpc]
-    n_star=0.1,                # Hot phase density [cm^-3]
-    v_star=200.0,              # Initial velocity [km/s]
-    T_star=5e6,                # Hot phase temperature [K]
-    
-    # Cloud properties
-    cloud_mass_range=(1, 1e5), # Cloud mass range [Msun]
-    cloud_alpha=2.0,           # Power law slope
-    N_cloud_species=10,        # Number of cloud mass bins
-)
-
-solution = model.run()
-```
-
-See `examples/` directory for more examples including:
-- `simple_example.py` - Minimal working example
-- `basic_example.py` - Full tutorial with parameter studies  
-- `observational_comparison.py` - Velocity distributions and observables
-- `column_density_example.py` - Column density distributions for absorption line studies
-
-## Key Features
-
-- **Fast simulations** optimized for MCMC parameter fitting
-- **Flexible cloud distributions** with power-law mass functions  
-- **Observable predictions** including velocity distributions (dN/dv) and moments
-- **Publication-quality plotting** with consistent aesthetic style
-- **Simple API** while preserving all physics and units from the paper
-
-## Calculating Observables
-
-The package provides comprehensive tools for calculating observables for comparison with data:
-
-### Velocity Distributions
-
-Calculate velocity distributions (dN/dv) using the chain rule transformation:
-
-```python
-# Calculate dN/dv for all clouds
-v_cloud, dN_dv = solution.calculate_velocity_distribution()
-
-# For specific cloud mass bins
-v_cloud, dN_dv = solution.calculate_velocity_distribution(cloud_index=5)
-
-# Customize radius range and units
-v_cloud, dN_dv = solution.calculate_velocity_distribution(
-    r_min_kpc=0.1,       # Inner radius
-    r_max_kpc=10.0,      # Outer radius  
-    velocity_units='km/s' # or 'cm/s'
-)
-```
-
-### Column Density Distributions
-
-For absorption line studies, calculate column density distributions in standard units:
-
-```python
-# Calculate total dN/dv in cm^-2 / (km/s)
-v_cloud, dN_dv_column = solution.calculate_column_density_distribution()
-
-# Calculate for a specific cloud mass
-v_cloud, dN_dv_i = solution.calculate_column_density_distribution(cloud_index=5)
-
-# Get all cloud species separately
-v_cloud, dN_dv_dict = solution.calculate_column_density_by_species()
-# Returns dict with:
-#   'total': Total dN/dv
-#   'species': List of dN/dv for each cloud mass
-#   'M_cloud0': Initial cloud masses
-
-# Plot with proper units
-from multiphasegalacticwind import plot_column_density_distribution
-fig, ax = plot_column_density_distribution(solution)
-
-# Show individual cloud contributions
-fig, ax = plot_column_density_distribution(solution, show_species=True)
-
-# Use log scale for better visibility
-fig, ax = plot_column_density_distribution(solution, log_scale=True)
-```
-
-### Velocity Moments
-
-Calculate statistical moments of the velocity distribution:
-
-```python
-moments = solution.calculate_velocity_moments()
-print(f"Mean velocity: {moments['mean']:.1f} km/s")
-print(f"Velocity dispersion: {moments['dispersion']:.1f} km/s")
-print(f"Skewness: {moments['skewness']:.2f}")
-```
-
-### Mass-Weighted Velocities
-
-For more direct comparison with observations:
-
-```python
-from multiphasegalacticwind import calculate_mass_weighted_velocity
-
-# At specific radii
-v_mass = calculate_mass_weighted_velocity(solution, r_eval_kpc=[1, 5, 10])
-```
-
-### Plotting
-
-Create publication-quality plots:
-
-```python
-# Plot velocity distribution with moments
-fig, ax = plot_velocity_distribution(solution, show_moments=True)
-
-# Plot wind profiles
-fig, axes = plot_wind_solution(solution, show_hot_only=True, show_clouds=True)
-```
+If you're migrating from the old script-based approach, see `docs/migration_guide.md` for detailed instructions. Key changes:
+- Parameters now managed by `WindConfig` (no globals)
+- Sonic point calculated from physics (not user-specified)
+- Cooling functions moved to separate module
+- Clean API via `WindModel` class
 
 ## License
 
@@ -380,6 +297,6 @@ This code is released under the MIT License. See LICENSE file for details.
 
 ## Contact
 
-For questions or issues, please contact:
-- Drummond Fielding (dfielding@flatironinstitute.org)
-- Greg Bryan (gbryan@astro.columbia.edu)
+For questions or issues:
+- Open an issue on GitHub
+- Contact: Drummond Fielding (dfielding@flatironinstitute.org)

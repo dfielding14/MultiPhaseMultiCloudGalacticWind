@@ -29,11 +29,8 @@ def main():
         eta_M_cold=1.0,         # cold phase mass loading
         eta_E=1.0,              # energy loading
         
-        # Initial conditions
+        # Sonic point
         r_star_kpc=0.3,         # kpc, sonic radius
-        n_star=0.1,             # cm^-3, hot phase density
-        v_star=200.0,           # km/s, initial velocity
-        T_star=5e6,             # K, hot phase temperature
         Z_star=1.0,             # solar metallicity
         
         # Cloud properties

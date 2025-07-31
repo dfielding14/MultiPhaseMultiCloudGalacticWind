@@ -10,220 +10,45 @@ Based on Fielding & Bryan "The Structure of Multiphase Galactic Winds"
 import numpy as np
 import glob
 from scipy import integrate, interpolate
-import matplotlib
-import matplotlib.pyplot as plt
 import h5py
-
-# plt.style.use('dark_background')
-
-matplotlib.rcParams['xtick.direction'] = 'in'
-matplotlib.rcParams['ytick.direction'] = 'in'
-matplotlib.rcParams['xtick.top'] = True
-matplotlib.rcParams['ytick.right'] = True
-matplotlib.rcParams['xtick.minor.visible'] = True
-matplotlib.rcParams['ytick.minor.visible'] = True
-matplotlib.rcParams['lines.dash_capstyle'] = "round"
-matplotlib.rcParams['lines.solid_capstyle'] = "round"
-matplotlib.rcParams['legend.handletextpad'] = 0.4
-matplotlib.rcParams['axes.linewidth'] = 0.6
-matplotlib.rcParams['ytick.major.width'] = 0.6
-matplotlib.rcParams['xtick.major.width'] = 0.6
-matplotlib.rcParams['ytick.minor.width'] = 0.45
-matplotlib.rcParams['xtick.minor.width'] = 0.45
-matplotlib.rcParams['ytick.major.size'] = 2.75
-matplotlib.rcParams['xtick.major.size'] = 2.75
-matplotlib.rcParams['ytick.minor.size'] = 1.75
-matplotlib.rcParams['xtick.minor.size'] = 1.75
-matplotlib.rcParams['legend.handlelength'] = 2
-matplotlib.rcParams["figure.dpi"] = 200
-
-
-plt.rc('text', usetex=True)
-plt.rc('text.latex', preamble=r'\usepackage{cmbright}  \usepackage[T1]{fontenc}')
-
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-import matplotlib.colors as colors
-from matplotlib import cm
-from matplotlib.colors import ListedColormap
 from scipy.integrate import ode
 from scipy.integrate import solve_ivp
 from scipy import optimize
 import cmasher as cmr
-import matplotlib.font_manager
-from matplotlib.lines import Line2D
+
+# Import physical constants
+from .constants import *
 import time
 
-gamma   = 5/3.
-kb      = 1.3806488e-16
-mp      = 1.67373522381e-24
-km      = 1e5
-s       = 1
-yr      = 3.1536e7
-Myr     = 3.1536e13
-Gyr     = 3.1536e16
-pc      = 3.086e18
-kpc     = 1.0e3 * pc
-Mpc     = 1.0e6 * pc
-H0   = 67.74*km/s/Mpc
-Om   = 0.3075
-OL = 1 - Om
-G       = 6.673e-8
-Msun    = 2.e33
-fb      = 0.158
-keV     = 1.60218e-9
+# Import cooling functions
+from .cooling import (
+    tcool_P,
+    get_cooling_interpolator,
+    get_tcool_min_interpolators
+)
 
-mu = 0.62
-metallicity = 10**-0.5
-muH = 1/0.75
-redshift = 0.5
+# Cooling functions are now imported from cooling.py module
+
+# Numerical tolerance for event detection
+epsilon = 1e-1
 
 
-"""
-Cooling curve as a function of density, temperature, metallicity, redshift
-"""
-# Load cooling table from package data directory
-import os
-package_dir = os.path.dirname(os.path.abspath(__file__))
-cooling_table_path = os.path.join(package_dir, 'data', 'Lambda_tab_redshifts.npz')
-
-# Check if the cooling table exists in the package
-if os.path.exists(cooling_table_path):
-    data = np.load(cooling_table_path)
-    Lambda_tab = data['Lambda_tab']
-    redshifts  = data['redshifts']
-    Zs         = data['Zs']
-    log_Tbins  = data['log_Tbins']
-    log_nHbins = data['log_nHbins']    
-    Lambda     = interpolate.RegularGridInterpolator((log_nHbins,log_Tbins,Zs,redshifts), Lambda_tab, bounds_error=False, fill_value=1e-30)
-else:
-    print("Generating cooling table (this will take ~1 minute)...")
-    start_time = time.time()
-    
-    files = np.sort(glob.glob('/Users/dbf75/Work/Research/CCAResearch/Tables/CoolingTables/z_*hdf5'))
-    redshifts = np.array([float(f[-10:-5]) for f in files])
-    HHeCooling = {}
-    ZCooling   = {}
-    TE_T_n     = {}
-    # Define metallicity grid
-    Zs = np.logspace(-3, 0.3, 15)  # Metallicity from 0.001 to 2 solar
-    
-    print(f"Processing {len(files)} HDF5 files...")
-    for i in range(len(files)):
-        if i % 10 == 0:
-            print(f"  File {i+1}/{len(files)}...")
-        f            = h5py.File(files[i], 'r')
-        i_X_He       = -3 
-        Metal_free   = f.get('Metal_free')
-        Total_Metals = f.get('Total_Metals')
-        log_Tbins    = np.array(np.log10(Metal_free['Temperature_bins']))
-        log_nHbins   = np.array(np.log10(Metal_free['Hydrogen_density_bins']))
-        Cooling_Metal_free       = np.array(Metal_free['Net_Cooling'])[i_X_He]
-        Cooling_Total_Metals     = np.array(Total_Metals['Net_cooling'])
-        HHeCooling[redshifts[i]] = interpolate.RectBivariateSpline(log_Tbins,log_nHbins, Cooling_Metal_free)
-        ZCooling[redshifts[i]]   = interpolate.RectBivariateSpline(log_Tbins,log_nHbins, Cooling_Total_Metals)
-        f.close()
-    
-    # Build Lambda_tab efficiently
-    print(f"Building 4D cooling table ({len(log_nHbins)}x{len(log_Tbins)}x{len(Zs)}x{len(redshifts)})...")
-    Lambda_tab = np.zeros((len(log_nHbins), len(log_Tbins), len(Zs), len(redshifts)))
-    
-    for i_n, ln in enumerate(log_nHbins):
-        if i_n % 20 == 0:
-            print(f"  Density {i_n+1}/{len(log_nHbins)}...")
-        for i_T, lT in enumerate(log_Tbins):
-            for i_Z, Z in enumerate(Zs):
-                for i_z, zz in enumerate(redshifts):
-                    Lambda_tab[i_n, i_T, i_Z, i_z] = HHeCooling[zz].ev(lT, ln) + Z * ZCooling[zz].ev(lT, ln)
-    
-    # Save to package data directory
-    save_path = os.path.join(package_dir, 'data', 'Lambda_tab_redshifts.npz')
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    np.savez(save_path, Lambda_tab=Lambda_tab, redshifts=redshifts, Zs=Zs, log_Tbins=log_Tbins, log_nHbins=log_nHbins)
-    print(f"Saved cooling table to {save_path}")
-    Lambda      = interpolate.RegularGridInterpolator((log_nHbins,log_Tbins,Zs,redshifts), Lambda_tab, bounds_error=False, fill_value=0)
-    
-    elapsed = time.time() - start_time
-    print(f"Cooling table generated in {elapsed:.1f} seconds")
-print("interpolated lambda")
-
-
-metallicity = 1.
-redshift = 0.
-Ps = np.logspace(-8,10,100)
-rhos = np.logspace(-10,5,101)*mu*mp
-Lambda_P_rho_tab = np.zeros((len(Ps),len(rhos)))
-for i in range(len(Ps)):
-    for j in range(len(rhos)):
-        rho = rhos[j]
-        T = Ps[i] * (mu*mp/rho)
-        if rho > 1*muH*mp:
-            rho = 1.*muH*mp
-        elif rho < 1e-8*muH*mp:
-            rho = 1e-8*muH*mp
-        if T > 10**8.98:
-            T = 10**8.98
-        elif T < 1e2:
-            T = 1e2
-        try:
-            Lambda_P_rho_tab[i,j] = Lambda((np.log10(rho/(muH*mp)),np.log10(T), metallicity, redshift))
-        except:
-            Lambda_P_rho_tab[i,j] = 1e-30
-    if i%10 == 0:
-        print(i)
-
-Lambda_P_rho = interpolate.RegularGridInterpolator((Ps*kb, rhos), Lambda_P_rho_tab, bounds_error=False, fill_value=0.)
-
-
-Lambda_z0  = interpolate.RegularGridInterpolator((log_nHbins,log_Tbins,Zs), Lambda_tab[...,0], bounds_error=False, fill_value=-1e-30)
-
-def tcool_P(T, P, metallicity, redshift=0.0):
-    T = np.where(T>10**8.98, 10**8.98, T)
-    T = np.where(T<10**2, 10**2, T)
-    nH_actual = P/T*(mu/muH)
-    nH = np.where(nH_actual>1, 1, nH_actual)
-    nH = np.where(nH<10**-8, 10**-8, nH)
-    # Use Lambda interpolator with redshift (default z=0)
-    lambda_val = Lambda((np.log10(nH), np.log10(T), metallicity, redshift))
-    return 1.5 * (muH/mu) * kb * T / (nH_actual * lambda_val)
-
-def Lambda_P(T, P, metallicity, redshift=0.0):
-    nH = P/T*(mu/muH)
-    if nH > 0.9:
-        nH = 0.9
-    return Lambda((np.log10(nH), np.log10(T), metallicity, redshift))
-Lambda_P = np.vectorize(Lambda_P)
-
-
-T = np.logspace(3.5,6.5,1000)
-T_tcool_min_array = np.zeros((len(Ps),len(Zs)))
-tcool_min_array = np.zeros((len(Ps),len(Zs)))
-for i,P in enumerate(Ps):
-    if P > 10**4.2:
-        continue
-    for j,Z in enumerate(Zs):
-        tcools = tcool_P(T, P, Z)
-        T_tcool_min_array[i,j] = T[np.where(tcools == np.min(tcools[np.where(tcools>0)]))[0][0]]
-        tcool_min_array[i,j] = np.min(tcools[tcools>0])
-
-for i in np.where(Ps > 10**4.2)[0]:
-    T_tcool_min_array[i] = T_tcool_min_array[np.where(Ps > 10**4.2)[0][0]-1]
-    tcool_min_array[i] = tcool_min_array[np.where(Ps > 10**4.2)[0][0]-1] * (Ps[i]/ Ps[np.where(Ps > 10**4.2)[0][0]-1])**-1
-
-T_tcool_min_P  = interpolate.RegularGridInterpolator((Ps,Zs), T_tcool_min_array, bounds_error=False, fill_value=None )
-tcool_min_P  = interpolate.RegularGridInterpolator((Ps,Zs), tcool_min_array, bounds_error=False, fill_value=None )
-
-
-def Field_Length(state, f_spitzer=1):
+def Field_Length(state, f_spitzer=1, mu=0.62):
+    """Calculate the Field length for thermal conduction."""
     rho_wind     = state[1]
     Pressure     = state[2]
     rhoZ_wind    = state[3]
     Z_wind       = rhoZ_wind/rho_wind
     T_wind       = Pressure/kb/(rho_wind/(mu*mp))
     kappa        = 5.0e-7 * T_wind**2.5
+    # Get minimum cooling time interpolator
+    _, tcool_min_P = get_tcool_min_interpolators()
     edot_cool    = 1.5*Pressure / tcool_min_P((Pressure/kb,Z_wind/Z_solar))   
     return np.sqrt(f_spitzer*kappa*T_wind / edot_cool)
 
-def Field_Length_mix(state, f_spitzer=1):
+
+def Field_Length_mix(state, T_cloud, f_spitzer=1, mu=0.62):
+    """Calculate the Field length for the mixed layer."""
     rho_wind     = state[1]
     Pressure     = state[2]
     rhoZ_wind    = state[3]
@@ -233,11 +58,12 @@ def Field_Length_mix(state, f_spitzer=1):
 
     T_mix        = (T_wind*T_cloud)**0.5
     Z_mix        = (Z_wind*Z_cloud)**0.5
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar)[()] 
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, mu)[()] 
     t_cool_layer = np.where(t_cool_layer<0, 1e10*Myr, t_cool_layer)
     kappa = 5.0e-7 * T_wind**2.5
     edot_cool = 1.5*Pressure / t_cool_layer   
     return np.sqrt(f_spitzer*kappa*T_wind / (edot_cool))
+
 
 def setup_cloud_powerlaw_distribution(log_M_cloud_min, log_M_cloud_max, N_cloud_species, 
                                      alpha_cloud=2.0, eta_M_cold_tot=1.0, SFR=1.0):
@@ -277,17 +103,21 @@ def setup_cloud_powerlaw_distribution(log_M_cloud_min, log_M_cloud_max, N_cloud_
     # For each bin, we need dN/dlogM ∝ M^(1-α)
     dN_dlogM = M_cloud0**(1 - alpha_cloud)
     
-    # Width of each logarithmic bin
-    dlogM = np.diff(np.log10(M_cloud0))[0]
-    
-    # Number of clouds in each bin (relative)
-    N_rel = dN_dlogM * dlogM
-    
-    # Mass in each bin: M * dN
-    M_in_bin = M_cloud0 * N_rel
-    
-    # Normalize to get eta_M_cold for each species
-    eta_M_cold = eta_M_cold_tot * M_in_bin / np.sum(M_in_bin)
+    if N_cloud_species == 1:
+        # Special case: single cloud mass
+        eta_M_cold = np.array([eta_M_cold_tot])
+    else:
+        # Width of each logarithmic bin
+        dlogM = np.diff(np.log10(M_cloud0))[0]
+        
+        # Number of clouds in each bin (relative)
+        N_rel = dN_dlogM * dlogM
+        
+        # Mass in each bin: M * dN
+        M_in_bin = M_cloud0 * N_rel
+        
+        # Normalize to get eta_M_cold for each species
+        eta_M_cold = eta_M_cold_tot * M_in_bin / np.sum(M_in_bin)
     
     # Mass flux for each species
     Mdot_cold0 = eta_M_cold * SFR
@@ -348,13 +178,13 @@ def cloud_ksi(r, state, N_cloud_species=1):
     # Handle Z_mix for arrays
     if N_cloud_species == 1:
         Z_mix = (Z_wind*Z_cloud)**0.5
-        t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar)[()] 
+        t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, mu)[()] 
     else:
         # For multiple clouds, we need to handle each species
         t_cool_layer = np.zeros_like(Z_cloud)
         for i in range(N_cloud_species):
             Z_mix_i = (Z_wind*Z_cloud[i])**0.5
-            t_cool_layer[i] = tcool_P(T_mix, Pressure/kb, Z_mix_i/Z_solar)[()] 
+            t_cool_layer[i] = tcool_P(T_mix, Pressure/kb, Z_mix_i/Z_solar, 0.0, mu)[()] 
     
     t_cool_layer = np.where(t_cool_layer<0, 1e10*Myr, t_cool_layer)
     ksi          = r_cloud / (v_turb * t_cool_layer)
@@ -399,7 +229,7 @@ def Cooling_and_Acceleration(r, state):
     T_wind       = Pressure/kb * (mu*mp/rho_wind)
     T_mix        = (T_wind*T_cloud)**0.5
     Z_mix        = (Z_wind*Z_cloud)**0.5
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar)[()] 
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, mu)[()] 
     t_cool_layer = np.where(t_cool_layer<0, 1e10*Myr, t_cool_layer)
     ksi          = r_cloud / (v_turb * t_cool_layer)
     AreaBoost    = geometric_factor * chi**CoolingAreaChiPower
@@ -429,7 +259,7 @@ def Cooling_and_Acceleration(r, state):
     return number_density_cloud * e_dot_transfer, e_dot_cool, dv_cloud_dr
 
 
-def Wind_Evo(r, state):
+def Wind_Evo(r, state, params):
     """
     Compute wind evolution derivatives - multicloud version
     Matches the original multicloud.py formulation exactly
@@ -439,7 +269,44 @@ def Wind_Evo(r, state):
      M_cloud_1, ..., M_cloud_N,
      v_cloud_1, ..., v_cloud_N,
      Z_cloud_1, ..., Z_cloud_N]
+     
+    Parameters:
+    params : tuple
+        (v_circ, Ndot_cloud0, T_cloud, injection_radius, injection_power, config_dict, r0, Edot_per_Vol, Mdot_per_Vol)
+        - v_circ : circular velocity [cm/s]
+        - Ndot_cloud0 : cloud injection rates [1/s]
+        - T_cloud : cloud temperature [K]
+        - injection_radius : cold cloud injection extent [cm]
+        - injection_power : cold cloud injection power law
+        - config_dict : dict with model parameters
+        - r0 : source region radius [cm]
+        - Edot_per_Vol : energy injection rate per volume [erg/s/cm^3]
+        - Mdot_per_Vol : mass injection rate per volume [g/s/cm^3]
     """
+    
+    # Unpack parameters
+    if len(params) != 9:
+        raise ValueError(f"Wind_Evo requires 9 parameters, got {len(params)}")
+        
+    v_circ, Ndot_cloud0, T_cloud, injection_radius, injection_power, config_dict, r0, Edot_per_Vol, Mdot_per_Vol = params
+    
+    # Extract config values
+    M_cloud_min = config_dict['M_cloud_min']
+    CoolingAreaChiPower = config_dict['CoolingAreaChiPower']
+    ColdTurbulenceChiPower = config_dict['ColdTurbulenceChiPower']
+    TurbulentVelocityChiPower = config_dict['TurbulentVelocityChiPower']
+    geometric_factor = config_dict['geometric_factor']
+    Mdot_coefficient = config_dict['Mdot_coefficient']
+    Cooling_Factor = config_dict['Cooling_Factor']
+    drag_coeff = config_dict['drag_coeff']
+    f_turb0 = config_dict['f_turb0']
+    Omwind = config_dict['Omwind']
+    mu = config_dict['mu']
+    metallicity = config_dict.get('metallicity', 1.0)
+    redshift = config_dict.get('redshift', 0.0)
+    
+    # Get cooling interpolator for current parameters
+    Lambda_P_rho = get_cooling_interpolator(mu, metallicity, redshift)
     
     # Determine N_cloud_species from state vector length
     # state has: 4 wind vars + 3*N_cloud_species cloud vars
@@ -460,21 +327,17 @@ def Wind_Evo(r, state):
         v_cloud = np.atleast_1d(v_cloud)
         Z_cloud = np.atleast_1d(Z_cloud)
     
-    # Get Ndot_cloud0 from global scope
-    # User must set this before calling solve_ivp
-    Ndot_cloud0 = globals().get('Ndot_cloud0', np.ones(N_cloud_species) * 1e-5 / yr)
-    
     # Wind properties
     cs_sq_wind   = gamma * Pressure / rho_wind
     Mach_sq_wind = v_wind**2 / cs_sq_wind
     Z_wind       = rhoZ_wind / rho_wind
-    vc           = v_circ0  # Simple isothermal potential
-    Phir         = v_circ0**2 * np.log(r)
+    vc           = v_circ  # Simple isothermal potential
+    Phir         = v_circ**2 * np.log(r)
     vBsq_wind    = 0.5 * v_wind**2 + (gamma/(gamma-1)) * Pressure/rho_wind + Phir
 
     # Cloud properties with injection cutoff
-    Ndot_cloud = Ndot_cloud0 * np.where(r < cold_cloud_injection_radial_extent, 
-                                        (r/cold_cloud_injection_radial_extent)**cold_cloud_injection_radial_power, 
+    Ndot_cloud = Ndot_cloud0 * np.where(r < injection_radius, 
+                                        (r/injection_radius)**injection_power, 
                                         1.0)
 
     number_density_cloud = Ndot_cloud / (Omwind * v_cloud * r**2)
@@ -492,12 +355,13 @@ def Wind_Evo(r, state):
     Z_mix = np.sqrt(Z_wind * Z_cloud)
     
     # Cooling time with proper handling
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar)
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, mu)
     if np.isscalar(t_cool_layer):
         t_cool_layer = np.full_like(M_cloud, t_cool_layer)
     t_cool_layer = np.where(t_cool_layer < 0, 1e10*Myr, t_cool_layer)
     
-    ksi = r_cloud / (v_turb * t_cool_layer)
+    # Add small epsilon to prevent division by zero when v_turb = 0
+    ksi = r_cloud / (np.maximum(v_turb, 1e-10) * t_cool_layer)
     AreaBoost = geometric_factor * chi**CoolingAreaChiPower
     v_turb_cold = v_turb * chi**ColdTurbulenceChiPower
     
@@ -599,7 +463,7 @@ def Gradient_Components(r, state):
     T_wind       = Pressure/kb * (mu*mp/rho_wind)
     T_mix        = (T_wind*T_cloud)**0.5
     Z_mix        = (Z_wind*Z_cloud)**0.5
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar)[()] 
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, mu)[()] 
     t_cool_layer = np.where(t_cool_layer<0, 1e10*Myr, t_cool_layer)
     ksi          = r_cloud / (v_turb * t_cool_layer)
     AreaBoost    = geometric_factor * chi**CoolingAreaChiPower
@@ -727,7 +591,33 @@ def Gradient_Components(r, state):
             [dv_cloud_dr,dv_cloud_dr_1,dv_cloud_dr_2,dv_cloud_dr_3]]
 
 
-def Hot_Wind_Evo(r, state):
+def Hot_Wind_Evo(r, state, params):
+    """
+    Compute hot-only wind evolution derivatives.
+    
+    This is used for comparison with the multiphase solution. By default,
+    no source terms are included (pure adiabatic wind).
+    
+    Parameters:
+    params : tuple
+        (v_circ,) - circular velocity [cm/s]
+        Optional: (v_circ, include_source_terms, r0, Edot_per_Vol, Mdot_per_Vol)
+    """
+    # Unpack parameters
+    v_circ = params[0]
+    
+    # Check if source terms are requested (for special cases)
+    if len(params) > 1:
+        include_source_terms = params[1]
+        r0 = params[2]
+        Edot_per_Vol = params[3]
+        Mdot_per_Vol = params[4]
+    else:
+        include_source_terms = False
+        r0 = 0
+        Edot_per_Vol = 0
+        Mdot_per_Vol = 0
+    
     v_wind     = state[0]
     rho_wind   = state[1]
     Pressure   = state[2]
@@ -735,13 +625,17 @@ def Hot_Wind_Evo(r, state):
     # wind properties
     cs_sq_wind   = (gamma*Pressure/rho_wind)
     Mach_sq_wind = (v_wind**2 / cs_sq_wind)
-    vc           = v_circ0  # Simple isothermal potential
-    Phir         = v_circ0**2 * np.log(r) 
+    vc           = v_circ  # Simple isothermal potential
+    Phir         = v_circ**2 * np.log(r) 
     vBsq_wind    = 0.5 * v_wind**2 + (gamma / (gamma-1)) * Pressure/rho_wind + Phir
 
-    # source term from inside galaxy
-    Edot_SN = Edot_per_Vol * np.where(r<r0, 1.0, 0.0)
-    Mdot_SN = Mdot_per_Vol * np.where(r<r0, 1.0, 0.0)
+    # source term from inside galaxy (only if requested)
+    if include_source_terms:
+        Edot_SN = Edot_per_Vol * np.where(r<r0, 1.0, 0.0)
+        Mdot_SN = Mdot_per_Vol * np.where(r<r0, 1.0, 0.0)
+    else:
+        Edot_SN = 0.0
+        Mdot_SN = 0.0
 
     # density
     drhodt          = Mdot_SN
@@ -775,10 +669,12 @@ def subsonic(r,z):
 
 subsonic.terminal = True
 
-def cold_wind(r,z):
-    return np.sqrt(gamma*z[2]/z[1])/np.sqrt(gamma*kb*T_cloud/(mu*mp)) - (1.0 + epsilon)
-
-cold_wind.terminal = True
+def create_cold_wind_event(T_cloud, mu):
+    """Create cold_wind event function with captured parameters."""
+    def cold_wind(r, z):
+        return np.sqrt(gamma*z[2]/z[1])/np.sqrt(gamma*kb*T_cloud/(mu*mp)) - (1.0 + epsilon)
+    cold_wind.terminal = True
+    return cold_wind
 
 
 def cloud_stop(r,z):
@@ -809,50 +705,57 @@ def wind_negative(r, state):
 wind_negative.terminal = True
 wind_negative.direction = -1
 
-def cloud_density_low(r, state, density_threshold=1e-50):
-    """Terminate if cloud number density gets too low"""
-    # Determine N_cloud_species from state vector
-    N_cloud_species = (len(state) - 4) // 3
+def create_cloud_density_low_event(Ndot_cloud0, cold_cloud_injection_radial_extent, 
+                                  cold_cloud_injection_radial_power, Omwind, M_cloud_min,
+                                  density_threshold=1e-50):
+    """Create cloud_density_low event function with captured parameters."""
+    def cloud_density_low(r, state):
+        """Terminate if cloud number density gets too low"""
+        # Determine N_cloud_species from state vector
+        N_cloud_species = (len(state) - 4) // 3
+        
+        v_cloud = state[4+N_cloud_species:4+2*N_cloud_species]
+        M_cloud = state[4:4+N_cloud_species]
+        
+        # Ensure arrays
+        if N_cloud_species == 1:
+            v_cloud = np.atleast_1d(v_cloud)
+            M_cloud = np.atleast_1d(M_cloud)
+            Ndot_cloud0_arr = np.atleast_1d(Ndot_cloud0)
+        else:
+            Ndot_cloud0_arr = Ndot_cloud0
+        
+        # Calculate cloud number densities
+        Ndot_cloud = Ndot_cloud0_arr * np.where(r < cold_cloud_injection_radial_extent,
+                                               (r/cold_cloud_injection_radial_extent)**cold_cloud_injection_radial_power,
+                                               1.0)
+        number_density_cloud = Ndot_cloud / (Omwind * v_cloud * r**2)
+        
+        # Only check active clouds
+        active_clouds = M_cloud > M_cloud_min
+        if np.any(active_clouds):
+            min_density = np.min(number_density_cloud[active_clouds])
+            return min_density - density_threshold
+        return 1.0
     
-    v_cloud = state[4+N_cloud_species:4+2*N_cloud_species]
-    M_cloud = state[4:4+N_cloud_species]
-    
-    # Get Ndot_cloud0 from global scope
-    Ndot_cloud0 = globals().get('Ndot_cloud0', None)
-    if Ndot_cloud0 is None:
-        return 1.0  # Can't check without Ndot_cloud0
-    
-    # Ensure arrays
-    if N_cloud_species == 1:
-        v_cloud = np.atleast_1d(v_cloud)
-        M_cloud = np.atleast_1d(M_cloud)
-        Ndot_cloud0 = np.atleast_1d(Ndot_cloud0)
-    
-    # Calculate cloud number densities
-    Ndot_cloud = Ndot_cloud0 * np.where(r < cold_cloud_injection_radial_extent,
-                                        (r/cold_cloud_injection_radial_extent)**cold_cloud_injection_radial_power,
-                                        1.0)
-    number_density_cloud = Ndot_cloud / (Omwind * v_cloud * r**2)
-    
-    # Only check active clouds
-    active_clouds = M_cloud > M_cloud_min
-    if np.any(active_clouds):
-        min_density = np.min(number_density_cloud[active_clouds])
-        return min_density - density_threshold
-    return 1.0
-cloud_density_low.terminal = True
-cloud_density_low.direction = -1
+    cloud_density_low.terminal = True
+    cloud_density_low.direction = -1
+    return cloud_density_low
 
-def all_clouds_frozen(r, state):
-    """Terminate if all clouds drop below minimum mass"""
-    # Determine N_cloud_species from state vector
-    N_cloud_species = (len(state) - 4) // 3
-    M_cloud = state[4:4+N_cloud_species]
-    if N_cloud_species == 1:
-        M_cloud = np.atleast_1d(M_cloud)
-    return np.max(M_cloud) - M_cloud_min
-all_clouds_frozen.terminal = True
-all_clouds_frozen.direction = -1
+def create_all_clouds_frozen_event(M_cloud_min):
+    """Create all_clouds_frozen event function with captured parameters."""
+    def all_clouds_frozen(r, state):
+        """Terminate if all clouds drop below minimum mass"""
+        # Determine N_cloud_species from state vector
+        N_cloud_species = (len(state) - 4) // 3
+        M_cloud = state[4:4+N_cloud_species]
+        if N_cloud_species == 1:
+            M_cloud = np.atleast_1d(M_cloud)
+        return np.max(M_cloud) - M_cloud_min
+    
+    all_clouds_frozen.terminal = True
+    all_clouds_frozen.direction = -1
+    return all_clouds_frozen
 
 def calculate_cloud_moments(r, state):
     """
@@ -988,243 +891,3 @@ def get_cloud_mass_spectrum(M_cloud, number_density_cloud, M_cloud_min, mass_bin
     dN_dlogM /= dlogM
     
     return M_bins, dN_dlogM
-
-
-SFR = 20 * Msun/yr
-eta_M              = 0.1
-eta_M_cold_tot     = 0.0001
-
-### METALLICITY
-Z_solar = 0.02
-
-# feedback and SF props
-E_SN  = 1e51
-mstar = 100*Msun
-M_cloud_min = 1e-2*Msun
-
-## model choices
-CoolingAreaChiPower         =  0.5 
-ColdTurbulenceChiPower      = -0.5 
-TurbulentVelocityChiPower   =  0.0 
-geometric_factor            = 1.0
-Mdot_coefficient            = 1.0/3.0
-Cooling_Factor              = 1.0
-drag_coeff                  = 0.5
-f_turb0                     = 10**-1.0
-v_circ0                     = 150e5 # gravitational potential assuming isothermal potential
-
-r0                 = 300*pc
-Z_wind_initial     = 2.0 * Z_solar
-half_opening_angle = np.pi/2
-Omwind             = 4*np.pi*(1.0 - np.cos(half_opening_angle))
-eta_E              = 1
-
-Mdot        = eta_M * SFR
-Edot        = eta_E * (E_SN/mstar) * SFR
-
-# properties at r0 if no clouds + gravity
-epsilon     = 1e-5
-Mach0       = 1.0 + epsilon
-v0          = np.sqrt(Edot/Mdot)*(1/((gamma-1)*Mach0) + 1/2.)**(-1/2.)
-rho0        = Mdot/(Omwind*r0**2 * v0)
-P0          = rho0*v0**2 / Mach0**2 / gamma
-rhoZ0       = rho0 * Z_wind_initial
-print( "v_wind = %.1e km/s  n_wind = %.1e cm^-3  P_wind = %.1e kb K cm^-3" %(v0/1e5, rho0/(mu*mp), P0/kb))
-
-Edot_per_Vol = Edot / (4/3. * np.pi * r0**3) # source terms from SN
-Mdot_per_Vol = Mdot / (4/3. * np.pi * r0**3) # source terms from SN
-
-r_init = 100*pc
-
-dv_dr0, drho_dr0, dP_dr0 = Hot_Wind_Evo(r0, np.r_[v0, rho0, P0])
-
-dlogvdlogr   = dv_dr0 * r0/v0
-dlogrhodlogr = drho_dr0 * r0/rho0
-dlogPdlogr   = dP_dr0 * r0/P0
-dlogr0       = 1e-8
-
-v0_sub   = 10**(np.log10(v0) - dlogvdlogr * dlogr0)
-rho0_sub = 10**(np.log10(rho0) - dlogrhodlogr * dlogr0)
-P0_sub   = 10**(np.log10(P0) - dlogPdlogr * dlogr0)
-
-sol = solve_ivp(Hot_Wind_Evo, [10**(np.log10(r0)-dlogr0),r_init], np.r_[v0_sub, rho0_sub, P0_sub], 
-    events=[supersonic], 
-    dense_output=True,
-    rtol=1e-12, atol=[1e-3, 1e-7*mp, 1e-2*kb])
-
-r_init    = sol.t[-1]
-v_init    = sol.y[0][-1]
-rho_init  = sol.y[1][-1]
-P_init    = sol.y[2][-1]
-rhoZ_init = rho_init * Z_wind_initial
-
-v0_sup   = 10**(np.log10(v0) + dlogvdlogr * dlogr0)
-rho0_sup = 10**(np.log10(rho0) + dlogrhodlogr * dlogr0)
-P0_sup   = 10**(np.log10(P0) + dlogPdlogr * dlogr0)
-
-sol_sup = solve_ivp(Hot_Wind_Evo, [10**(np.log10(r0)+dlogr0),10**2*r0], np.r_[v0_sup, rho0_sup, P0_sup], 
-    events=[subsonic], 
-    dense_output=True,
-    rtol=1e-12, atol=[1e-3, 1e-7*mp, 1e-2*kb])
-
-r_hot_only         = np.append(sol.t[::-1], sol_sup.t)
-v_wind_hot_only    = np.append(sol.y[0][::-1], sol_sup.y[0])
-rho_wind_hot_only  = np.append(sol.y[1][::-1], sol_sup.y[1])
-P_wind_hot_only    = np.append(sol.y[2][::-1], sol_sup.y[2])
-
-Mdot_wind_hot_only      = Omwind*r_hot_only**2 * rho_wind_hot_only * v_wind_hot_only/(Msun/yr)
-cs_wind_hot_only        = np.sqrt(gamma * P_wind_hot_only / rho_wind_hot_only)
-T_wind_hot_only         = P_wind_hot_only/kb / (rho_wind_hot_only/(mu*mp))
-K_wind_hot_only         = (P_wind_hot_only/kb) / (rho_wind_hot_only/(mu*mp))**gamma
-Pdot_wind_hot_only      = Omwind * r_hot_only**2 * rho_wind_hot_only * v_wind_hot_only**2/(1e5*Msun/yr)
-Pdot_wind_hot_only_P    = Omwind * r_hot_only**2 * (rho_wind_hot_only * v_wind_hot_only**2 + P_wind_hot_only)/(1e5*Msun/yr)
-Edot_wind_hot_only      = Omwind * r_hot_only**2 * rho_wind_hot_only * v_wind_hot_only * (0.5 * v_wind_hot_only**2 + 1.5 * cs_wind_hot_only**2)/(1e5**2*Msun/yr)
-
-# set up the cloud population
-min_log_cloud_mass = 1
-max_log_cloud_mass = 5
-N_cloud_species = 5
-alpha_cloud = 2.0
-M_cloud0, eta_M_cold, Mdot_cold0, Ndot_cloud0 = setup_cloud_powerlaw_distribution(min_log_cloud_mass, max_log_cloud_mass, N_cloud_species, alpha_cloud, eta_M_cold_tot, SFR)
-v_cloud0 = 100*km/s * np.ones_like(M_cloud0)
-Z_cloud0 = 0.3 * Z_solar * np.ones_like(M_cloud0)
-T_cloud = 1e4
-# set up the initial conditions
-r_init = r0
-v_init = v0
-
-
-cold_cloud_injection_radial_power = 6
-cold_cloud_injection_radial_extent = 1.33*r0
-cloud_radial_offest = 3e-1
-irstart     = np.argmin(np.abs(r_hot_only-r0*(1.0+cloud_radial_offest)))
-r_init      = r_hot_only[irstart]
-v_init      = v_wind_hot_only[irstart]
-rho_init    = rho_wind_hot_only[irstart]
-P_init      = P_wind_hot_only[irstart]
-
-supersonic_initial_conditions = np.concatenate([[v_init, 
-                                                rho_init, 
-                                                P_init, 
-                                                Z_wind_initial*rho_init], 
-                                                M_cloud0, v_cloud0, Z_cloud0])
-sol = solve_ivp(Wind_Evo, [r_init, 1e2*r0], supersonic_initial_conditions, 
-                events=[supersonic,cloud_stop,cold_wind], 
-                dense_output=True, rtol=1e-10)
-
-
-
-
-r         = sol.t
-v_wind    = sol.y[0]
-rho_wind  = sol.y[1]
-P_wind    = sol.y[2]
-rhoZ_wind = sol.y[3]
-M_cloud   = sol.y[4:4+N_cloud_species]
-v_cloud   = sol.y[4+N_cloud_species:4+2*N_cloud_species]
-Z_cloud   = sol.y[-N_cloud_species:]
-
-Z_wind = rhoZ_wind/rho_wind
-K_wind = (P_wind/kb)/(rho_wind/(mu*mp))**gamma
-T_wind = (P_wind/kb / (rho_wind/(mu*mp)))
-
-cloud_Mdots  = (np.outer(Ndot_cloud0, np.where(r<cold_cloud_injection_radial_extent, (r/cold_cloud_injection_radial_extent)**cold_cloud_injection_radial_power, 1.0)) * M_cloud / (Msun/yr))
-Mdot_wind    = Omwind * r**2 * rho_wind * v_wind/(Msun/yr)
-cs_wind      = np.sqrt(gamma * P_wind / rho_wind)
-T_wind       = P_wind/kb/(rho_wind/(mu*mp))
-K_wind       = (P_wind/kb) / (rho_wind/(mu*mp))**gamma
-
-Pdot_wind    = Omwind * r**2 * rho_wind * v_wind**2/(1e5*Msun/yr)
-Pdot_wind_P  = Omwind * r**2 * (rho_wind * v_wind**2 + P_wind)/(1e5*Msun/yr)
-cloud_Pdots  = (np.outer(Ndot_cloud0, np.where(r<cold_cloud_injection_radial_extent, (r/cold_cloud_injection_radial_extent)**cold_cloud_injection_radial_power, 1.0)) * M_cloud * v_cloud / (1e5 * Msun/yr))
-
-Edot_wind    = Omwind * r**2 * rho_wind * v_wind * (0.5 * v_wind**2 + 1.5 * cs_wind**2)/(1e5**2*Msun/yr)
-cloud_Edots  = (np.outer(Ndot_cloud0, np.where(r<cold_cloud_injection_radial_extent, (r/cold_cloud_injection_radial_extent)**cold_cloud_injection_radial_power, 1.0)) * M_cloud * (0.5 * v_cloud**2 + 2.5 * kb * T_cloud/(mu*mp)) / (1e5**2 * Msun/yr))
-
-
-
-cloud_colors = cmr.take_cmap_colors('cmr.guppy', N_cloud_species, cmap_range=(0.0, 1.0), return_fmt='hex')
-
-
-fig = plt.figure(constrained_layout=True)
-gs = fig.add_gridspec(6, 1)
-ax1 = fig.add_subplot(gs[:3,0])
-ax3 = fig.add_subplot(gs[3:5,0])
-ax2 = fig.add_subplot(gs[5,0])
-
-ax1.plot(r/kpc, v_wind/(km/s), label=r'$v_r$', color='k')
-for i in range(N_cloud_species):
-    ax1.plot(np.ma.masked_where(M_cloud[i] < 1.1 * M_cloud_min,r/kpc), np.ma.masked_where(M_cloud[i] < 1.1 * M_cloud_min,v_cloud[i]/(km/s)), color=cloud_colors[i])
-ax1.plot(r/kpc, (gamma*P_wind/rho_wind)**0.5/(km/s), ls=':', label=r'$c_s$', color='k')
-ax1.plot(r_hot_only/kpc, v_wind_hot_only/(km/s), color='grey', label=r'${\rm adiabatic}$', zorder=0,lw=1)
-ax1.plot(r_hot_only/kpc, (gamma*P_wind_hot_only/rho_wind_hot_only)**0.5/(km/s), color='grey', ls=':',lw=1)
-ax1.set_ylabel(r'${\rm velocity} \, [{\rm km/s}]$')
-# ax1.legend(loc='best',fontsize=7)
-ax1.set_xlim((2.9e-1, 30.5))
-ax1.set_yscale('log')
-ax1.set_xscale('log')
-
-i_r10 = np.argmin(np.abs(r/kpc - 15))
-ax1.text(r[i_r10]/kpc, v_wind[i_r10]/(km/s)*1.05, r'$v_{\rm wind}$', color='k', ha='left', va='bottom')
-ax1.text(r[i_r10]/kpc, ((gamma*P_wind/rho_wind)**0.5/(km/s))[i_r10]*1.05, r'$c_s$', color='k', ha='left', va='bottom')
-
-i_r10 = np.argmin(np.abs(r_hot_only/kpc - 6))
-ax1.text(r_hot_only[i_r10]/kpc, v_wind_hot_only[i_r10]/(km/s)*1.05, r'$v_{\rm wind,ad}$', color='grey', ha='left', va='bottom')
-ax1.text(r_hot_only[i_r10]/kpc, ((gamma*P_wind_hot_only/rho_wind_hot_only)**0.5/(km/s))[i_r10]/1.2, r'$c_{s, {\rm ad}}$', color='grey', ha='left', va='top')
-
-
-i_r04 = np.argmin(np.abs(r/kpc - 0.4))
-ax1.text(r[i_r04]/kpc, v_cloud[0][i_r04]/(km/s)*1.1, r'$v_{\rm cl}$', color=cloud_colors[0], ha='right', va='bottom')
-i_r1 = np.argmin(np.abs(r/kpc - 0.5))
-ax1.text(r[i_r1]/kpc, v_cloud[-1][i_r1]/(km/s)/1.1, r'$v_{\rm cl}$', color=cloud_colors[-1], ha='left', va='top')
-
-
-cax = inset_axes(ax1,width="50%",  # width = 50% of parent_bbox width
-                    height="5%",  # height : 5%
-                    loc='lower left')
-
-dlog_Mcloud0 = (max_log_cloud_mass-min_log_cloud_mass)/N_cloud_species
-cloud_mass_edges = np.linspace(min_log_cloud_mass-dlog_Mcloud0*0.5, max_log_cloud_mass+dlog_Mcloud0*0.5, N_cloud_species+1)
-for i in range(N_cloud_species):
-    cax.fill_betweenx([0,1], cloud_mass_edges[i], cloud_mass_edges[i+1], color = cloud_colors[i])
-cax.set_xlabel(r'$M_{\rm cl, initial} \; [M_\odot]$',fontsize=10, labelpad=5)    
-cax.xaxis.set_label_position('top') 
-cax.xaxis.tick_top()
-cax.set_xticks(np.linspace(min_log_cloud_mass, max_log_cloud_mass, N_cloud_species))
-cax.set_xticklabels(np.array([ r'$10^{%i}$' %m for m in  np.linspace(min_log_cloud_mass, max_log_cloud_mass, N_cloud_species)]), fontsize=8)
-cax.set_yticks([])
-cax.minorticks_off()
-cax.set_xlim((cloud_mass_edges[0],cloud_mass_edges[-1]))
-cax.set_ylim((0.1,0.9))
-
-
-for i in range(N_cloud_species):
-    ax2.loglog(np.ma.masked_where(M_cloud[i] < 1.1 * M_cloud_min,r/kpc), np.ma.masked_where(M_cloud[i] < 1.1 * M_cloud_min,M_cloud[i]/Msun), color=cloud_colors[i])
-ax2.set_ylabel(r'$M_{\rm cl} \, [M_\odot]$')    
-ax2.set_yticks([1e0,1e1,1e2,1e3,1e4,1e5])
-ax2.set_ylim(bottom=1)
-ax2.set_xlim((2.9e-1, 30.5))
-
-ax3.plot(r/kpc, Omwind*r**2 * rho_wind*v_wind / (Msun/yr), label=r"${\rm wind}$", color='k')
-ax3.plot(r_hot_only/kpc, Omwind*r_hot_only**2 * rho_wind_hot_only*v_wind_hot_only / (Msun/yr), color='grey', zorder=0)
-for i in range(N_cloud_species):
-    ax3.plot( np.ma.masked_where(M_cloud[i] < 1.1 * M_cloud_min, r/kpc), np.ma.masked_where(M_cloud[i] < 1.1 * M_cloud_min,cloud_Mdots[i]), color=cloud_colors[i])
-ax3.plot(r/kpc, np.sum(cloud_Mdots, axis=0), dashes=[4,3], label=r"${\rm clouds}$" , color='k')
-ax3.set_ylabel(r'$\dot{M} \, [M_\odot / {\rm yr}]$')    
-ax3.legend(loc='best',fontsize=7, frameon=False)
-ax3.loglog()
-ax3.set_yscale('log')
-ax3.set_xscale('log')
-ax3.set_xlim((2.9e-1, 30.5))
-ax3.set_ylim(bottom=3e-3)
-
-ax1.set_xticklabels([])
-# ax2.set_xticklabels([])
-# ax3.set_xlabel(r'${\rm radius} \, [{\rm kpc}]$')
-ax3.set_xticklabels([])
-ax2.set_xlabel(r'${\rm radius} \, [{\rm kpc}]$')
-
-fig.set_size_inches(4,7)
-plt.show()
-
-

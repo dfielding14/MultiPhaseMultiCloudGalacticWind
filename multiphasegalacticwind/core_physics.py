@@ -81,13 +81,14 @@ redshift = 0.5
 """
 Cooling curve as a function of density, temperature, metallicity, redshift
 """
-# First check if Lambda_tab_redshifts.npz exists in current directory
-file = glob.glob('./Lambda_tab_redshifts.npz')
-if len(file) == 0:
-    # Check in the Tables directory
-    file = glob.glob('/Users/dbf75/Work/Research/CCAResearch/Tables/Lambda_tab_redshifts.npz')
-if len(file) > 0:
-    data = np.load(file[0])
+# Load cooling table from package data directory
+import os
+package_dir = os.path.dirname(os.path.abspath(__file__))
+cooling_table_path = os.path.join(package_dir, 'data', 'Lambda_tab_redshifts.npz')
+
+# Check if the cooling table exists in the package
+if os.path.exists(cooling_table_path):
+    data = np.load(cooling_table_path)
     Lambda_tab = data['Lambda_tab']
     redshifts  = data['redshifts']
     Zs         = data['Zs']
@@ -134,7 +135,11 @@ else:
                 for i_z, zz in enumerate(redshifts):
                     Lambda_tab[i_n, i_T, i_Z, i_z] = HHeCooling[zz].ev(lT, ln) + Z * ZCooling[zz].ev(lT, ln)
     
-    np.savez('./Lambda_tab_redshifts.npz', Lambda_tab=Lambda_tab, redshifts=redshifts, Zs=Zs, log_Tbins=log_Tbins, log_nHbins=log_nHbins)
+    # Save to package data directory
+    save_path = os.path.join(package_dir, 'data', 'Lambda_tab_redshifts.npz')
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    np.savez(save_path, Lambda_tab=Lambda_tab, redshifts=redshifts, Zs=Zs, log_Tbins=log_Tbins, log_nHbins=log_nHbins)
+    print(f"Saved cooling table to {save_path}")
     Lambda      = interpolate.RegularGridInterpolator((log_nHbins,log_Tbins,Zs,redshifts), Lambda_tab, bounds_error=False, fill_value=0)
     
     elapsed = time.time() - start_time

@@ -1,6 +1,10 @@
 # Exclude Paper directory
 Paper/
 
+# Large data files
+Lambda_tab_redshifts.npz.bak
+Lambda_tab_redshifts_full.npz
+
 # Python
 __pycache__/
 *.py[cod]

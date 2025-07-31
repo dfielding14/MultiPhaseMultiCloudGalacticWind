@@ -1,10 +1,8 @@
-# Multiphase Galactic Wind Evolution Code
+# MultiPhase MultiCloud Galactic Wind Model
 
-This repository contains the Python implementation of the multiphase galactic wind model described in:
+A fast Python package for simulating multiphase galactic winds with embedded clouds, optimized for MCMC fitting.
 
-**"The Structure of Multiphase Galactic Winds"**  
-Drummond B. Fielding & Greg L. Bryan  
-*Astrophysical Journal* (2024)
+Based on: **"The Structure of Multiphase Galactic Winds"** by Drummond B. Fielding & Greg L. Bryan (*Astrophysical Journal*, 2024)
 
 ## Overview
 
@@ -207,23 +205,45 @@ If you use this code in your research, please cite:
 }
 ```
 
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/dfielding14/MultiPhaseMultiCloudGalacticWind.git
+cd MultiPhaseMultiCloudGalacticWind
+
+# Install the package
+pip install -e .
+
+# For plotting features (optional)
+pip install -e ".[plotting]"
+```
+
 ## Quick Start
 
-1. Clone the repository:
-```bash
-git clone https://github.com/dfielding14/GalacticWindsMultiphaseAnalytic.git
-cd GalacticWindsMultiphaseAnalytic
+```python
+from multiphasegalacticwind import WindModel, plot_wind_solution
+
+# Create a wind model
+model = WindModel(
+    SFR=20.0,           # Star formation rate [Msun/yr]
+    eta_M=0.1,          # Hot phase mass loading
+    eta_M_cold=1.0,     # Cold phase mass loading
+    v_circ=150.0        # Circular velocity [km/s]
+)
+
+# Run the simulation
+solution = model.run()
+
+# Access results
+print(f"Wind velocity at 10 kpc: {solution.v_at_10kpc:.1f} km/s")
+print(f"Mass loading at 10 kpc: {solution.mass_loading_at_10kpc:.2f}")
+
+# Create publication-quality plots
+fig, axes = plot_wind_solution(solution)
 ```
 
-2. Install dependencies:
-```bash
-pip install numpy scipy matplotlib cmasher h5py jupyter
-```
-
-3. Run example notebooks:
-```bash
-jupyter notebook multicloud.ipynb
-```
+See `examples/basic_example.py` for a complete example.
 
 ## License
 

@@ -1,0 +1,217 @@
+"""
+Functions for calculating observables from wind solutions for comparison with data.
+
+This module provides functions to calculate velocity distributions (dN/dv) and their
+moments, which are useful for comparing model predictions with observations.
+"""
+
+import numpy as np
+from .core_physics import mp, mu_mol, kpc, Omwind
+
+
+def calculate_cloud_density(solution, cloud_index=None, 
+                           injection_radius_kpc=0.3, 
+                           injection_power=6.0):
+    """
+    Calculate the number density of clouds as a function of radius.
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    cloud_index : int, optional
+        Index of specific cloud species. If None, sum over all species.
+    injection_radius_kpc : float
+        Radius below which cloud injection is enhanced [kpc]
+    injection_power : float
+        Power law index for cloud injection profile
+        
+    Returns
+    -------
+    cloud_density : array
+        Number density of clouds [cm^-3]
+    """
+    r = solution.sol.t  # radius in cm
+    r_kpc = r / kpc
+    
+    # Get cloud masses and velocities
+    if cloud_index is not None:
+        M_cloud = solution.M_clouds[cloud_index]
+        Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]
+    else:
+        M_cloud = solution.M_cloud_tot
+        Ndot_cloud = np.sum(solution.model.Ndot_cloud0)
+    
+    v_cloud = solution.sol.y[3 + solution.model.N_cloud_species]  # cm/s
+    
+    # Cloud injection profile
+    injection_profile = np.where(r_kpc < injection_radius_kpc,
+                               (r_kpc / injection_radius_kpc)**injection_power,
+                               1.0)
+    
+    # Calculate cloud density
+    # Number conservation: Ndot = Omega * r^2 * v * n
+    cloud_density = (Ndot_cloud * injection_profile * M_cloud / 
+                    (Omwind * r**2 * v_cloud))
+    
+    return cloud_density
+
+
+def calculate_velocity_distribution(solution, cloud_index=None,
+                                  r_min_kpc=0.05, r_max_kpc=10.0,
+                                  velocity_units='km/s',
+                                  injection_radius_kpc=0.3,
+                                  injection_power=6.0):
+    """
+    Calculate dN/dv - the velocity distribution of clouds.
+    
+    Uses the chain rule: dN/dv = (dN/dr) / (dv/dr)
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    cloud_index : int, optional
+        Index of specific cloud species. If None, sum over all species.
+    r_min_kpc : float
+        Minimum radius to include [kpc]
+    r_max_kpc : float
+        Maximum radius to include [kpc]
+    velocity_units : str
+        Units for velocity: 'km/s' or 'cm/s'
+    injection_radius_kpc : float
+        Radius below which cloud injection is enhanced [kpc]
+    injection_power : float
+        Power law index for cloud injection profile
+        
+    Returns
+    -------
+    v_cloud : array
+        Cloud velocities [km/s or cm/s]
+    dN_dv : array
+        Velocity distribution [number per velocity unit]
+    """
+    # Get radius array
+    r = solution.sol.t  # cm
+    r_kpc = r / kpc
+    
+    # Find indices for radius range
+    mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
+    r_use = r[mask]
+    
+    # Get cloud density
+    cloud_density = calculate_cloud_density(solution, cloud_index,
+                                          injection_radius_kpc, injection_power)
+    cloud_density_use = cloud_density[mask]
+    
+    # Convert to number density
+    n_cloud = cloud_density_use / (mu_mol * mp)
+    
+    # Get cloud velocity
+    v_cloud = solution.sol.y[3 + solution.model.N_cloud_species, mask]  # cm/s
+    
+    # Calculate velocity gradient
+    dv_dr = np.gradient(v_cloud, r_use)
+    
+    # Apply chain rule: dN/dv = (dN/dr) / (dv/dr)
+    # Avoid division by zero
+    dN_dv = np.where(np.abs(dv_dr) > 1e-10, n_cloud / np.abs(dv_dr), 0)
+    
+    # Convert units if needed
+    if velocity_units == 'km/s':
+        v_cloud = v_cloud / 1e5  # cm/s to km/s
+        dN_dv = dN_dv * 1e5  # adjust distribution
+    
+    return v_cloud, dN_dv
+
+
+def calculate_velocity_moments(v_cloud, dN_dv, max_order=3):
+    """
+    Calculate moments of the velocity distribution.
+    
+    Parameters
+    ----------
+    v_cloud : array
+        Cloud velocities
+    dN_dv : array
+        Velocity distribution
+    max_order : int
+        Maximum moment order to calculate
+        
+    Returns
+    -------
+    moments : dict
+        Dictionary containing:
+        - 'raw': Raw moments (0th through max_order)
+        - 'mean': Mean velocity
+        - 'dispersion': Velocity dispersion
+        - 'skewness': Skewness (if max_order >= 3)
+    """
+    # Calculate raw moments
+    raw_moments = []
+    for n in range(max_order + 1):
+        moment = np.trapz(dN_dv * v_cloud**n, v_cloud)
+        raw_moments.append(moment)
+    
+    # Calculate central moments
+    zeroth = raw_moments[0]
+    results = {'raw': raw_moments}
+    
+    if zeroth > 0:
+        # Mean velocity
+        mean_v = raw_moments[1] / zeroth
+        results['mean'] = mean_v
+        
+        if max_order >= 2:
+            # Velocity dispersion
+            var = raw_moments[2] / zeroth - mean_v**2
+            results['dispersion'] = np.sqrt(max(0, var))
+            
+            if max_order >= 3 and var > 0:
+                # Skewness
+                third_central = raw_moments[3] / zeroth - 3 * mean_v * raw_moments[2] / zeroth + 2 * mean_v**3
+                results['skewness'] = third_central / var**1.5
+    
+    return results
+
+
+def calculate_mass_weighted_velocity(solution, r_eval_kpc=10.0):
+    """
+    Calculate mass-weighted average velocity at a given radius.
+    
+    This is often more relevant for observations than number-weighted velocity.
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    r_eval_kpc : float or array
+        Radius(ii) at which to evaluate [kpc]
+        
+    Returns
+    -------
+    v_mass_weighted : float or array
+        Mass-weighted velocity [km/s]
+    """
+    r_eval_kpc = np.atleast_1d(r_eval_kpc)
+    v_mass_weighted = np.zeros_like(r_eval_kpc)
+    
+    for i, r_kpc in enumerate(r_eval_kpc):
+        if r_kpc <= solution.r[-1]:
+            # Hot phase contribution
+            v_hot = np.interp(r_kpc, solution.r, solution.v)
+            rho_hot = np.interp(r_kpc, solution.r, solution.rho)
+            
+            # Cold phase contribution
+            v_cold = np.interp(r_kpc, solution.r, solution.v_cl)
+            M_cloud_tot = np.interp(r_kpc, solution.r, solution.M_cloud_tot)
+            
+            # Mass flux contributions
+            Mdot_hot = 4 * np.pi * (r_kpc * kpc)**2 * rho_hot * v_hot * 1e5
+            Mdot_cold = 4 * np.pi * (r_kpc * kpc)**2 * rho_hot * v_cold * 1e5 * \
+                       M_cloud_tot / np.sum(solution.model.M_cloud0)
+            
+            # Mass-weighted average
+            v_mass_weighted[i] = (Mdot_hot * v_hot + Mdot_cold * v_cold) / (Mdot_hot + Mdot_cold)
+    
+    return v_mass_weighted[0] if len(r_eval_kpc) == 1 else v_mass_weighted

@@ -219,3 +219,67 @@ def plot_profiles(solution, quantities=['velocity', 'density', 'temperature'],
     axes[-1].set_xlim(solution.r[0], solution.r[-1])
     
     return fig, axes
+
+
+def plot_velocity_distribution(solution, cloud_index=None, 
+                             figsize=(5, 4), show_moments=True,
+                             **kwargs):
+    """
+    Plot the velocity distribution dN/dv.
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    cloud_index : int, optional
+        Index of specific cloud species. If None, sum over all.
+    figsize : tuple
+        Figure size in inches
+    show_moments : bool
+        Whether to show mean and dispersion on plot
+    **kwargs : dict
+        Additional arguments for calculate_velocity_distribution
+        
+    Returns
+    -------
+    fig, ax : matplotlib objects
+    """
+    setup_plotting_style()
+    
+    # Calculate velocity distribution
+    v_cloud, dN_dv = solution.calculate_velocity_distribution(cloud_index=cloud_index, **kwargs)
+    
+    # Calculate moments
+    from .observables import calculate_velocity_moments
+    moments = calculate_velocity_moments(v_cloud, dN_dv)
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    
+    # Plot distribution
+    ax.plot(v_cloud, dN_dv, 'k-', lw=1.5)
+    
+    # Add moment annotations if requested
+    if show_moments and moments['raw'][0] > 0:
+        mean_v = moments.get('mean', 0)
+        disp_v = moments.get('dispersion', 0)
+        
+        # Add vertical lines for mean ± dispersion
+        ax.axvline(mean_v, color='k', ls='--', lw=1, alpha=0.5)
+        if disp_v > 0:
+            ax.axvline(mean_v - disp_v, color='k', ls=':', lw=1, alpha=0.5)
+            ax.axvline(mean_v + disp_v, color='k', ls=':', lw=1, alpha=0.5)
+        
+        # Add text annotation
+        ax.text(0.95, 0.95, 
+                f'$\\langle v \\rangle = {mean_v:.0f}$ km/s\n' + 
+                f'$\\sigma_v = {disp_v:.0f}$ km/s',
+                transform=ax.transAxes, ha='right', va='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    ax.set_xlabel(r'$v$ [km/s]')
+    ax.set_ylabel(r'$dN/dv$ [(km/s)$^{-1}$]')
+    ax.set_xlim(0, None)
+    ax.set_ylim(0, None)
+    
+    return fig, ax

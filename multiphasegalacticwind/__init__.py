@@ -6,7 +6,12 @@ Based on Fielding & Bryan (2024).
 """
 
 from .wind_model import WindModel
-from .plotting import setup_plotting_style, plot_wind_solution
+from .plotting import setup_plotting_style, plot_wind_solution, plot_velocity_distribution
+from .observables import (calculate_velocity_distribution, 
+                         calculate_velocity_moments,
+                         calculate_mass_weighted_velocity)
 
 __version__ = "0.1.0"
-__all__ = ["WindModel", "setup_plotting_style", "plot_wind_solution"]
+__all__ = ["WindModel", "setup_plotting_style", "plot_wind_solution",
+           "plot_velocity_distribution", "calculate_velocity_distribution", 
+           "calculate_velocity_moments", "calculate_mass_weighted_velocity"]

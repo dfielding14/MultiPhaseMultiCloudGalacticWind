@@ -206,3 +206,40 @@ class Solution:
             return Mdot_10kpc / self.model.SFR
         else:
             return np.nan
+    
+    def calculate_velocity_distribution(self, **kwargs):
+        """
+        Calculate the velocity distribution dN/dv.
+        
+        Parameters
+        ----------
+        **kwargs : dict
+            Arguments passed to observables.calculate_velocity_distribution
+            
+        Returns
+        -------
+        v_cloud : array
+            Cloud velocities [km/s by default]
+        dN_dv : array
+            Velocity distribution
+        """
+        from .observables import calculate_velocity_distribution
+        return calculate_velocity_distribution(self, **kwargs)
+    
+    def calculate_velocity_moments(self, **kwargs):
+        """
+        Calculate velocity distribution and its moments.
+        
+        Parameters
+        ----------
+        **kwargs : dict
+            Arguments for velocity distribution calculation
+            
+        Returns
+        -------
+        moments : dict
+            Dictionary with mean, dispersion, etc.
+        """
+        from .observables import calculate_velocity_moments
+        v_cloud, dN_dv = self.calculate_velocity_distribution(**kwargs)
+        return calculate_velocity_moments(v_cloud, dN_dv)

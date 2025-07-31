@@ -245,6 +245,35 @@ fig, axes = plot_wind_solution(solution)
 
 See `examples/basic_example.py` for a complete example.
 
+## Key Features
+
+- **Fast simulations** optimized for MCMC parameter fitting
+- **Flexible cloud distributions** with power-law mass functions  
+- **Observable predictions** including velocity distributions (dN/dv) and moments
+- **Publication-quality plotting** with consistent aesthetic style
+- **Simple API** while preserving all physics and units from the paper
+
+## Calculating Observables
+
+The package includes functions for calculating velocity distributions and moments
+for comparison with observations:
+
+```python
+# Calculate velocity distribution dN/dv
+v_cloud, dN_dv = solution.calculate_velocity_distribution()
+
+# Get velocity moments
+moments = solution.calculate_velocity_moments()
+print(f"Mean velocity: {moments['mean']:.1f} km/s")
+print(f"Velocity dispersion: {moments['dispersion']:.1f} km/s")
+
+# Plot velocity distribution
+from multiphasegalacticwind import plot_velocity_distribution
+fig, ax = plot_velocity_distribution(solution)
+```
+
+See `examples/observational_comparison.py` for detailed examples.
+
 ## License
 
 This code is released under the MIT License. See LICENSE file for details.

@@ -1,6 +1,6 @@
 # MultiPhase MultiCloud Galactic Wind Model
 
-A fast Python package for simulating multiphase galactic winds with embedded clouds, optimized for MCMC fitting.
+A fast Python package for simulating multiphase galactic winds with embedded clouds, optimized for MCMC fitting and observational comparisons.
 
 Based on: **"The Structure of Multiphase Galactic Winds"** by Drummond B. Fielding & Greg L. Bryan (*Astrophysical Journal*, 2024)
 
@@ -221,29 +221,63 @@ pip install -e ".[plotting]"
 
 ## Quick Start
 
+### Simple Example
+
 ```python
-from multiphasegalacticwind import WindModel, plot_wind_solution
+from multiphasegalacticwind import WindModel, plot_wind_solution, plot_velocity_distribution
 
-# Create a wind model
-model = WindModel(
-    SFR=20.0,           # Star formation rate [Msun/yr]
-    eta_M=0.1,          # Hot phase mass loading
-    eta_M_cold=1.0,     # Cold phase mass loading
-    v_circ=150.0        # Circular velocity [km/s]
-)
-
-# Run the simulation
+# Create and run a wind model
+model = WindModel(SFR=20.0, eta_M=0.1, eta_M_cold=1.0)
 solution = model.run()
 
-# Access results
+# Get key results
 print(f"Wind velocity at 10 kpc: {solution.v_at_10kpc:.1f} km/s")
 print(f"Mass loading at 10 kpc: {solution.mass_loading_at_10kpc:.2f}")
 
-# Create publication-quality plots
-fig, axes = plot_wind_solution(solution)
+# Calculate velocity distribution and moments
+moments = solution.calculate_velocity_moments()
+print(f"Mean velocity: {moments['mean']:.1f} km/s")
+print(f"Velocity dispersion: {moments['dispersion']:.1f} km/s")
+
+# Create plots
+fig1, axes = plot_wind_solution(solution)
+fig2, ax = plot_velocity_distribution(solution)
 ```
 
-See `examples/basic_example.py` for a complete example.
+### Detailed Example
+
+```python
+# Create a more detailed model
+model = WindModel(
+    # Galaxy properties
+    v_circ=150.0,              # Circular velocity [km/s]
+    redshift=0.0,              # Redshift
+    
+    # Wind properties  
+    SFR=20.0,                  # Star formation rate [Msun/yr]
+    eta_M=0.1,                 # Hot phase mass loading
+    eta_M_cold=1.0,            # Cold phase mass loading
+    eta_E=1.0,                 # Energy loading
+    
+    # Initial conditions
+    r_star_kpc=0.3,            # Sonic radius [kpc]
+    n_star=0.1,                # Hot phase density [cm^-3]
+    v_star=200.0,              # Initial velocity [km/s]
+    T_star=5e6,                # Hot phase temperature [K]
+    
+    # Cloud properties
+    cloud_mass_range=(1, 1e5), # Cloud mass range [Msun]
+    cloud_alpha=2.0,           # Power law slope
+    N_cloud_species=10,        # Number of cloud mass bins
+)
+
+solution = model.run()
+```
+
+See `examples/` directory for more examples including:
+- `simple_example.py` - Minimal working example
+- `basic_example.py` - Full tutorial with parameter studies  
+- `observational_comparison.py` - Velocity distributions and observables
 
 ## Key Features
 
@@ -255,24 +289,60 @@ See `examples/basic_example.py` for a complete example.
 
 ## Calculating Observables
 
-The package includes functions for calculating velocity distributions and moments
-for comparison with observations:
+The package provides comprehensive tools for calculating observables for comparison with data:
+
+### Velocity Distributions
+
+Calculate velocity distributions (dN/dv) using the chain rule transformation:
 
 ```python
-# Calculate velocity distribution dN/dv
+# Calculate dN/dv for all clouds
 v_cloud, dN_dv = solution.calculate_velocity_distribution()
 
-# Get velocity moments
+# For specific cloud mass bins
+v_cloud, dN_dv = solution.calculate_velocity_distribution(cloud_index=5)
+
+# Customize radius range and units
+v_cloud, dN_dv = solution.calculate_velocity_distribution(
+    r_min_kpc=0.1,       # Inner radius
+    r_max_kpc=10.0,      # Outer radius  
+    velocity_units='km/s' # or 'cm/s'
+)
+```
+
+### Velocity Moments
+
+Calculate statistical moments of the velocity distribution:
+
+```python
 moments = solution.calculate_velocity_moments()
 print(f"Mean velocity: {moments['mean']:.1f} km/s")
 print(f"Velocity dispersion: {moments['dispersion']:.1f} km/s")
-
-# Plot velocity distribution
-from multiphasegalacticwind import plot_velocity_distribution
-fig, ax = plot_velocity_distribution(solution)
+print(f"Skewness: {moments['skewness']:.2f}")
 ```
 
-See `examples/observational_comparison.py` for detailed examples.
+### Mass-Weighted Velocities
+
+For more direct comparison with observations:
+
+```python
+from multiphasegalacticwind import calculate_mass_weighted_velocity
+
+# At specific radii
+v_mass = calculate_mass_weighted_velocity(solution, r_eval_kpc=[1, 5, 10])
+```
+
+### Plotting
+
+Create publication-quality plots:
+
+```python
+# Plot velocity distribution with moments
+fig, ax = plot_velocity_distribution(solution, show_moments=True)
+
+# Plot wind profiles
+fig, axes = plot_wind_solution(solution, show_hot_only=True, show_clouds=True)
+```
 
 ## License
 

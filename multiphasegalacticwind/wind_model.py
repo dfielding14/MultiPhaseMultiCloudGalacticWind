@@ -218,10 +218,16 @@ class WindModel:
         injection_radius = self.config.cold_cloud_injection_radial_extent
         injection_power = self.config.cold_cloud_injection_radial_power
         
-        # Extended params tuple including source terms
+        # Pre-calculate cooling interpolator for efficiency
+        from .cooling import get_cooling_interpolator
+        cooling_interpolator = get_cooling_interpolator(
+            self.config.mu, self.config.metallicity, self.config.redshift
+        )
+        
+        # Extended params tuple including source terms and cooling interpolator
         params = (v_circ_cgs, self.Ndot_cloud0, self.T_cl, 
                   injection_radius, injection_power, self.config.to_dict(),
-                  r0, Edot_per_Vol, Mdot_per_Vol)
+                  r0, Edot_per_Vol, Mdot_per_Vol, cooling_interpolator)
         
         # Create event functions with proper parameters
         cold_wind = create_cold_wind_event(self.T_cl, self.config.mu)

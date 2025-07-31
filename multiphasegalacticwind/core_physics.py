@@ -23,7 +23,6 @@ import time
 # Import cooling functions
 from .cooling import (
     tcool_P,
-    get_cooling_interpolator,
     get_tcool_min_interpolators
 )
 
@@ -285,10 +284,10 @@ def Wind_Evo(r, state, params):
     """
     
     # Unpack parameters
-    if len(params) != 9:
-        raise ValueError(f"Wind_Evo requires 9 parameters, got {len(params)}")
+    if len(params) != 10:
+        raise ValueError(f"Wind_Evo requires 10 parameters, got {len(params)}")
         
-    v_circ, Ndot_cloud0, T_cloud, injection_radius, injection_power, config_dict, r0, Edot_per_Vol, Mdot_per_Vol = params
+    v_circ, Ndot_cloud0, T_cloud, injection_radius, injection_power, config_dict, r0, Edot_per_Vol, Mdot_per_Vol, Lambda_P_rho = params
     
     # Extract config values
     M_cloud_min = config_dict['M_cloud_min']
@@ -305,8 +304,8 @@ def Wind_Evo(r, state, params):
     metallicity = config_dict.get('metallicity', 1.0)
     redshift = config_dict.get('redshift', 0.0)
     
-    # Get cooling interpolator for current parameters
-    Lambda_P_rho = get_cooling_interpolator(mu, metallicity, redshift)
+    # Use pre-calculated cooling interpolator from params
+    # Lambda_P_rho is now params[9]
     
     # Determine N_cloud_species from state vector length
     # state has: 4 wind vars + 3*N_cloud_species cloud vars

@@ -175,6 +175,87 @@ def calculate_velocity_moments(v_cloud, dN_dv, max_order=3):
     return results
 
 
+def calculate_column_density_distribution(solution, cloud_index=None,
+                                        r_min_kpc=0.05, r_max_kpc=100.0,
+                                        injection_radius_kpc=0.3,
+                                        injection_power=6.0,
+                                        path_length_method='diameter'):
+    """
+    Calculate dN/dv in column density units [cm^-2 / (km/s)].
+    
+    This is suitable for comparison with absorption line observations.
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    cloud_index : int, optional
+        Index of specific cloud species. If None, sum over all species.
+    r_min_kpc : float
+        Minimum radius to include [kpc]
+    r_max_kpc : float
+        Maximum radius to include [kpc]
+    injection_radius_kpc : float
+        Radius below which cloud injection is enhanced [kpc]
+    injection_power : float
+        Power law index for cloud injection profile
+    path_length_method : str
+        Method for calculating path length:
+        - 'diameter': Use 2r (path through center)
+        - 'shell': Use shell thickness dr
+        
+    Returns
+    -------
+    v_cloud : array
+        Cloud velocities [km/s]
+    dN_dv_column : array
+        Column density distribution [cm^-2 / (km/s)]
+    """
+    # Get radius array
+    r = solution.sol.t  # cm
+    r_kpc = r / kpc
+    
+    # Find indices for radius range
+    mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
+    r_use = r[mask]
+    
+    # Get cloud density
+    cloud_density = calculate_cloud_density(solution, cloud_index,
+                                          injection_radius_kpc, injection_power)
+    cloud_density_use = cloud_density[mask]
+    
+    # Convert to number density
+    n_cloud = cloud_density_use / (mu_mol * mp)
+    
+    # Get cloud velocity
+    v_cloud = solution.sol.y[3 + solution.model.N_cloud_species, mask] / 1e5  # km/s
+    
+    # Calculate path length through each shell
+    if path_length_method == 'diameter':
+        # Path length is approximately the diameter
+        path_length = 2 * r_use
+    elif path_length_method == 'shell':
+        # Path length is the shell thickness
+        dr = np.gradient(r_use)
+        path_length = np.abs(dr)
+    else:
+        raise ValueError(f"Unknown path_length_method: {path_length_method}")
+    
+    # Calculate column density per radius interval
+    dN_dr = n_cloud * path_length
+    
+    # Calculate velocity gradient
+    dv_dr = np.gradient(v_cloud * 1e5, r_use)  # Convert back to cm/s for gradient
+    
+    # Apply chain rule: dN/dv = dN/dr / (dv/dr)
+    # Result is in cm^-2 / (cm/s), convert to cm^-2 / (km/s)
+    dN_dv_column = np.where(np.abs(dv_dr) > 1e-10, 
+                           dN_dr / np.abs(dv_dr) * 1e5,  # multiply by 1e5 for km/s units
+                           0)
+    
+    return v_cloud, dN_dv_column
+
+
 def calculate_mass_weighted_velocity(solution, r_eval_kpc=10.0):
     """
     Calculate mass-weighted average velocity at a given radius.

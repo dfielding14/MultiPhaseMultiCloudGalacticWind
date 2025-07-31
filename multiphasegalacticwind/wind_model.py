@@ -243,3 +243,22 @@ class Solution:
         from .observables import calculate_velocity_moments
         v_cloud, dN_dv = self.calculate_velocity_distribution(**kwargs)
         return calculate_velocity_moments(v_cloud, dN_dv)
+    
+    def calculate_column_density_distribution(self, **kwargs):
+        """
+        Calculate column density distribution dN/dv in cm^-2 / (km/s).
+        
+        Parameters
+        ----------
+        **kwargs : dict
+            Arguments passed to observables.calculate_column_density_distribution
+            
+        Returns
+        -------
+        v_cloud : array
+            Cloud velocities [km/s]
+        dN_dv_column : array
+            Column density distribution [cm^-2 / (km/s)]
+        """
+        from .observables import calculate_column_density_distribution
+        return calculate_column_density_distribution(self, **kwargs)

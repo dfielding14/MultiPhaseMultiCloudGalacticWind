@@ -278,6 +278,7 @@ See `examples/` directory for more examples including:
 - `simple_example.py` - Minimal working example
 - `basic_example.py` - Full tutorial with parameter studies  
 - `observational_comparison.py` - Velocity distributions and observables
+- `column_density_example.py` - Column density distributions for absorption line studies
 
 ## Key Features
 
@@ -308,6 +309,22 @@ v_cloud, dN_dv = solution.calculate_velocity_distribution(
     r_max_kpc=10.0,      # Outer radius  
     velocity_units='km/s' # or 'cm/s'
 )
+```
+
+### Column Density Distributions
+
+For absorption line studies, calculate column density distributions in standard units:
+
+```python
+# Calculate dN/dv in cm^-2 / (km/s)
+v_cloud, dN_dv_column = solution.calculate_column_density_distribution()
+
+# Plot with proper units
+from multiphasegalacticwind import plot_column_density_distribution
+fig, ax = plot_column_density_distribution(solution)
+
+# Use log scale for better visibility
+fig, ax = plot_column_density_distribution(solution, log_scale=True)
 ```
 
 ### Velocity Moments

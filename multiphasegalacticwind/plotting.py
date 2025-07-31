@@ -283,3 +283,70 @@ def plot_velocity_distribution(solution, cloud_index=None,
     ax.set_ylim(0, None)
     
     return fig, ax
+
+
+def plot_column_density_distribution(solution, cloud_index=None,
+                                   figsize=(5, 4), 
+                                   xlim=None, ylim=None,
+                                   log_scale=False,
+                                   **kwargs):
+    """
+    Plot column density distribution dN/dv in units of cm^-2 / (km/s).
+    
+    This is the standard format for absorption line observations.
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    cloud_index : int, optional
+        Index of specific cloud species. If None, sum over all.
+    figsize : tuple
+        Figure size in inches
+    xlim : tuple, optional
+        Velocity axis limits [km/s]
+    ylim : tuple, optional  
+        Column density axis limits
+    log_scale : bool
+        Whether to use log scale for y-axis
+    **kwargs : dict
+        Additional arguments for calculate_column_density_distribution
+        
+    Returns
+    -------
+    fig, ax : matplotlib objects
+    """
+    setup_plotting_style()
+    
+    # Calculate column density distribution
+    from .observables import calculate_column_density_distribution
+    v_cloud, dN_dv_column = calculate_column_density_distribution(solution, 
+                                                                 cloud_index=cloud_index, 
+                                                                 **kwargs)
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    
+    # Plot distribution
+    ax.plot(v_cloud, dN_dv_column, 'k-', lw=1.5)
+    
+    # Set scales
+    if log_scale:
+        ax.set_yscale('log')
+    
+    # Labels with proper units
+    ax.set_xlabel(r'$v$ [km s$^{-1}$]')
+    ax.set_ylabel(r'$dN/dv$ [cm$^{-2}$ (km s$^{-1}$)$^{-1}$]')
+    
+    # Set limits
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    else:
+        ax.set_xlim(0, None)
+        
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    elif not log_scale:
+        ax.set_ylim(0, None)
+    
+    return fig, ax

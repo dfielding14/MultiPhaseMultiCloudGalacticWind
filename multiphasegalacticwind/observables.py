@@ -256,6 +256,69 @@ def calculate_column_density_distribution(solution, cloud_index=None,
     return v_cloud, dN_dv_column
 
 
+def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.0,
+                                      injection_radius_kpc=0.3,
+                                      injection_power=6.0,
+                                      path_length_method='diameter'):
+    """
+    Calculate dN/dv for each cloud species separately.
+    
+    This is useful for understanding which cloud masses contribute to different
+    parts of the velocity distribution.
+    
+    Parameters
+    ----------
+    solution : Solution object
+        The wind solution from WindModel.run()
+    r_min_kpc : float
+        Minimum radius to include [kpc]
+    r_max_kpc : float
+        Maximum radius to include [kpc]
+    injection_radius_kpc : float
+        Radius below which cloud injection is enhanced [kpc]
+    injection_power : float
+        Power law index for cloud injection profile
+    path_length_method : str
+        Method for calculating path length
+        
+    Returns
+    -------
+    v_cloud : array
+        Cloud velocities [km/s]
+    dN_dv_species : dict
+        Dictionary with keys:
+        - 'total': Total dN/dv from all species [cm^-2 / (km/s)]
+        - 'species': List of dN/dv for each species [cm^-2 / (km/s)]
+        - 'M_cloud0': Initial cloud masses for each species [Msun]
+    """
+    # Calculate total
+    v_cloud, dN_dv_total = calculate_column_density_distribution(
+        solution, cloud_index=None,
+        r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
+        injection_radius_kpc=injection_radius_kpc,
+        injection_power=injection_power,
+        path_length_method=path_length_method
+    )
+    
+    # Calculate for each species
+    dN_dv_list = []
+    for i in range(solution.model.N_cloud_species):
+        _, dN_dv_i = calculate_column_density_distribution(
+            solution, cloud_index=i,
+            r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
+            injection_radius_kpc=injection_radius_kpc,
+            injection_power=injection_power,
+            path_length_method=path_length_method
+        )
+        dN_dv_list.append(dN_dv_i)
+    
+    return v_cloud, {
+        'total': dN_dv_total,
+        'species': dN_dv_list,
+        'M_cloud0': solution.model.M_cloud0
+    }
+
+
 def calculate_mass_weighted_velocity(solution, r_eval_kpc=10.0):
     """
     Calculate mass-weighted average velocity at a given radius.

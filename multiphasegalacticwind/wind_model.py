@@ -262,3 +262,22 @@ class Solution:
         """
         from .observables import calculate_column_density_distribution
         return calculate_column_density_distribution(self, **kwargs)
+    
+    def calculate_column_density_by_species(self, **kwargs):
+        """
+        Calculate column density distribution for each cloud species.
+        
+        Parameters
+        ----------
+        **kwargs : dict
+            Arguments passed to observables.calculate_column_density_by_species
+            
+        Returns
+        -------
+        v_cloud : array
+            Cloud velocities [km/s]
+        dN_dv_species : dict
+            Dictionary with 'total', 'species' list, and 'M_cloud0'
+        """
+        from .observables import calculate_column_density_by_species
+        return calculate_column_density_by_species(self, **kwargs)

@@ -316,12 +316,25 @@ v_cloud, dN_dv = solution.calculate_velocity_distribution(
 For absorption line studies, calculate column density distributions in standard units:
 
 ```python
-# Calculate dN/dv in cm^-2 / (km/s)
+# Calculate total dN/dv in cm^-2 / (km/s)
 v_cloud, dN_dv_column = solution.calculate_column_density_distribution()
+
+# Calculate for a specific cloud mass
+v_cloud, dN_dv_i = solution.calculate_column_density_distribution(cloud_index=5)
+
+# Get all cloud species separately
+v_cloud, dN_dv_dict = solution.calculate_column_density_by_species()
+# Returns dict with:
+#   'total': Total dN/dv
+#   'species': List of dN/dv for each cloud mass
+#   'M_cloud0': Initial cloud masses
 
 # Plot with proper units
 from multiphasegalacticwind import plot_column_density_distribution
 fig, ax = plot_column_density_distribution(solution)
+
+# Show individual cloud contributions
+fig, ax = plot_column_density_distribution(solution, show_species=True)
 
 # Use log scale for better visibility
 fig, ax = plot_column_density_distribution(solution, log_scale=True)

@@ -289,6 +289,8 @@ def plot_column_density_distribution(solution, cloud_index=None,
                                    figsize=(5, 4), 
                                    xlim=None, ylim=None,
                                    log_scale=False,
+                                   show_species=False,
+                                   species_alpha=0.5,
                                    **kwargs):
     """
     Plot column density distribution dN/dv in units of cm^-2 / (km/s).
@@ -309,6 +311,10 @@ def plot_column_density_distribution(solution, cloud_index=None,
         Column density axis limits
     log_scale : bool
         Whether to use log scale for y-axis
+    show_species : bool
+        Whether to show individual cloud species contributions
+    species_alpha : float
+        Transparency for individual species lines
     **kwargs : dict
         Additional arguments for calculate_column_density_distribution
         
@@ -318,17 +324,46 @@ def plot_column_density_distribution(solution, cloud_index=None,
     """
     setup_plotting_style()
     
-    # Calculate column density distribution
-    from .observables import calculate_column_density_distribution
-    v_cloud, dN_dv_column = calculate_column_density_distribution(solution, 
-                                                                 cloud_index=cloud_index, 
-                                                                 **kwargs)
-    
-    # Create plot
-    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
-    
-    # Plot distribution
-    ax.plot(v_cloud, dN_dv_column, 'k-', lw=1.5)
+    if show_species and cloud_index is None:
+        # Calculate for all species
+        from .observables import calculate_column_density_by_species
+        v_cloud, dN_dv_dict = calculate_column_density_by_species(solution, **kwargs)
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+        
+        # Get cloud colors
+        if HAS_CMASHER:
+            cloud_colors = cmr.take_cmap_colors('cmr.guppy', solution.model.N_cloud_species, 
+                                               cmap_range=(0.0, 1.0), return_fmt='hex')
+        else:
+            cloud_colors = plt.cm.viridis(np.linspace(0, 1, solution.model.N_cloud_species))
+        
+        # Plot individual species
+        for i, dN_dv_i in enumerate(dN_dv_dict['species']):
+            M_cloud = dN_dv_dict['M_cloud0'][i]
+            ax.plot(v_cloud, dN_dv_i, '-', color=cloud_colors[i], 
+                   alpha=species_alpha, lw=1,
+                   label=f'$M_{{cl}} = 10^{{{np.log10(M_cloud):.1f}}} M_\\odot$')
+        
+        # Plot total
+        ax.plot(v_cloud, dN_dv_dict['total'], 'k-', lw=1.5, label='Total')
+        
+        # Add legend
+        ax.legend(frameon=False, fontsize=8, loc='best')
+        
+    else:
+        # Original single distribution
+        from .observables import calculate_column_density_distribution
+        v_cloud, dN_dv_column = calculate_column_density_distribution(solution, 
+                                                                     cloud_index=cloud_index, 
+                                                                     **kwargs)
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+        
+        # Plot distribution
+        ax.plot(v_cloud, dN_dv_column, 'k-', lw=1.5)
     
     # Set scales
     if log_scale:

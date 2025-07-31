@@ -86,7 +86,7 @@ def main():
     plt.savefig('column_density_parameter_study.pdf', dpi=300, bbox_inches='tight')
     plt.show()
     
-    # Show individual cloud species
+    # Show individual cloud species - Method 1: Manual
     print("\n\nAnalyzing individual cloud species...")
     fig4, ax5 = plt.subplots(figsize=(6, 5), constrained_layout=True)
     
@@ -105,10 +105,48 @@ def main():
     ax5.set_ylabel(r'$dN/dv$ [cm$^{-2}$ (km s$^{-1}$)$^{-1}$]')
     ax5.set_xlim(0, 800)
     ax5.legend(frameon=False)
-    ax5.set_title('Column Density by Cloud Mass')
+    ax5.set_title('Column Density by Cloud Mass (Manual)')
     
     plt.savefig('column_density_by_mass.pdf', dpi=300, bbox_inches='tight')
     plt.show()
+    
+    # Method 2: Using the new automatic function
+    print("\n\nUsing automatic species decomposition...")
+    
+    # Calculate all species at once
+    v_cloud, dN_dv_species = solution.calculate_column_density_by_species()
+    
+    print(f"Number of cloud species: {len(dN_dv_species['species'])}")
+    print(f"Cloud masses range from {dN_dv_species['M_cloud0'].min():.1e} to "
+          f"{dN_dv_species['M_cloud0'].max():.1e} Msun")
+    
+    # Plot using the automatic show_species option
+    fig5, ax6 = plot_column_density_distribution(solution, show_species=True,
+                                               xlim=(0, 800))
+    ax6.set_title('Column Density by Cloud Mass (Automatic)')
+    plt.savefig('column_density_by_mass_auto.pdf', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Analyze which species dominate at different velocities
+    print("\n\nAnalyzing dominant cloud species at different velocities...")
+    
+    # Find velocity bins
+    v_bins = [100, 200, 300, 400, 500]  # km/s
+    
+    for v_target in v_bins:
+        # Find closest velocity index
+        idx = np.argmin(np.abs(v_cloud - v_target))
+        v_actual = v_cloud[idx]
+        
+        # Find which species contributes most at this velocity
+        contributions = np.array([dN_dv[idx] for dN_dv in dN_dv_species['species']])
+        dominant_idx = np.argmax(contributions)
+        M_dominant = dN_dv_species['M_cloud0'][dominant_idx]
+        fraction = contributions[dominant_idx] / dN_dv_species['total'][idx]
+        
+        print(f"  At v = {v_actual:.0f} km/s: "
+              f"M_cl = 10^{np.log10(M_dominant):.1f} Msun dominates "
+              f"({fraction*100:.0f}% of total)")
     
     print("\nExample complete! Check the generated PDF files.")
 

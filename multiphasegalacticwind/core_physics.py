@@ -87,13 +87,13 @@ def setup_cloud_powerlaw_distribution(log_M_cloud_min, log_M_cloud_max, N_cloud_
     Returns:
     --------
     M_cloud0 : array
-        Initial cloud masses for each species (Msun)
+        Initial cloud masses for each species (grams)
     eta_M_cold : array
         Mass loading factor for each cloud species
     Mdot_cold0 : array
-        Mass flux for each cloud species (Msun/yr)
+        Mass flux for each cloud species (g/s)
     Ndot_cloud0 : array
-        Number flux for each cloud species (1/yr)
+        Number flux for each cloud species (1/s)
     """
     # Generate logarithmically spaced cloud mass bin edges
     M_cloud0 = np.logspace(log_M_cloud_min, log_M_cloud_max, N_cloud_species) * Msun

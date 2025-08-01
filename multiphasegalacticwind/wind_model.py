@@ -219,7 +219,7 @@ class WindModel:
             y0[1] = rho_offset
             y0[2] = P_offset
             y0[3] = rho_offset * self.Z_star  # rhoZ_wind
-            y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
+            y0[4:4+self.N_cloud_species] = self.M_cloud0  # Already in grams
             y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
             y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
             
@@ -233,7 +233,7 @@ class WindModel:
             y0[1] = rho_star
             y0[2] = P_star
             y0[3] = rho_star * self.Z_star  # rhoZ_wind
-            y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
+            y0[4:4+self.N_cloud_species] = self.M_cloud0  # Already in grams
             y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
             y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
             

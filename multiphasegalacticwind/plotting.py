@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from .constants import Msun, yr
 
 # Try to import cmasher for colormaps
 try:
@@ -137,10 +138,10 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     # Panel 3: Cloud masses
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
-            # M_clouds is now in Msun, convert to 10^3 Msun for display
-            M_cl_display = solution.M_clouds[i] / 1e3
-            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, M_cl_display)
-            ax3.loglog(solution.r, M_cl_i, '-', color=cloud_colors[i], lw=0.8)
+            # M_clouds is in Msun, display directly
+            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, 
+                                       solution.M_clouds[i])
+            ax3.loglog(solution.r, M_cl_i/Msun, '-', color=cloud_colors[i], lw=0.8)
         
         # Add cloud mass colorbar
         cax = inset_axes(ax3, width="50%", height="5%", loc='lower left',
@@ -165,7 +166,7 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
         cax.spines['right'].set_visible(False)
     
     ax3.set_xlabel(r'$r$ [kpc]')
-    ax3.set_ylabel(r'$M_{\rm cl}$ [$10^3 M_\odot$]')
+    ax3.set_ylabel(r'$M_{\rm cl}$ [$M_\odot$]')
     ax3.set_xlim(0.29, 30.5)
     
     return fig, (ax1, ax2, ax3)

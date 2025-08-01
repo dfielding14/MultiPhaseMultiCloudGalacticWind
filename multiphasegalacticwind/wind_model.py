@@ -194,7 +194,7 @@ class WindModel:
         y0[2] = P_star
         y0[3] = rho_star * self.Z_star  # rhoZ_wind
         y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
-        y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = 100.0 * 1e5  # v_cloud array, 100 km/s in cm/s
+        y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
         y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
         
         # Integration span

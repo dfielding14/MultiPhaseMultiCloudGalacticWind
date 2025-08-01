@@ -70,6 +70,7 @@ model = WindModel(SFR=10.0, f_turb0=0.2, metallicity=2.0)
 |-----------|---------|-------|-------|-------------|
 | `cold_cloud_injection_radial_extent` | 1.5 r_star | cm | r_star-10r_star | Radius within which clouds are injected |
 | `cold_cloud_injection_radial_power` | 6 | dimensionless | 0-10 | Power law for cloud injection rate vs radius |
+| `v_cloud_init` | 100 | km/s | 0-1000 | Initial velocity of injected clouds |
 
 ### Supernova Feedback
 
@@ -109,6 +110,16 @@ config = WindConfig(geometric_factor=2.0, drag_coeff=1.0)
 ### Confined Wind (Biconical)
 ```python
 config = WindConfig(Omwind=2*np.pi)  # Half sphere
+```
+
+### Custom Cloud Injection
+```python
+# Slower initial cloud velocity and extended injection region
+config = WindConfig(
+    v_cloud_init=50.0,                           # Initial velocity 50 km/s
+    cold_cloud_injection_radial_extent=600*pc,   # Inject within 600 pc
+    cold_cloud_injection_radial_power=4          # Shallower profile
+)
 ```
 
 ## Physics Notes

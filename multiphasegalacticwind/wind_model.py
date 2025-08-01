@@ -193,8 +193,8 @@ class WindModel:
         y0[1] = rho_star
         y0[2] = P_star
         y0[3] = rho_star * self.Z_star  # rhoZ_wind
-        y0[4:4+self.N_cloud_species] = self.M_cloud0
-        y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = v_star_cgs  # v_cloud array
+        y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
+        y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = 100.0 * 1e5  # v_cloud array, 100 km/s in cm/s
         y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
         
         # Integration span
@@ -279,7 +279,7 @@ class Solution:
         self.P = sol.y[2]
         self.rhoZ = sol.y[3]
         self.Z = self.rhoZ / self.rho  # metallicity
-        self.M_clouds = sol.y[4:4+model.N_cloud_species]
+        self.M_clouds = sol.y[4:4+model.N_cloud_species] / Msun  # Convert to Msun
         self.v_cl = sol.y[4+model.N_cloud_species:4+2*model.N_cloud_species] / 1e5  # km/s
         self.Z_cl = sol.y[4+2*model.N_cloud_species:]
         
@@ -297,8 +297,8 @@ class Solution:
         self.T_hot = self.P_hot / (self.rho_hot / (mu * mp)) / kb
         
         # Mass fluxes
-        self.Mdot = 4 * np.pi * sol.t**2 * self.rho * sol.y[1] / (Msun/yr)
-        self.Mdot_hot = 4 * np.pi * sol_hot.t**2 * self.rho_hot * sol_hot.y[1] / (Msun/yr)
+        self.Mdot = 4 * np.pi * sol.t**2 * self.rho * sol.y[0] / (Msun/yr)
+        self.Mdot_hot = 4 * np.pi * sol_hot.t**2 * self.rho_hot * sol_hot.y[0] / (Msun/yr)
         
         # Total cloud mass
         self.M_cloud_tot = np.sum(self.M_clouds, axis=0)

@@ -112,16 +112,18 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     ax1.set_xticklabels([])
     
     # Panel 2: Mass flux
-    ax2.loglog(solution.r, solution.Mdot, 'k-', lw=1.5, label=r'$\dot{M}_{\rm wind}$')
+    ax2.loglog(solution.r, solution.Mdot/solution.model.SFR, 'k-', lw=1.5, label=r'$\dot{M}_{\rm wind}$')
     if show_hot_only:
-        ax2.loglog(solution.r_hot, solution.Mdot_hot, '-', color='grey', lw=1,
+        ax2.loglog(solution.r_hot, solution.Mdot_hot/solution.model.SFR, '-', color='grey', lw=1,
                    label=r'$\dot{M}_{\rm hot,\,only}$')
     
     # Cloud mass flux
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
+            # Cloud mass flux: dMdot_cl = 4*pi*r^2*rho*v_cl * (M_cl_i/M_cl_tot)
+            # M_clouds is already in Msun, v_cl is in km/s
             Mdot_cl_i = 4 * np.pi * solution.sol.t**2 * solution.rho * solution.v_cl[i] * 1e5 * \
-                        solution.M_clouds[i] / solution.M_cloud_tot / (solution.model.SFR)
+                        solution.M_clouds[i] / solution.M_cloud_tot / (Msun/yr) / solution.model.SFR
             # Mask where clouds don't exist
             Mdot_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, 
                                            Mdot_cl_i)
@@ -135,8 +137,10 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     # Panel 3: Cloud masses
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
-            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, solution.M_clouds[i])
-            ax3.loglog(solution.r, solution.M_clouds[i], '-', color=cloud_colors[i], lw=0.8)
+            # M_clouds is now in Msun, convert to 10^3 Msun for display
+            M_cl_display = solution.M_clouds[i] / 1e3
+            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, M_cl_display)
+            ax3.loglog(solution.r, M_cl_i, '-', color=cloud_colors[i], lw=0.8)
         
         # Add cloud mass colorbar
         cax = inset_axes(ax3, width="50%", height="5%", loc='lower left',
@@ -144,10 +148,17 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
         for i in range(solution.model.N_cloud_species):
             cax.axvspan(i, i+1, color=cloud_colors[i])
         cax.set_xlim(0, solution.model.N_cloud_species)
-        cax.set_xticks([0, solution.model.N_cloud_species])
-        cax.set_xticklabels([r'$10^{0}$', r'$10^{5}$'], fontsize=7)
-        cax.set_xlabel(r'$M_{\rm cl,0}$ [$M_\odot$]', fontsize=7)
+        # Set ticks at the center of each color patch
+        tick_positions = np.arange(solution.model.N_cloud_species) + 0.5
+        cax.set_xticks(tick_positions)
+        # Calculate labels based on actual cloud masses
+        M_cloud0_log = np.log10(solution.model.M_cloud0)
+        tick_labels = [f'$10^{{{M_cloud0_log[i]:.1f}}}$' for i in range(solution.model.N_cloud_species)]
+        cax.set_xticklabels(tick_labels, fontsize=6)
         cax.set_yticks([])
+        # Add title above the colorbar
+        cax.text(solution.model.N_cloud_species/2, 1.5, r'$M_{\rm cl,0}$ [$M_\odot$]', 
+                ha='center', va='bottom', transform=cax.transData, fontsize=7)
         cax.spines['top'].set_visible(False)
         cax.spines['bottom'].set_visible(False)
         cax.spines['left'].set_visible(False)

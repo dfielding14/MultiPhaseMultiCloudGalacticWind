@@ -6,7 +6,7 @@ moments, which are useful for comparing model predictions with observations.
 """
 
 import numpy as np
-from .constants import mp, kpc
+from .constants import mp, kpc, Msun
 from .config import get_default_config
 
 
@@ -112,7 +112,19 @@ def calculate_velocity_distribution(solution, cloud_index=None,
     n_cloud = cloud_density_use / (mu * mp)
     
     # Get cloud velocity
-    v_cloud = solution.sol.y[3 + solution.model.N_cloud_species, mask]  # cm/s
+    if cloud_index is None:
+        # Average over all cloud species weighted by density
+        v_cloud = np.zeros(np.sum(mask))
+        total_density = np.zeros_like(v_cloud)
+        for i in range(solution.model.N_cloud_species):
+            v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask]  # cm/s
+            density_i = cloud_density[i, mask] if cloud_density.ndim > 1 else cloud_density[mask]
+            v_cloud += v_cl_i * density_i
+            total_density += density_i
+        v_cloud = np.where(total_density > 0, v_cloud / total_density, 0)
+    else:
+        # Single cloud species
+        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask]  # cm/s
     
     # Calculate velocity gradient
     dv_dr = np.gradient(v_cloud, r_use)

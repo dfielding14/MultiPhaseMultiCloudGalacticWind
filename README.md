@@ -7,11 +7,12 @@ Based on: **"The Structure of Multiphase Galactic Winds"** by Drummond B. Fieldi
 ## Features
 
 - **Clean API**: Simple `WindModel` class with configurable physics via `WindConfig`
-- **Fast Integration**: Optimized for MCMC parameter exploration
+- **Fast Integration**: Optimized for MCMC parameter exploration (19,000x faster cooling)
 - **Observables**: Built-in velocity and column density distributions
 - **Publication-Ready Plots**: Matplotlib-based plotting with customizable styles
 - **Flexible Configuration**: All physics parameters easily adjustable
 - **No Global Variables**: Clean module design with proper parameter flow
+- **Flexible Initial Conditions**: Support for cloud injection with radial offset from sonic point
 
 ## Installation
 

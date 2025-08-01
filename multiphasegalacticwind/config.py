@@ -57,6 +57,7 @@ class WindConfig:
         self.cold_cloud_injection_radial_power = kwargs.get('cold_cloud_injection_radial_power', 6)
         self.cold_cloud_injection_radial_extent = kwargs.get('cold_cloud_injection_radial_extent', 1.33 * 300 * pc)
         self.v_cloud_init = kwargs.get('v_cloud_init', 100.0)  # km/s, initial cloud velocity
+        self.cloud_radial_offset = kwargs.get('cloud_radial_offset', 0.0)  # fractional offset from sonic radius
         
         # Supernova feedback parameters
         self.E_SN = kwargs.get('E_SN', 1e51)  # erg, energy per supernova
@@ -83,6 +84,7 @@ class WindConfig:
             'cold_cloud_injection_radial_power': self.cold_cloud_injection_radial_power,
             'cold_cloud_injection_radial_extent': self.cold_cloud_injection_radial_extent,
             'v_cloud_init': self.v_cloud_init,
+            'cloud_radial_offset': self.cloud_radial_offset,
             'E_SN': self.E_SN,
             'mstar': self.mstar,
             'epsilon': self.epsilon

@@ -71,6 +71,7 @@ model = WindModel(SFR=10.0, f_turb0=0.2, metallicity=2.0)
 | `cold_cloud_injection_radial_extent` | 1.5 r_star | cm | r_star-10r_star | Radius within which clouds are injected |
 | `cold_cloud_injection_radial_power` | 6 | dimensionless | 0-10 | Power law for cloud injection rate vs radius |
 | `v_cloud_init` | 100 | km/s | 0-1000 | Initial velocity of injected clouds |
+| `cloud_radial_offset` | 0.0 | dimensionless | 0-0.5 | Fractional offset from sonic radius to start integration |
 
 ### Supernova Feedback
 
@@ -120,6 +121,13 @@ config = WindConfig(
     cold_cloud_injection_radial_extent=600*pc,   # Inject within 600 pc
     cold_cloud_injection_radial_power=4          # Shallower profile
 )
+```
+
+### Integration with Radial Offset
+```python
+# Start integration at 10% offset from sonic radius
+# Useful for avoiding numerical issues at the sonic point
+config = WindConfig(cloud_radial_offset=0.1)
 ```
 
 ## Physics Notes

@@ -183,22 +183,62 @@ class WindModel:
         rho_star = self.rho_star
         P_star = self.P_star
         
-        # Set up initial state vector
-        # State: [v_wind, rho_wind, Pressure, rhoZ_wind, 
-        #         M_cloud_1, ..., M_cloud_N,
-        #         v_cloud_1, ..., v_cloud_N,
-        #         Z_cloud_1, ..., Z_cloud_N]
-        y0 = np.zeros(4 + 3*self.N_cloud_species)
-        y0[0] = v_star_cgs
-        y0[1] = rho_star
-        y0[2] = P_star
-        y0[3] = rho_star * self.Z_star  # rhoZ_wind
-        y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
-        y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
-        y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
-        
-        # Integration span
-        r_span = [r_star, self.r_max_kpc * kpc]
+        # Handle cloud_radial_offset if specified
+        if self.config.cloud_radial_offset > 0:
+            # First run hot-only solution to get conditions at offset radius
+            r_start_offset = r_star * (1.0 + self.config.cloud_radial_offset)
+            
+            # Hot-only initial conditions
+            y0_hot = np.array([v_star_cgs, rho_star, P_star])
+            
+            # Source term parameters for hot wind
+            Edot = self.eta_E * (self.SFR * Msun/yr) * 0.5 * v_circ_cgs**2  # erg/s
+            Mdot = self.eta_M * (self.SFR * Msun/yr)  # g/s
+            r0 = r_star
+            source_volume = 4./3. * np.pi * r0**3
+            Edot_per_Vol = Edot / source_volume
+            Mdot_per_Vol = Mdot / source_volume
+            params_hot = (v_circ_cgs, True, r0, Edot_per_Vol, Mdot_per_Vol)
+            
+            # Integrate hot-only solution to offset radius
+            sol_hot_offset = solve_ivp(
+                lambda r, y: Hot_Wind_Evo(r, y, params_hot),
+                [r_star, r_start_offset], y0_hot,
+                rtol=self.rtol, atol=self.atol,
+                dense_output=True
+            )
+            
+            # Extract hot gas conditions at offset radius
+            v_offset = sol_hot_offset.y[0, -1]
+            rho_offset = sol_hot_offset.y[1, -1]
+            P_offset = sol_hot_offset.y[2, -1]
+            
+            # Set up initial conditions at offset radius
+            y0 = np.zeros(4 + 3*self.N_cloud_species)
+            y0[0] = v_offset
+            y0[1] = rho_offset
+            y0[2] = P_offset
+            y0[3] = rho_offset * self.Z_star  # rhoZ_wind
+            y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
+            y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
+            y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
+            
+            # Integration span from offset radius
+            r_span = [r_start_offset, self.r_max_kpc * kpc]
+            
+        else:
+            # Standard initial conditions at sonic point
+            y0 = np.zeros(4 + 3*self.N_cloud_species)
+            y0[0] = v_star_cgs
+            y0[1] = rho_star
+            y0[2] = P_star
+            y0[3] = rho_star * self.Z_star  # rhoZ_wind
+            y0[4:4+self.N_cloud_species] = self.M_cloud0 * Msun  # Convert to grams
+            y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
+            y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
+            
+            # Integration span from sonic point
+            r_span = [r_star, self.r_max_kpc * kpc]
         
         # Calculate source term parameters
         # Energy and mass injection rates

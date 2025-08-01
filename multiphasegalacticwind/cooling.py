@@ -29,6 +29,11 @@ _Lambda_P_rho_params = None
 _T_tcool_min_P = None
 _tcool_min_P = None
 
+# Cache for tcool_P calls
+_tcool_cache = {}
+_tcool_cache_size = 0
+_MAX_CACHE_SIZE = 10000  # Limit cache size to prevent memory issues
+
 
 def get_lambda_interpolator():
     """
@@ -181,6 +186,30 @@ def tcool_P(T, P, metallicity, redshift, mu):
     tcool : float or array
         Cooling time [s]
     """
+    global _tcool_cache, _tcool_cache_size, _MAX_CACHE_SIZE
+    
+    # For caching, we need scalar values
+    is_scalar = np.isscalar(T) and np.isscalar(P)
+    cache_key = None
+    
+    if is_scalar:
+        # Create cache key - round to reasonable precision to improve hit rate
+        try:
+            cache_key = (
+                round(float(T), 2),
+                round(float(P), 24),  # Pressure needs more precision
+                round(float(metallicity), 3),
+                round(float(redshift), 3),
+                round(float(mu), 3)
+            )
+            
+            # Check cache
+            if cache_key in _tcool_cache:
+                return _tcool_cache[cache_key]
+        except:
+            # If conversion fails, just skip caching
+            is_scalar = False
+    
     # Get the main cooling interpolator
     Lambda = get_lambda_interpolator()
     
@@ -192,7 +221,19 @@ def tcool_P(T, P, metallicity, redshift, mu):
     
     # Use Lambda interpolator with redshift
     lambda_val = Lambda((np.log10(nH), np.log10(T), metallicity, redshift))
-    return 1.5 * (muH/mu) * kb * T / (nH_actual * lambda_val)
+    result = 1.5 * (muH/mu) * kb * T / (nH_actual * lambda_val)
+    
+    # Cache the result if scalar and we have a valid cache key
+    if is_scalar and cache_key is not None:
+        # Clear cache if it gets too large
+        if _tcool_cache_size >= _MAX_CACHE_SIZE:
+            _tcool_cache.clear()
+            _tcool_cache_size = 0
+        
+        _tcool_cache[cache_key] = result
+        _tcool_cache_size += 1
+    
+    return result
 
 
 def Lambda_P(T, P, metallicity, redshift, mu):

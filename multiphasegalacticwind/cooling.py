@@ -13,6 +13,7 @@ import time
 from scipy import interpolate
 import h5py
 import glob
+from typing import Optional, Tuple, Union, Dict, Any
 from .constants import *
 
 # Global cooling table data (initialized on first use)
@@ -35,7 +36,7 @@ _tcool_cache_size = 0
 _MAX_CACHE_SIZE = 10000  # Limit cache size to prevent memory issues
 
 
-def get_lambda_interpolator():
+def get_lambda_interpolator() -> interpolate.RegularGridInterpolator:
     """
     Get the main 4D cooling function interpolator.
     
@@ -52,7 +53,7 @@ def get_lambda_interpolator():
     return _Lambda
 
 
-def load_cooling_table(verbose=False):
+def load_cooling_table(verbose: bool = False) -> None:
     """
     Load the cooling table from package data directory.
     
@@ -98,7 +99,7 @@ def load_cooling_table(verbose=False):
     return _Lambda
 
 
-def get_cooling_interpolator(mu, metallicity, redshift, verbose=False):
+def get_cooling_interpolator(mu: float, metallicity: float, redshift: float, verbose: bool = False) -> interpolate.RegularGridInterpolator:
     """
     Get or create the cooling table interpolator for given parameters.
     
@@ -164,7 +165,7 @@ def get_cooling_interpolator(mu, metallicity, redshift, verbose=False):
     return _Lambda_P_rho
 
 
-def tcool_P(T, P, metallicity, redshift, mu):
+def tcool_P(T: Union[float, np.ndarray], P: Union[float, np.ndarray], metallicity: float, redshift: float, mu: float) -> Union[float, np.ndarray]:
     """
     Calculate cooling time as a function of temperature and pressure.
     
@@ -236,7 +237,7 @@ def tcool_P(T, P, metallicity, redshift, mu):
     return result
 
 
-def Lambda_P(T, P, metallicity, redshift, mu):
+def Lambda_P(T: float, P: float, metallicity: float, redshift: float, mu: float) -> float:
     """
     Calculate cooling function Lambda as a function of temperature and pressure.
     
@@ -270,7 +271,7 @@ def Lambda_P(T, P, metallicity, redshift, mu):
 Lambda_P = np.vectorize(Lambda_P)
 
 
-def get_tcool_min_interpolators():
+def get_tcool_min_interpolators() -> Tuple[interpolate.RegularGridInterpolator, interpolate.RegularGridInterpolator]:
     """
     Get or create the minimum cooling time interpolators.
     

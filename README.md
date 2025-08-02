@@ -128,18 +128,24 @@ config = WindConfig(
     drag_coeff=0.5,            # Cloud drag coefficient
     Mdot_coefficient=1/3,      # Mass transfer coefficient
     
-    # Cooling
-    metallicity=1.0,           # Metallicity (solar units)
+    # Cooling and metallicity
+    Z_hot_over_Z_solar=1.0,    # Hot gas metallicity (solar units)
+    Z_cloud_over_Z_solar=0.3,  # Cloud metallicity (solar units)
     Cooling_Factor=1.0,        # Cooling strength (0=off, 1=standard)
     
     # Cloud evolution
     M_cloud_min=0.01,          # Minimum cloud mass [Msun]
+    v_cloud_min=1.0,           # Minimum cloud velocity [km/s]
+    v_cloud_init=100.0,        # Initial cloud velocity [km/s]
     geometric_factor=1.0,      # Cloud geometry factor
     
     # Power law indices
     TurbulentVelocityChiPower=0.0,  # v_turb ∝ χ^α
     CoolingAreaChiPower=0.5,        # A_cool ∝ χ^β
     ColdTurbulenceChiPower=-0.5,    # v_turb_cold ∝ χ^γ
+    
+    # Event detection
+    sonic_point_tolerance=0.1,  # Mach number tolerance for events
 )
 ```
 
@@ -231,6 +237,58 @@ The model solves coupled ODEs for:
 - Pressure equilibrium between phases
 - Clouds maintain T_cl = 10^4 K via rapid cooling
 - Power-law cloud mass distribution: dN/dM ∝ M^(-α)
+
+## Integration Events
+
+The model includes several event detection functions that monitor the wind evolution and can terminate the integration when specific conditions are met:
+
+### Event Types
+
+1. **Supersonic Event** - Triggers when flow transitions from subsonic to supersonic (Mach > 1 + tolerance)
+   - Only active when starting with subsonic initial conditions
+   - Controlled by `sonic_point_tolerance` parameter in WindConfig
+
+2. **Subsonic Event** - Triggers when flow transitions from supersonic to subsonic (Mach < 1 - tolerance)
+   - Only active when starting with supersonic initial conditions
+   - Useful for detecting wind deceleration
+
+3. **Wind Negative Event** - Terminates if wind velocity becomes negative (unphysical)
+   - Always active as a safety check
+
+4. **Cold Wind Event** - Triggers when hot wind temperature drops to near cloud temperature
+   - Indicates excessive cooling has cooled the entire wind
+
+5. **All Clouds Frozen Event** - Terminates when all clouds drop below minimum mass threshold
+   - Controlled by `M_cloud_min` parameter in WindConfig
+
+6. **Cloud Density Low Event** - Terminates when cloud number density drops below threshold
+   - Default threshold: 1e-50 cm^-3
+
+7. **Cloud Velocity Low Event** - Terminates when any cloud velocity drops below minimum
+   - Controlled by `v_cloud_min` parameter in WindConfig (default: 1 km/s)
+   - Prevents numerical issues from v_cloud → 0
+
+### Event Configuration
+
+```python
+# Configure event parameters via WindConfig
+config = WindConfig(
+    sonic_point_tolerance=0.1,  # Mach number tolerance for sonic transitions
+    v_cloud_min=1.0,           # Minimum cloud velocity [km/s]
+    M_cloud_min=0.01           # Minimum cloud mass [Msun]
+)
+
+# Events are automatically configured based on initial conditions
+model = WindModel(SFR=20.0, config=config)
+solution = model.run()
+
+# Check which events triggered
+if solution.sol.status == -1:
+    print(f"Integration terminated by event: {solution.sol.message}")
+    for i, t_events in enumerate(solution.sol.t_events):
+        if len(t_events) > 0:
+            print(f"Event {i} triggered at r = {t_events[0]/3.086e21:.2f} kpc")
+```
 
 ## Performance Notes
 

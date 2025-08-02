@@ -7,12 +7,15 @@ This provides a clean interface while preserving all the original physics and un
 import numpy as np
 from scipy.integrate import solve_ivp
 import os
+from typing import Optional, Tuple, Callable, Union, Any, Dict
 
 # Import necessary items from core physics
 from .core_physics import (
     setup_cloud_powerlaw_distribution, Wind_Evo, Hot_Wind_Evo,
-    create_cold_wind_event, wind_negative, create_all_clouds_frozen_event,
-    create_cloud_density_low_event
+    create_supersonic_event, create_subsonic_event, create_wind_negative_event,
+    create_cold_wind_event, create_all_clouds_frozen_event,
+    create_cloud_density_low_event, create_cloud_velocity_low_event,
+    create_progress_event
 )
 from .constants import *
 from .config import WindConfig, get_default_config
@@ -28,42 +31,89 @@ class WindModel:
     - Distances in kpc
     - Densities in cm^-3
     - Temperatures in K
+    
+    Metallicity Parameters
+    ----------------------
+    This model tracks two metallicities (both relative to solar):
+    1. config.Z_hot_over_Z_solar: Hot gas metallicity in solar units (for cooling and initial wind)
+    2. config.Z_cloud_over_Z_solar: Initial cloud metallicity in solar units
     """
     
     def __init__(self, 
                  # Galaxy properties
-                 v_circ=150.0,         # km/s, circular velocity
-                 redshift=0.0,         
+                 v_circ: float = 150.0,         # km/s, circular velocity
+                 redshift: float = 0.0,         
                  
                  # Wind launch properties
-                 SFR=20.0,             # Msun/yr, star formation rate
-                 eta_M=0.1,            # hot phase mass loading
-                 eta_M_cold=1.0,       # cold phase mass loading
-                 eta_E=1.0,            # energy loading
+                 SFR: float = 20.0,             # Msun/yr, star formation rate
+                 eta_M: float = 0.1,            # hot phase mass loading
+                 eta_M_cold: Optional[float] = None,      # cold phase mass loading (also accepts eta_M_cold_tot)
+                 eta_M_cold_tot: Optional[float] = None,  # alias for eta_M_cold
+                 eta_E: float = 1.0,            # energy loading
                  
                  # Sonic point properties
-                 r_star_kpc=0.3,       # kpc, sonic radius
-                 Z_star=1.0,           # solar metallicity
+                 r_star_kpc: Optional[float] = None,      # kpc, sonic radius (also accepts r0_kpc)
+                 r0_kpc: Optional[float] = None,          # alias for r_star_kpc
                  
                  # Cloud properties
-                 cloud_mass_range=(1, 1e5),      # Msun, min and max cloud mass
-                 cloud_alpha=2.0,                # power law slope
-                 N_cloud_species=10,             # number of cloud mass bins
-                 T_cl=1e4,                       # K, cloud temperature
+                 cloud_mass_range: Optional[Tuple[float, float]] = None,          # Msun, min and max cloud mass
+                 log_M_cloud_min: Optional[float] = None,           # log10(M_min/Msun) - alternative to cloud_mass_range
+                 log_M_cloud_max: Optional[float] = None,           # log10(M_max/Msun) - alternative to cloud_mass_range
+                 cloud_alpha: float = 2.0,                # power law slope
+                 N_cloud_species: int = 10,             # number of cloud mass bins
+                 T_cl: Optional[float] = None,                      # K, cloud temperature (also accepts T_cloud)
+                 T_cloud: Optional[float] = None,                   # alias for T_cl
                  
                  # Solver settings
-                 r_max_kpc=100.0,      # kpc, maximum radius
-                 rtol=1e-8,
-                 atol=1e-10,
+                 r_max_kpc: float = 100.0,      # kpc, maximum radius
+                 rtol: float = 1e-8,
+                 atol: float = 1e-10,
+                 
+                 # Progress reporting
+                 progress_callback: Optional[Union[str, Callable[[float, float, int], None]]] = None,  # Function(r_current, r_max, n_steps)
+                 progress_interval: float = 10.0,  # kpc, interval for progress updates
                  
                  # Configuration
-                 config=None,          # WindConfig instance
-                 **config_kwargs):
+                 config: Optional[WindConfig] = None,          # WindConfig instance
+                 **config_kwargs: Any) -> None:
         """
         Initialize the wind model with galaxy and wind parameters.
         
         Parameters
         ----------
+        v_circ : float, optional
+            Circular velocity in km/s (default: 150.0)
+        redshift : float, optional
+            Redshift for cooling function (default: 0.0)
+        SFR : float, optional
+            Star formation rate in Msun/yr (default: 20.0)
+        eta_M : float, optional
+            Hot phase mass loading factor (default: 0.1)
+        eta_M_cold, eta_M_cold_tot : float, optional
+            Cold phase mass loading factor. Can use either name (default: 1.0)
+        eta_E : float, optional
+            Energy loading factor (default: 1.0)
+        r_star_kpc, r0_kpc : float, optional
+            Sonic radius in kpc. Can use either name (default: 0.3)
+        cloud_mass_range : tuple, optional
+            (min, max) cloud mass in Msun (default: (1, 1e5))
+        log_M_cloud_min, log_M_cloud_max : float, optional
+            Alternative to cloud_mass_range: log10(M/Msun) values
+        cloud_alpha : float, optional
+            Cloud mass distribution power law slope (default: 2.0)
+        N_cloud_species : int, optional
+            Number of cloud mass bins (default: 10)
+        T_cl, T_cloud : float, optional
+            Cloud temperature in K. Can use either name (default: 1e4)
+        r_max_kpc : float, optional
+            Maximum integration radius in kpc (default: 100.0)
+        rtol, atol : float, optional
+            Integration tolerances (default: 1e-8, 1e-10)
+        progress_callback : callable or 'print', optional
+            Function to report progress during integration. If 'print', uses
+            built-in progress printer. Function signature: f(r_current, r_max, n_steps)
+        progress_interval : float, optional
+            Radius interval in kpc for progress updates (default: 10.0)
         config : WindConfig, optional
             Configuration object with model parameters. If None, uses defaults.
         **config_kwargs : dict
@@ -74,13 +124,36 @@ class WindModel:
         Use default configuration:
         >>> model = WindModel(SFR=10.0)
         
-        Use custom configuration:
-        >>> config = WindConfig(f_turb0=0.2, drag_coeff=0.3)
-        >>> model = WindModel(SFR=10.0, config=config)
+        Use legacy-style parameters:
+        >>> model = WindModel(SFR=20.0, eta_M_cold_tot=0.0001, r0_kpc=0.3,
+        ...                   log_M_cloud_min=1, log_M_cloud_max=5, T_cloud=1e4)
         
-        Override specific parameters:
+        Override specific config parameters:
         >>> model = WindModel(SFR=10.0, f_turb0=0.2, drag_coeff=0.3)
         """
+        
+        # Handle parameter aliases
+        if eta_M_cold is None and eta_M_cold_tot is not None:
+            eta_M_cold = eta_M_cold_tot
+        elif eta_M_cold is None:
+            eta_M_cold = 1.0  # default
+            
+        if r_star_kpc is None and r0_kpc is not None:
+            r_star_kpc = r0_kpc
+        elif r_star_kpc is None:
+            r_star_kpc = 0.3  # default
+            
+        if T_cl is None and T_cloud is not None:
+            T_cl = T_cloud
+        elif T_cl is None:
+            T_cl = 1e4  # default
+            
+        # Handle cloud mass range
+        if cloud_mass_range is None:
+            if log_M_cloud_min is not None and log_M_cloud_max is not None:
+                cloud_mass_range = (10**log_M_cloud_min, 10**log_M_cloud_max)
+            else:
+                cloud_mass_range = (1, 1e5)  # default
         
         # Set up configuration
         if config is None:
@@ -106,11 +179,12 @@ class WindModel:
         self.eta_M_cold = eta_M_cold
         self.eta_E = eta_E
         self.r_star_kpc = r_star_kpc
-        self.Z_star = Z_star
         self.T_cl = T_cl
         self.r_max_kpc = r_max_kpc
         self.rtol = rtol
         self.atol = atol
+        self.progress_callback = progress_callback
+        self.progress_interval = progress_interval
         
         # Set up cloud distribution
         log_M_cloud_min = np.log10(cloud_mass_range[0])
@@ -131,7 +205,7 @@ class WindModel:
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         self.cooling_table_path = os.path.join(data_dir, 'Lambda_tab_redshifts.npz')
     
-    def _calculate_sonic_point_conditions(self):
+    def _calculate_sonic_point_conditions(self) -> None:
         """
         Calculate sonic point conditions from energy and mass injection rates.
         
@@ -148,7 +222,7 @@ class WindModel:
         Edot = self.eta_E * (self.config.E_SN / self.config.mstar / Msun) * SFR_cgs  # erg/s
         
         # Sonic point Mach number
-        Mach0 = 1.0 + self.config.epsilon
+        Mach0 = 1.0 + self.config.sonic_point_tolerance
         gamma = 5.0/3.0  # Adiabatic index
         
         # Solve for sonic point velocity from energy conservation
@@ -170,7 +244,7 @@ class WindModel:
         self.rho_star = rho0
         self.P_star = P0
         
-    def run(self):
+    def run(self) -> 'Solution':
         """
         Run the wind model and return a Solution object.
         """
@@ -218,10 +292,10 @@ class WindModel:
             y0[0] = v_offset
             y0[1] = rho_offset
             y0[2] = P_offset
-            y0[3] = rho_offset * self.Z_star  # rhoZ_wind
+            y0[3] = rho_offset * self.config.Z_hot_over_Z_solar * Z_solar  # rhoZ_wind
             y0[4:4+self.N_cloud_species] = self.M_cloud0  # Already in grams
             y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
-            y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
+            y0[4+2*self.N_cloud_species:] = self.config.Z_cloud_over_Z_solar * Z_solar  # Z_cloud array (absolute)
             
             # Integration span from offset radius
             r_span = [r_start_offset, self.r_max_kpc * kpc]
@@ -232,10 +306,10 @@ class WindModel:
             y0[0] = v_star_cgs
             y0[1] = rho_star
             y0[2] = P_star
-            y0[3] = rho_star * self.Z_star  # rhoZ_wind
+            y0[3] = rho_star * self.config.Z_hot_over_Z_solar * Z_solar  # rhoZ_wind
             y0[4:4+self.N_cloud_species] = self.M_cloud0  # Already in grams
             y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
-            y0[4+2*self.N_cloud_species:] = self.Z_star  # Z_cloud array
+            y0[4+2*self.N_cloud_species:] = self.config.Z_cloud_over_Z_solar * Z_solar  # Z_cloud array (absolute)
             
             # Integration span from sonic point
             r_span = [r_star, self.r_max_kpc * kpc]
@@ -261,7 +335,7 @@ class WindModel:
         # Pre-calculate cooling interpolator for efficiency
         from .cooling import get_cooling_interpolator
         cooling_interpolator = get_cooling_interpolator(
-            self.config.mu, self.config.metallicity, self.config.redshift
+            self.config.mu, self.config.Z_hot_over_Z_solar, self.config.redshift
         )
         
         # Extended params tuple including source terms and cooling interpolator
@@ -269,13 +343,52 @@ class WindModel:
                   injection_radius, injection_power, self.config.to_dict(),
                   r0, Edot_per_Vol, Mdot_per_Vol, cooling_interpolator)
         
-        # Create event functions with proper parameters
-        cold_wind = create_cold_wind_event(self.T_cl, self.config.mu)
-        all_clouds_frozen = create_all_clouds_frozen_event(self.config.M_cloud_min)
-        cloud_density_low = create_cloud_density_low_event(
-            self.Ndot_cloud0, injection_radius, injection_power,
-            self.config.Omwind, self.config.M_cloud_min
-        )
+        # Check initial Mach number to determine which events to include
+        # Calculate initial Mach number
+        cs_sq_initial = gamma * y0[2] / y0[1]  # gamma * P / rho
+        mach_initial = y0[0] / np.sqrt(cs_sq_initial)
+        
+        # Create event functions with params
+        wind_negative = create_wind_negative_event(params)
+        cold_wind = create_cold_wind_event(params)
+        all_clouds_frozen = create_all_clouds_frozen_event(params)
+        cloud_density_low = create_cloud_density_low_event(params)
+        cloud_velocity_low = create_cloud_velocity_low_event(params)
+        
+        # Create list of events - always include these
+        events = [wind_negative, cold_wind, all_clouds_frozen, 
+                  cloud_density_low, cloud_velocity_low]
+        
+        # Only add supersonic event if starting subsonic
+        # (Don't need it if already supersonic)
+        if mach_initial < 1.0:
+            supersonic = create_supersonic_event(params)
+            events.insert(0, supersonic)  # Add at beginning for consistency
+        
+        # Add subsonic event for all runs starting supersonic
+        if mach_initial > 1.0:
+            subsonic = create_subsonic_event(params)
+            events.insert(0, subsonic)  # Add at beginning for consistency
+        
+        # Add progress event if callback provided
+        if self.progress_callback is not None:
+            # Handle special case for 'print' callback
+            if self.progress_callback == 'print':
+                import sys
+                def print_progress(r_current, r_max, n_steps):
+                    percent = 100 * r_current / r_max
+                    print(f"\rProgress: {percent:5.1f}% (r = {r_current/kpc:6.1f} kpc, steps = {n_steps})", 
+                          end='', flush=True)
+                    if r_current >= r_max * 0.99:  # Near completion
+                        print()  # New line at end
+                progress_cb = print_progress
+            else:
+                progress_cb = self.progress_callback
+                
+            progress_event = create_progress_event(
+                params, r_span[0], self.progress_interval * kpc, progress_cb, r_span[1]
+            )
+            events.append(progress_event)
         
         # Run the integration
         sol = solve_ivp(
@@ -283,7 +396,7 @@ class WindModel:
             r_span, y0,
             rtol=self.rtol, atol=self.atol,
             dense_output=True,
-            events=[cold_wind, wind_negative, all_clouds_frozen, cloud_density_low]
+            events=events
         )
         
         # Also run hot-only solution for comparison
@@ -296,7 +409,7 @@ class WindModel:
             r_span, y0_hot,
             rtol=self.rtol, atol=self.atol,
             dense_output=True,
-            events=[wind_negative]
+            events=[create_wind_negative_event(params_hot)]
         )
         
         return Solution(sol, sol_hot, self)
@@ -307,7 +420,7 @@ class Solution:
     Container for wind model solution with convenient access to results.
     """
     
-    def __init__(self, sol, sol_hot, model):
+    def __init__(self, sol: Any, sol_hot: Any, model: WindModel) -> None:
         self.sol = sol
         self.sol_hot = sol_hot
         self.model = model
@@ -321,7 +434,7 @@ class Solution:
         self.Z = self.rhoZ / self.rho  # metallicity
         self.M_clouds = sol.y[4:4+model.N_cloud_species] / Msun  # Convert to Msun
         self.v_cl = sol.y[4+model.N_cloud_species:4+2*model.N_cloud_species] / 1e5  # km/s
-        self.Z_cl = sol.y[4+2*model.N_cloud_species:]
+        self.Z_cl = sol.y[4+2*model.N_cloud_species:]  # absolute metallicity
         
         # Hot-only solution
         self.r_hot = sol_hot.t / kpc
@@ -343,7 +456,7 @@ class Solution:
         # Total cloud mass
         self.M_cloud_tot = np.sum(self.M_clouds, axis=0)
         
-    def interpolate(self, r_eval):
+    def interpolate(self, r_eval: Union[float, np.ndarray]) -> np.ndarray:
         """
         Interpolate solution at specific radii (in kpc).
         """
@@ -351,7 +464,7 @@ class Solution:
         return self.sol.sol(r_eval_cgs)
     
     @property
-    def v_at_10kpc(self):
+    def v_at_10kpc(self) -> float:
         """Velocity at 10 kpc in km/s."""
         if self.r[-1] >= 10:
             return np.interp(10, self.r, self.v)
@@ -359,7 +472,7 @@ class Solution:
             return np.nan
     
     @property
-    def mass_loading_at_10kpc(self):
+    def mass_loading_at_10kpc(self) -> float:
         """Mass loading factor at 10 kpc."""
         if self.r[-1] >= 10:
             Mdot_10kpc = np.interp(10, self.r, self.Mdot)
@@ -367,7 +480,7 @@ class Solution:
         else:
             return np.nan
     
-    def calculate_velocity_distribution(self, **kwargs):
+    def calculate_velocity_distribution(self, **kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate the velocity distribution dN/dv.
         
@@ -386,7 +499,7 @@ class Solution:
         from .observables import calculate_velocity_distribution
         return calculate_velocity_distribution(self, **kwargs)
     
-    def calculate_velocity_moments(self, **kwargs):
+    def calculate_velocity_moments(self, **kwargs: Any) -> Dict[str, float]:
         """
         Calculate velocity distribution and its moments.
         
@@ -404,7 +517,7 @@ class Solution:
         v_cloud, dN_dv = self.calculate_velocity_distribution(**kwargs)
         return calculate_velocity_moments(v_cloud, dN_dv)
     
-    def calculate_column_density_distribution(self, **kwargs):
+    def calculate_column_density_distribution(self, **kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate column density distribution dN/dv in cm^-2 / (km/s).
         
@@ -423,7 +536,7 @@ class Solution:
         from .observables import calculate_column_density_distribution
         return calculate_column_density_distribution(self, **kwargs)
     
-    def calculate_column_density_by_species(self, **kwargs):
+    def calculate_column_density_by_species(self, **kwargs: Any) -> Tuple[np.ndarray, Dict[str, Any]]:
         """
         Calculate column density distribution for each cloud species.
         

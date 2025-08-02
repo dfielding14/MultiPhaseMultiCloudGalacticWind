@@ -141,7 +141,7 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
             # M_clouds is in Msun, display directly
             M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min, 
                                        solution.M_clouds[i])
-            ax3.loglog(solution.r, M_cl_i/Msun, '-', color=cloud_colors[i], lw=0.8)
+            ax3.loglog(solution.r, M_cl_i, '-', color=cloud_colors[i], lw=0.8)
         
         # Add cloud mass colorbar
         cax = inset_axes(ax3, width="50%", height="5%", loc='lower left',

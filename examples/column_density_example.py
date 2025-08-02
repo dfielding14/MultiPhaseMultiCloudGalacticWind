@@ -31,7 +31,7 @@ def main():
     fig1, ax1 = plot_column_density_distribution(solution)
     ax1.set_title('Column Density Distribution')
     plt.savefig('column_density_distribution.pdf', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close('all')  # Close all figures to prevent hanging
     
     # Calculate column density distribution manually
     v_cloud, dN_dv_column = solution.calculate_column_density_distribution()
@@ -61,7 +61,7 @@ def main():
     ax3.set_ylim(1e10, 1e16)
     
     plt.savefig('column_density_comparison.pdf', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close('all')  # Close all figures to prevent hanging
     
     # Parameter study: Effect of mass loading
     print("\n\nParameter study: Effect of eta_M_cold on column density")
@@ -84,7 +84,7 @@ def main():
     ax4.set_title('Column Density vs Mass Loading')
     
     plt.savefig('column_density_parameter_study.pdf', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close('all')  # Close all figures to prevent hanging
     
     # Show individual cloud species - Method 1: Manual
     print("\n\nAnalyzing individual cloud species...")
@@ -108,7 +108,7 @@ def main():
     ax5.set_title('Column Density by Cloud Mass (Manual)')
     
     plt.savefig('column_density_by_mass.pdf', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close('all')  # Close all figures to prevent hanging
     
     # Method 2: Using the new automatic function
     print("\n\nUsing automatic species decomposition...")
@@ -125,7 +125,7 @@ def main():
                                                xlim=(0, 800))
     ax6.set_title('Column Density by Cloud Mass (Automatic)')
     plt.savefig('column_density_by_mass_auto.pdf', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close('all')  # Close all figures to prevent hanging
     
     # Analyze which species dominate at different velocities
     print("\n\nAnalyzing dominant cloud species at different velocities...")

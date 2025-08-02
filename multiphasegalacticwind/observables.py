@@ -39,22 +39,31 @@ def calculate_cloud_density(solution, cloud_index=None,
     if cloud_index is not None:
         M_cloud = solution.M_clouds[cloud_index]
         Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]
+        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index]  # cm/s
     else:
-        M_cloud = solution.M_cloud_tot
-        Ndot_cloud = np.sum(solution.model.Ndot_cloud0)
-    
-    v_cloud = solution.sol.y[3 + solution.model.N_cloud_species]  # cm/s
+        # For all species combined, sum the number densities
+        Ndot_cloud = solution.model.Ndot_cloud0  # array of all species
+        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species:4 + 2*solution.model.N_cloud_species]  # all velocities
     
     # Cloud injection profile
     injection_profile = np.where(r_kpc < injection_radius_kpc,
                                (r_kpc / injection_radius_kpc)**injection_power,
                                1.0)
     
-    # Calculate cloud density
+    # Calculate cloud number density
     # Number conservation: Ndot = Omega * r^2 * v * n
     Omwind = solution.model.config.Omwind
-    cloud_density = (Ndot_cloud * injection_profile * M_cloud / 
-                    (Omwind * r**2 * v_cloud))
+    
+    if cloud_index is not None:
+        # Single species
+        cloud_density = (Ndot_cloud * injection_profile / 
+                        (Omwind * r**2 * v_cloud))
+    else:
+        # Sum over all species
+        cloud_density = np.zeros_like(r)
+        for i in range(solution.model.N_cloud_species):
+            cloud_density += (Ndot_cloud[i] * injection_profile / 
+                            (Omwind * r**2 * v_cloud[i]))
     
     return cloud_density
 
@@ -101,15 +110,10 @@ def calculate_velocity_distribution(solution, cloud_index=None,
     mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
     r_use = r[mask]
     
-    # Get cloud density
+    # Get cloud number density
     cloud_density = calculate_cloud_density(solution, cloud_index,
                                           injection_radius_kpc, injection_power)
-    cloud_density_use = cloud_density[mask]
-    
-    # Convert to number density
-    # Get mu from model config
-    mu = solution.model.config.mu
-    n_cloud = cloud_density_use / (mu * mp)
+    n_cloud = cloud_density[mask]  # Already in number density units
     
     # Get cloud velocity
     if cloud_index is None:
@@ -235,18 +239,36 @@ def calculate_column_density_distribution(solution, cloud_index=None,
     mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
     r_use = r[mask]
     
-    # Get cloud density
+    # Get cloud number density
     cloud_density = calculate_cloud_density(solution, cloud_index,
                                           injection_radius_kpc, injection_power)
-    cloud_density_use = cloud_density[mask]
-    
-    # Convert to number density
-    # Get mu from model config
-    mu = solution.model.config.mu
-    n_cloud = cloud_density_use / (mu * mp)
+    n_cloud = cloud_density[mask]  # Already in number density units
     
     # Get cloud velocity
-    v_cloud = solution.sol.y[3 + solution.model.N_cloud_species, mask] / 1e5  # km/s
+    if cloud_index is not None:
+        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask] / 1e5  # km/s
+    else:
+        # For all species, calculate mass-weighted average velocity
+        v_cloud = np.zeros(np.sum(mask))
+        total_mass_flux = np.zeros_like(v_cloud)
+        
+        # Need to calculate cloud densities per species
+        for i in range(solution.model.N_cloud_species):
+            # Get this species' velocity
+            v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask] / 1e5  # km/s
+            
+            # Calculate this species' cloud density
+            cloud_density_i = calculate_cloud_density(solution, i,
+                                                    injection_radius_kpc, injection_power)
+            n_cloud_i = cloud_density_i[mask]
+            
+            # Mass flux = number density * mass per cloud * velocity
+            mass_flux_i = n_cloud_i * solution.model.M_cloud0[i] * v_cl_i
+            v_cloud += v_cl_i * mass_flux_i
+            total_mass_flux += mass_flux_i
+        
+        # Mass-weighted average
+        v_cloud = np.where(total_mass_flux > 0, v_cloud / total_mass_flux, 0)
     
     # Calculate path length through each shell
     if path_length_method == 'diameter':

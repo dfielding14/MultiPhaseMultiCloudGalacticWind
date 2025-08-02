@@ -15,6 +15,9 @@ from .observables import (calculate_velocity_distribution,
                          calculate_mass_weighted_velocity,
                          calculate_column_density_distribution,
                          calculate_column_density_by_species)
+from .analysis_helpers import (Field_Length, Field_Length_mix, cloud_radius, cloud_ksi,
+                             Cooling_and_Acceleration, Gradient_Components,
+                             calculate_cloud_moments, get_cloud_mass_spectrum)
 
 __version__ = "0.1.0"
 __all__ = ["WindModel", "WindConfig", "get_default_config", "setup_plotting_style", "plot_wind_solution",

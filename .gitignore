@@ -56,3 +56,37 @@ htmlcov/
 
 # Documentation
 docs/_build/
+
+# Development and debugging scripts
+test_*.py
+debug_*.py
+compare_*.py
+check_*.py
+trace_*.py
+analyze_*.py
+reproduce_*.py
+find_*.py
+verify_*.py
+minimal_*_test.py
+*_test.py
+*_debug.py
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+scratch/
+tmp/
+
+# Development notes
+TASKS_*.md
+*_SUMMARY.md
+TODO.md
+NOTES.md
+
+# Local configuration
+local_config.py
+
+# Output plots
+*.pdf
+examples/plots/

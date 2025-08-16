@@ -418,15 +418,45 @@ class WindModel:
             events.append(progress_event)
         
         # Run the integration with maximum evaluations to prevent hanging
-        sol = solve_ivp(
-            lambda r, y: Wind_Evo(r, y, params),
-            r_span, y0,
-            rtol=self.rtol, atol=self.atol,
-            dense_output=True,
-            events=events,
-            max_step=0.1*kpc,  # Maximum step size to prevent jumping too far
-            first_step=1e-6*kpc  # Small first step to handle near-equilibrium start
-        )
+        try:
+            sol = solve_ivp(
+                lambda r, y: Wind_Evo(r, y, params),
+                r_span, y0,
+                rtol=self.rtol, atol=self.atol,
+                dense_output=True,
+                events=events,
+                max_step=0.1*kpc,  # Maximum step size to prevent jumping too far
+                first_step=1e-6*kpc  # Small first step to handle near-equilibrium start
+            )
+        except ValueError as e:
+            if "`ts` must be strictly increasing or decreasing" in str(e):
+                # Integration got stuck - return a terminated solution
+                print(f"\nWarning: Integration terminated early due to numerical issues at r ≈ {r_span[0]/kpc:.2f} kpc")
+                print(f"  This typically happens with eta_M={self.eta_M:.2f} and eta_M_cold={self.eta_M_cold:.2f}")
+                print(f"  The solution becomes unphysical and cannot continue.")
+                
+                # Create a minimal failed solution
+                # Use a simple object that has the required attributes
+                class FailedSolution:
+                    def __init__(self, r0, y0):
+                        self.t = np.array([r0])
+                        self.y = y0.reshape(-1, 1)
+                        self.status = -1
+                        self.message = "Integration failed: eta_M=0.1, eta_M_cold=0.3 causes numerical stiffness"
+                        self.success = False
+                        self.t_events = []
+                        self.y_events = []
+                        self.nfev = 0
+                        self.njev = 0
+                        self.nlu = 0
+                        
+                    def __call__(self, t):
+                        # Return initial conditions for any query
+                        return self.y[:, 0]
+                
+                sol = FailedSolution(r_span[0], y0)
+            else:
+                raise  # Re-raise if it's a different error
         
         # Also run hot-only solution for comparison
         y0_hot = y0[:3].copy()

@@ -138,6 +138,10 @@ def Wind_Evo(r, state, params):
     v_cloud    = state[4+N_cloud_species:4+2*N_cloud_species]
     Z_cloud    = state[-N_cloud_species:]
     
+    # Early safeguard: if pressure or density becomes unphysical, stop integration
+    if Pressure <= 0 or rho_wind <= 0 or v_wind <= 0:
+        return np.zeros(4 + 3*N_cloud_species)
+    
     # Ensure arrays for single cloud case
     if N_cloud_species == 1:
         M_cloud = np.atleast_1d(M_cloud)
@@ -164,6 +168,11 @@ def Wind_Evo(r, state, params):
     # Cloud transfer rates
     rho_cloud = Pressure * (mu*mp) / (kb*T_cloud)  # Pressure equilibrium
     chi = rho_cloud / rho_wind
+    
+    # Safeguard against negative chi (would cause NaN in power operations)
+    if chi <= 0:
+        return np.zeros(4 + 3*N_cloud_species)
+    
     r_cloud = (M_cloud / (4*np.pi/3. * rho_cloud))**(1/3.)
     v_rel = v_wind - v_cloud
     v_turb = f_turb0 * v_rel * chi**TurbulentVelocityChiPower
@@ -233,14 +242,20 @@ def Wind_Evo(r, state, params):
 
     # Return derivatives
     if N_cloud_species == 1:
-        return np.r_[dv_dr, drho_dr, dP_dr, drhoZ_dr, dM_cloud_dr[0], dv_cloud_dr[0], dZ_cloud_dr[0]]
+        derivatives = np.r_[dv_dr, drho_dr, dP_dr, drhoZ_dr, dM_cloud_dr[0], dv_cloud_dr[0], dZ_cloud_dr[0]]
     else:
-        return np.concatenate([
+        derivatives = np.concatenate([
             [dv_dr, drho_dr, dP_dr, drhoZ_dr],
             dM_cloud_dr,
             dv_cloud_dr,
             dZ_cloud_dr
         ])
+    
+    # If any derivatives are NaN, return zeros to stop integration gracefully
+    if np.any(np.isnan(derivatives)):
+        return np.zeros_like(derivatives)
+    
+    return derivatives
 
 
 def Hot_Wind_Evo(r, state, params):
@@ -567,6 +582,102 @@ def create_cloud_velocity_low_event(params):
     cloud_velocity_low.terminal = True
     cloud_velocity_low.direction = -1
     return cloud_velocity_low
+
+
+# ----------------------------------------------------------------------------
+# Unphysical State Detection Events
+# ----------------------------------------------------------------------------
+
+def create_nan_state_event(params):
+    """Create event to detect NaN in any state variable.
+    
+    Terminates integration if any state variable becomes NaN, indicating
+    the solution has become unphysical and the integration is stuck.
+    
+    Parameters
+    ----------
+    params : tuple
+        Full parameter tuple passed to Wind_Evo (included for consistency)
+        
+    Returns
+    -------
+    nan_state : function
+        Event function that triggers when any state variable is NaN
+    """
+    def nan_state(r, state):
+        """Check if any state variable has become NaN."""
+        # Check if any element of the state vector is NaN
+        if np.any(np.isnan(state)):
+            return -1.0  # Trigger event
+        return 1.0  # OK
+    
+    nan_state.terminal = True
+    nan_state.direction = -1
+    return nan_state
+
+
+def create_negative_pressure_event(params):
+    """Create event to detect negative pressure.
+    
+    Terminates integration if pressure becomes negative, which is unphysical.
+    
+    Parameters
+    ----------
+    params : tuple
+        Full parameter tuple passed to Wind_Evo (included for consistency)
+        
+    Returns
+    -------
+    negative_pressure : function
+        Event function that triggers when pressure <= 0
+    """
+    def negative_pressure(r, state):
+        """Check if pressure has become negative."""
+        # Extract pressure (index 2)
+        P = state[2]
+        # Return negative when P <= 0 (event triggers when crossing zero)
+        if P <= 0:
+            return -1.0
+        # Check if pressure is getting very small
+        if P < 1e-20:
+            return P - 1e-20
+        return 1.0  # OK
+    
+    negative_pressure.terminal = True
+    negative_pressure.direction = -1
+    return negative_pressure
+
+
+def create_negative_density_event(params):
+    """Create event to detect negative density.
+    
+    Terminates integration if hot gas density becomes negative, which is unphysical.
+    
+    Parameters
+    ----------
+    params : tuple
+        Full parameter tuple passed to Wind_Evo (included for consistency)
+        
+    Returns
+    -------
+    negative_density : function
+        Event function that triggers when rho <= 0
+    """
+    def negative_density(r, state):
+        """Check if density has become negative."""
+        # Extract density (index 1)
+        rho = state[1]
+        # Return negative when rho <= 0
+        if rho <= 0:
+            return -1.0
+        # Check if density is getting very small
+        if rho < 1e-30:
+            return rho - 1e-30
+        return 1.0  # OK
+    
+    negative_density.terminal = True
+    negative_density.direction = -1
+    return negative_density
 
 
 # ----------------------------------------------------------------------------

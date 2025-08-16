@@ -63,6 +63,7 @@ class WindConfig:
         self.v_cloud_min = kwargs.get('v_cloud_min', 1.0)  # km/s, minimum cloud velocity before termination
         self.cloud_radial_offset = kwargs.get('cloud_radial_offset', 0.0)  # fractional offset from sonic radius
         self.Z_cloud_over_Z_solar = kwargs.get('Z_cloud_over_Z_solar', 0.3)  # Cloud metallicity relative to solar
+        self.T_cl = kwargs.get('T_cl', 1e4)  # K, cloud temperature
         
         # Supernova feedback parameters
         self.E_SN = kwargs.get('E_SN', 1e51)  # erg, energy per supernova
@@ -95,6 +96,7 @@ class WindConfig:
             'v_cloud_min': self.v_cloud_min,
             'cloud_radial_offset': self.cloud_radial_offset,
             'Z_cloud_over_Z_solar': self.Z_cloud_over_Z_solar,
+            'T_cl': self.T_cl,
             'E_SN': self.E_SN,
             'mstar': self.mstar,
             'sonic_point_tolerance': self.sonic_point_tolerance

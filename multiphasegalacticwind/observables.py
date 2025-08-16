@@ -6,7 +6,7 @@ moments, which are useful for comparing model predictions with observations.
 """
 
 import numpy as np
-from .constants import mp, kpc, Msun
+from .constants import mp, kb, kpc, Msun
 from .config import get_default_config
 
 
@@ -68,82 +68,6 @@ def calculate_cloud_density(solution, cloud_index=None,
     return cloud_density
 
 
-def calculate_velocity_distribution(solution, cloud_index=None,
-                                  r_min_kpc=0.05, r_max_kpc=10.0,
-                                  velocity_units='km/s',
-                                  injection_radius_kpc=0.3,
-                                  injection_power=6.0):
-    """
-    Calculate dN/dv - the velocity distribution of clouds.
-    
-    Uses the chain rule: dN/dv = (dN/dr) / (dv/dr)
-    
-    Parameters
-    ----------
-    solution : Solution object
-        The wind solution from WindModel.run()
-    cloud_index : int, optional
-        Index of specific cloud species. If None, sum over all species.
-    r_min_kpc : float
-        Minimum radius to include [kpc]
-    r_max_kpc : float
-        Maximum radius to include [kpc]
-    velocity_units : str
-        Units for velocity: 'km/s' or 'cm/s'
-    injection_radius_kpc : float
-        Radius below which cloud injection is enhanced [kpc]
-    injection_power : float
-        Power law index for cloud injection profile
-        
-    Returns
-    -------
-    v_cloud : array
-        Cloud velocities [km/s or cm/s]
-    dN_dv : array
-        Velocity distribution [number per velocity unit]
-    """
-    # Get radius array
-    r = solution.sol.t  # cm
-    r_kpc = r / kpc
-    
-    # Find indices for radius range
-    mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
-    r_use = r[mask]
-    
-    # Get cloud number density
-    cloud_density = calculate_cloud_density(solution, cloud_index,
-                                          injection_radius_kpc, injection_power)
-    n_cloud = cloud_density[mask]  # Already in number density units
-    
-    # Get cloud velocity
-    if cloud_index is None:
-        # Average over all cloud species weighted by density
-        v_cloud = np.zeros(np.sum(mask))
-        total_density = np.zeros_like(v_cloud)
-        for i in range(solution.model.N_cloud_species):
-            v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask]  # cm/s
-            density_i = cloud_density[i, mask] if cloud_density.ndim > 1 else cloud_density[mask]
-            v_cloud += v_cl_i * density_i
-            total_density += density_i
-        v_cloud = np.where(total_density > 0, v_cloud / total_density, 0)
-    else:
-        # Single cloud species
-        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask]  # cm/s
-    
-    # Calculate velocity gradient
-    dv_dr = np.gradient(v_cloud, r_use)
-    
-    # Apply chain rule: dN/dv = (dN/dr) / (dv/dr)
-    # Avoid division by zero
-    dN_dv = np.where(np.abs(dv_dr) > 1e-10, n_cloud / np.abs(dv_dr), 0)
-    
-    # Convert units if needed
-    if velocity_units == 'km/s':
-        v_cloud = v_cloud / 1e5  # cm/s to km/s
-        dN_dv = dN_dv * 1e5  # adjust distribution
-    
-    return v_cloud, dN_dv
-
 
 def calculate_velocity_moments(v_cloud, dN_dv, max_order=3):
     """
@@ -198,12 +122,12 @@ def calculate_velocity_moments(v_cloud, dN_dv, max_order=3):
 def calculate_column_density_distribution(solution, cloud_index=None,
                                         r_min_kpc=0.05, r_max_kpc=100.0,
                                         injection_radius_kpc=0.3,
-                                        injection_power=6.0,
-                                        path_length_method='diameter'):
+                                        injection_power=6.0):
     """
     Calculate dN/dv in column density units [cm^-2 / (km/s)].
     
     This is suitable for comparison with absorption line observations.
+    Uses the gradient method: dN/dv = (dN/dr) / (dv/dr)
     
     Parameters
     ----------
@@ -219,10 +143,6 @@ def calculate_column_density_distribution(solution, cloud_index=None,
         Radius below which cloud injection is enhanced [kpc]
     injection_power : float
         Power law index for cloud injection profile
-    path_length_method : str
-        Method for calculating path length:
-        - 'diameter': Use 2r (path through center)
-        - 'shell': Use shell thickness dr
         
     Returns
     -------
@@ -239,67 +159,100 @@ def calculate_column_density_distribution(solution, cloud_index=None,
     mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
     r_use = r[mask]
     
-    # Get cloud number density
-    cloud_density = calculate_cloud_density(solution, cloud_index,
-                                          injection_radius_kpc, injection_power)
-    n_cloud = cloud_density[mask]  # Already in number density units
+    # Calculate path length through each shell (assuming spherical geometry)
+    path_length = 2 * r_use  # diameter
     
-    # Get cloud velocity
     if cloud_index is not None:
+        # Single cloud species
         v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask] / 1e5  # km/s
-    else:
-        # For all species, calculate mass-weighted average velocity
-        v_cloud = np.zeros(np.sum(mask))
-        total_mass_flux = np.zeros_like(v_cloud)
+        M_cloud = solution.sol.y[4 + cloud_index, mask]
         
-        # Need to calculate cloud densities per species
+        # Skip if cloud is destroyed
+        if np.max(M_cloud) < solution.model.config.M_cloud_min:
+            return np.array([0.0]), np.array([0.0])
+        
+        # Cloud number density
+        cloud_density = calculate_cloud_density(solution, cloud_index,
+                                              injection_radius_kpc, injection_power)
+        n_cloud = cloud_density[mask]
+        
+        # Gas density (n_H) in cold phase
+        rho_cold = n_cloud * M_cloud
+        n_H_cold = rho_cold / (solution.model.config.mu * mp)
+        
+        # Column density: N = integral of n_H * dl
+        N_column = n_H_cold * path_length
+        
+        # Calculate gradients
+        dN_dr = np.gradient(N_column, r_use)  # cm^-2 per cm
+        dv_dr = np.gradient(v_cloud * 1e5, r_use)  # (cm/s) per cm
+        
+        # Calculate dN/dv using chain rule
+        # dN/dv = (dN/dr) / (dv/dr) with proper units
+        # Result should be in cm^-2 per (km/s)
+        dN_dv_column = np.zeros_like(v_cloud)
+        valid = np.abs(dv_dr) > 1e-20  # avoid division by zero (use small threshold for cgs units)
+        dN_dv_column[valid] = dN_dr[valid] / dv_dr[valid] * 1e5  # convert to per km/s
+        
+    else:
+        # Sum contributions from all cloud species
+        # First collect all velocities to determine output grid
+        all_velocities = []
         for i in range(solution.model.N_cloud_species):
-            # Get this species' velocity
             v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask] / 1e5  # km/s
+            M_cl_i = solution.sol.y[4 + i, mask]
+            if np.max(M_cl_i) >= solution.model.config.M_cloud_min:
+                all_velocities.extend(v_cl_i)
+        
+        if len(all_velocities) == 0:
+            return np.array([0.0]), np.array([0.0])
+        
+        # Use velocity grid from first surviving species for output
+        # (all species have same velocity at each radius)
+        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + 0, mask] / 1e5
+        dN_dv_column = np.zeros_like(v_cloud)
+        
+        # Calculate dN/dv for each species and sum
+        for i in range(solution.model.N_cloud_species):
+            v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask] / 1e5  # km/s
+            M_cl_i = solution.sol.y[4 + i, mask]
             
-            # Calculate this species' cloud density
+            # Skip if cloud is destroyed
+            if np.max(M_cl_i) < solution.model.config.M_cloud_min:
+                continue
+            
+            # Cloud density for this species
             cloud_density_i = calculate_cloud_density(solution, i,
                                                     injection_radius_kpc, injection_power)
-            n_cloud_i = cloud_density_i[mask]
+            n_cl_i = cloud_density_i[mask]
             
-            # Mass flux = number density * mass per cloud * velocity
-            mass_flux_i = n_cloud_i * solution.model.M_cloud0[i] * v_cl_i
-            v_cloud += v_cl_i * mass_flux_i
-            total_mass_flux += mass_flux_i
-        
-        # Mass-weighted average
-        v_cloud = np.where(total_mass_flux > 0, v_cloud / total_mass_flux, 0)
+            # Gas density for this species
+            rho_i = n_cl_i * M_cl_i
+            n_H_i = rho_i / (solution.model.config.mu * mp)
+            
+            # Column density for this species
+            N_i = n_H_i * path_length
+            
+            # Gradients for this species
+            dN_dr_i = np.gradient(N_i, r_use)  # cm^-2 per cm
+            dv_dr_i = np.gradient(v_cl_i * 1e5, r_use)  # (cm/s) per cm
+            
+            # Add this species' contribution to total dN/dv
+            valid = np.abs(dv_dr_i) > 1e-20  # small threshold for cgs units
+            dN_dv_i = np.zeros_like(v_cl_i)
+            dN_dv_i[valid] = dN_dr_i[valid] / dv_dr_i[valid] * 1e5  # convert to per km/s
+            
+            dN_dv_column += dN_dv_i
     
-    # Calculate path length through each shell
-    if path_length_method == 'diameter':
-        # Path length is approximately the diameter
-        path_length = 2 * r_use
-    elif path_length_method == 'shell':
-        # Path length is the shell thickness
-        dr = np.gradient(r_use)
-        path_length = np.abs(dr)
-    else:
-        raise ValueError(f"Unknown path_length_method: {path_length_method}")
-    
-    # Calculate column density per radius interval
-    dN_dr = n_cloud * path_length
-    
-    # Calculate velocity gradient
-    dv_dr = np.gradient(v_cloud * 1e5, r_use)  # Convert back to cm/s for gradient
-    
-    # Apply chain rule: dN/dv = dN/dr / (dv/dr)
-    # Result is in cm^-2 / (cm/s), convert to cm^-2 / (km/s)
-    dN_dv_column = np.where(np.abs(dv_dr) > 1e-10, 
-                           dN_dr / np.abs(dv_dr) * 1e5,  # multiply by 1e5 for km/s units
-                           0)
+    # Take absolute value (physical column density is positive)
+    dN_dv_column = np.abs(dN_dv_column)
     
     return v_cloud, dN_dv_column
 
 
 def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.0,
                                       injection_radius_kpc=0.3,
-                                      injection_power=6.0,
-                                      path_length_method='diameter'):
+                                      injection_power=6.0):
     """
     Calculate dN/dv for each cloud species separately.
     
@@ -318,8 +271,6 @@ def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.
         Radius below which cloud injection is enhanced [kpc]
     injection_power : float
         Power law index for cloud injection profile
-    path_length_method : str
-        Method for calculating path length
         
     Returns
     -------
@@ -336,8 +287,7 @@ def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.
         solution, cloud_index=None,
         r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
         injection_radius_kpc=injection_radius_kpc,
-        injection_power=injection_power,
-        path_length_method=path_length_method
+        injection_power=injection_power
     )
     
     # Calculate for each species
@@ -347,15 +297,14 @@ def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.
             solution, cloud_index=i,
             r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
             injection_radius_kpc=injection_radius_kpc,
-            injection_power=injection_power,
-            path_length_method=path_length_method
+            injection_power=injection_power
         )
         dN_dv_list.append(dN_dv_i)
     
     return v_cloud, {
         'total': dN_dv_total,
         'species': dN_dv_list,
-        'M_cloud0': solution.model.M_cloud0
+        'M_cloud0': solution.model.M_cloud0 / Msun
     }
 
 

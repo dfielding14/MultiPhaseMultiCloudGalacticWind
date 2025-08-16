@@ -4,161 +4,172 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a research codebase implementing multiphase galactic wind models. It simulates steady-state evolution of galactic winds with hot gas and cold embedded clouds, based on Fielding & Bryan's paper "The Structure of Multiphase Galactic Winds".
+Research codebase implementing multiphase galactic wind models with hot gas and cold embedded clouds. Based on Fielding & Bryan's "The Structure of Multiphase Galactic Winds" (ApJ 2024).
 
 ## Key Commands
 
-### Testing & Development
+### Quick Testing
 ```bash
-# Quick functionality test
-python -c "from multiphasegalacticwind import WindModel; model = WindModel(SFR=10.0)"
+# Basic functionality test
+python -c "from multiphasegalacticwind import WindModel; model = WindModel(SFR=10.0); print('Import successful')"
 
-# Run examples
+# Run core examples
 python examples/simple_example.py
-python examples/basic_example.py
-python examples/observational_comparison.py
-python examples/column_density_example.py
+python examples/comprehensive_example.py
 
-# Profile performance bottlenecks
-python -m cProfile -s cumulative examples/basic_example.py | head -30
+# Run Jupyter tutorial
+jupyter notebook examples/tutorial_comprehensive.ipynb
 
 # Run tests
-pytest tests/
+pytest tests/ -v
+
+# Profile performance
+python -m cProfile -s cumulative examples/simple_example.py | head -30
 ```
 
 ### Installation
 ```bash
 pip install -e .
-pip install numpy scipy matplotlib cmasher h5py jupyter
+pip install numpy scipy matplotlib cmasher h5py jupyter pytest
 ```
 
 ## Architecture
 
-### Core Package Structure (`multiphasegalacticwind/`)
+### Core Package Structure
 
-The package follows clean separation of concerns with no global variables:
-
-- **`wind_model.py`** - High-level API wrapper (`WindModel` class)
-- **`config.py`** - Configuration management via `WindConfig` class
-- **`constants.py`** - Physical constants only (kb, mp, Msun, etc.)
-- **`core_physics.py`** - Core physics ODEs and event functions
-- **`cooling.py`** - Cooling functions with lazy-loaded interpolators
-- **`observables.py`** - Velocity distributions and column densities
-- **`plotting.py`** - Publication-quality plotting functions
-- **`analysis_helpers.py`** - Physical analysis utilities
-- **`data/Lambda_tab_redshifts.npz`** - Wiersma+09 cooling tables
-
-### Key Design Principles
-
-1. **Configuration Flow** - All parameters flow through `WindConfig`:
-   ```python
-   config = WindConfig(f_turb0=0.2, drag_coeff=0.3)
-   model = WindModel(SFR=10.0, config=config)
-   ```
-
-2. **No Import Side Effects** - Cooling tables load on first use, not at import
-
-3. **Parameter Tuple** - `Wind_Evo` receives 10-parameter tuple:
-   ```
-   (v_circ, Ndot_cloud0, T_cloud, injection_radius, injection_power,
-    config_dict, r0, Edot_per_Vol, Mdot_per_Vol, Lambda_P_rho)
-   ```
-
-4. **Event Factory Pattern** - All events use factory functions:
-   ```python
-   event = create_supersonic_event(params)
-   ```
-
-### Physics Implementation
-
-**Core Integration Loop:**
-1. Solve coupled ODEs for hot wind + N cloud species
-2. State vector: `[v_wind, rho_wind, P, rhoZ_wind, M_cloud_i, v_cloud_i, Z_cloud_i]`
-3. Cloud mass distribution: dN/dM ∝ M^-α
-4. Mass exchange via turbulent radiative mixing layers (TRMLs)
-
-**Key Physics Functions:**
-- `Wind_Evo()` - Main ODE system (multicloud)
-- `Hot_Wind_Evo()` - Hot phase only baseline
-- `setup_cloud_powerlaw_distribution()` - Generate cloud populations
-- `tcool_P()` - Cooling time from pressure/temperature
-
-**Event Detection:**
-- Supersonic/subsonic transitions
-- Wind velocity negative
-- Cold wind (T_hot → T_cloud)
-- All clouds frozen (M < M_min)
-- Cloud velocity/density thresholds
-
-## Current Status & Known Issues
-
-### ✅ Completed Improvements
-- Clean module separation (achieved 19,000x cooling speedup)
-- Proper configuration management with WindConfig
-- Fixed parameter flow throughout codebase
-- Lazy loading of cooling tables
-- Comprehensive documentation and migration guides
-- Performance issues resolved - integration runs efficiently
-
-### 🔧 Active Development Tasks
-
-1. **Observable Functions**
-   - Fix velocity indexing bugs in observables.py
-   - Correct cloud density calculations
-   - Ensure multi-species cloud handling
-
-2. **Examples & Documentation**
-   - Create comprehensive example with dN/dv plots
-   - Convert to Jupyter notebook tutorial
-   - Verify all existing examples work correctly
-
-3. **Plotting Verification**
-   - Check mass flux unit conversions
-   - Verify cloud species visualization
-
-## Migration Guide
-
-### Old Code → New API
-```python
-# OLD (pre-refactoring):
-mu_mol = 0.62
-k_B = 1.38e-16
-# ... globals everywhere ...
-
-# NEW (current):
-from multiphasegalacticwind import WindModel, WindConfig
-config = WindConfig(mu=0.62, f_turb0=0.1)
-model = WindModel(SFR=10.0, config=config)
+```
+multiphasegalacticwind/
+├── wind_model.py       # High-level API (WindModel class)
+├── config.py           # Configuration (WindConfig class)
+├── core_physics.py     # ODEs and physics (Wind_Evo, events)
+├── cooling.py          # Cooling functions (lazy-loaded)
+├── observables.py      # Velocity/column density distributions
+├── plotting.py         # Publication plots
+├── constants.py        # Physical constants (CGS units)
+├── analysis_helpers.py # Analysis utilities
+└── data/              # Wiersma+09 cooling tables
 ```
 
-### Key Parameter Changes
-- `mu` now flows from config throughout (no hardcoded 0.62)
-- All parameters in `WindConfig` (see `config.py`)
-- Cooling interpolator passed in params[9]
+### Key Design Patterns
 
-## Critical Configuration Parameters
+1. **Parameter Flow via WindConfig**
+   - All physics parameters flow through WindConfig
+   - No global variables - clean parameter passing
+   - Config dict passed to physics functions
 
-**Performance-Critical:**
-- `f_turb0` (~0.1) - Turbulent mixing efficiency
-- `rtol/atol` - Integration tolerances
-- `N_cloud_species` - Number of cloud mass bins
+2. **10-Parameter Tuple for Physics**
+   ```python
+   params = (v_circ, Ndot_cloud0, T_cloud, injection_radius, 
+             injection_power, config_dict, r0, Edot_per_Vol, 
+             Mdot_per_Vol, Lambda_P_rho)
+   ```
 
-**Physics-Critical:**
-- `eta_M` - Hot phase mass loading
-- `eta_M_cold` - Cold phase mass loading  
-- `drag_coeff` - Cloud drag coefficient
-- `T_cl` - Cloud temperature (10^4 K)
+3. **Event Detection System**
+   - Factory functions create event detectors
+   - Events: supersonic/subsonic, negative velocity, cold wind, frozen clouds
+   - Events configured based on initial conditions
 
-## Development Guidelines
+4. **Lazy Loading**
+   - Cooling tables load on first use
+   - No import-time side effects
+   - Interpolators cached after creation
 
-1. **Always profile before optimizing** - Use cProfile to identify actual bottlenecks
-2. **Maintain parameter flow** - Everything through WindConfig, no globals
-3. **Test with simple cases first** - Single cloud before multicloud
-4. **Check units carefully** - CGS internally, convenient units in API
+### Core Physics Implementation
 
-## Legacy Code Reference
+**ODE System (`Wind_Evo` in core_physics.py):**
+- State vector: `[v_wind, rho_wind, P, rhoZ_wind, M_cloud_i, v_cloud_i, Z_cloud_i]`
+- Solves coupled hot phase + N cloud species
+- Cloud distribution: dN/dM ∝ M^(-α)
+- Mass exchange through turbulent radiative mixing layers
 
-Original implementations in `legacy/` for validation:
-- `Multiphase_Wind_Evolution.py` - Single cloud
-- `Multiphase_Wind_Evolution_Multicloud.py` - Multiple clouds
-- Jupyter notebooks for analysis
+**Critical Functions:**
+- `Wind_Evo()` - Main multicloud ODE system
+- `Hot_Wind_Evo()` - Hot-only baseline
+- `setup_cloud_powerlaw_distribution()` - Initialize clouds
+- `tcool_P()` - Cooling time calculation
+- `compute_sonic_point()` - Find sonic radius
+
+## Current Development Status
+
+### Recent Fixes (Completed)
+- Fixed observables velocity indexing bugs
+- Corrected cloud density calculations  
+- Resolved 19,000x cooling performance issue
+- Clean module separation achieved
+
+### Active Issues
+
+1. **Observables Module**
+   - Verify multi-species cloud handling in `calculate_column_density_by_species()`
+   - Check velocity moment calculations
+   - Validate column density units [cm^-2/(km/s)]
+
+2. **Examples**
+   - `comprehensive_example.py` - Verify dN/dv plots
+   - `tutorial_comprehensive.ipynb` - Check all cells run
+   - `observational_comparison_notebook.ipynb` - Validate mock observations
+
+3. **Plotting Functions**
+   - `plot_column_density_distribution()` - Verify units and scaling
+   - Check mass flux conversions in plots
+   - Validate cloud species color mapping
+
+## Critical Parameters
+
+### Performance Tuning
+```python
+# For MCMC/parameter exploration (faster)
+model = WindModel(SFR=10.0, rtol=1e-6, atol=1e-8)
+
+# For production runs (accurate)  
+model = WindModel(SFR=10.0, rtol=1e-10, atol=1e-12)
+```
+
+### Key Physics Parameters
+- `f_turb0` (0.1-0.2) - Turbulent mixing efficiency
+- `drag_coeff` (0.3-1.0) - Cloud drag coefficient
+- `eta_M` / `eta_M_cold` - Mass loading factors
+- `N_cloud_species` (5-20) - Cloud mass bins
+
+## Testing Approach
+
+```bash
+# Unit tests for individual modules
+pytest tests/test_cooling.py -v
+pytest tests/test_config.py -v
+
+# Integration test via examples
+python examples/simple_example.py
+python examples/comprehensive_example.py
+
+# Performance test
+python -m cProfile -s cumulative examples/simple_example.py | grep Wind_Evo
+```
+
+## Common Issues & Solutions
+
+1. **Long integration times**
+   - Reduce `rtol` to 1e-6 for initial runs
+   - Decrease `r_max_kpc` to 50
+   - Use fewer cloud species (N_cloud_species=5)
+
+2. **Memory issues with cooling tables**
+   - Tables lazy-load automatically
+   - ~100MB when loaded
+   - Cached after first use
+
+3. **Event termination**
+   - Check `solution.sol.message` for termination reason
+   - Adjust `sonic_point_tolerance` if needed
+   - Monitor `v_cloud_min` for low velocity events
+
+## CRITICAL: Development Guidelines
+
+**MUST READ**: See `DEVELOPMENT_GUIDELINES.md` for mandatory development practices.
+
+Key requirements:
+- Think critically, push back on poor ideas
+- Consider multiple approaches before implementing
+- Maximum 3 attempts per issue, then reassess
+- Small incremental changes that pass tests
+- Simplicity over cleverness

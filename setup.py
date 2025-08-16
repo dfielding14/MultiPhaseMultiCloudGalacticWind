@@ -11,7 +11,7 @@ setup(
     name="multiphasegalacticwind",
     version="0.1.0",
     author="Drummond B. Fielding",
-    author_email="dfielding@flatironinstitute.org",
+    author_email="dbf233@nyu.edu",
     description="Multiphase galactic wind model for MCMC fitting",
     long_description=long_description,
     long_description_content_type="text/markdown",

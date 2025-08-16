@@ -106,12 +106,11 @@ def main():
     plt.close(fig1)
     print(f"Saved: {plot_path}")
     
-    # Calculate velocity distribution
-    print("\nCalculating velocity distribution...")
-    v_cloud, dN_dv = solution.calculate_velocity_distribution(
+    # Calculate column density distribution
+    print("\nCalculating column density distribution...")
+    v_cloud, dN_dv = solution.calculate_column_density_distribution(
         r_min_kpc=0.5,
-        r_max_kpc=50.0,
-        velocity_units='km/s'
+        r_max_kpc=50.0
     )
     
     # Calculate moments
@@ -129,7 +128,7 @@ def main():
     fig2, ax = plt.subplots(figsize=(6, 4.5))
     ax.plot(v_cloud, dN_dv, 'k-', lw=1.5)
     ax.set_xlabel(r'$v$ [km s$^{-1}$]')
-    ax.set_ylabel(r'$dN/dv$ [(km s$^{-1}$)$^{-1}$]')
+    ax.set_ylabel(r'$dN/dv$ [cm$^{-2}$ (km s$^{-1}$)$^{-1}$]')
     ax.set_xlim(0, 800)
     ax.set_ylim(0, None)
     
@@ -191,9 +190,10 @@ def main():
         # Plot velocity profile
         ax1.loglog(sol_var.r, sol_var.v, label=f'$\\eta_{{M,cold}} = {eta_M_cold}$')
         
-        # Calculate and plot velocity distribution
-        v_cl, dN_dv = sol_var.calculate_velocity_distribution(r_min_kpc=0.5, r_max_kpc=50.0)
-        ax2.plot(v_cl, dN_dv/np.max(dN_dv), label=f'$\\eta_{{M,cold}} = {eta_M_cold}$')
+        # Calculate and plot column density distribution
+        v_cl, dN_dv = sol_var.calculate_column_density_distribution(r_min_kpc=0.5, r_max_kpc=50.0)
+        if np.max(dN_dv) > 0:
+            ax2.plot(v_cl, dN_dv/np.max(dN_dv), label=f'$\\eta_{{M,cold}} = {eta_M_cold}$')
     
     # Format velocity profile plot
     ax1.set_xlabel(r'$r$ [kpc]')
@@ -205,7 +205,7 @@ def main():
     
     # Format velocity distribution plot
     ax2.set_xlabel(r'$v$ [km/s]')
-    ax2.set_ylabel(r'$dN/dv$ (normalized)')
+    ax2.set_ylabel(r'$dN/dv$ (normalized) [cm$^{-2}$ (km/s)$^{-1}$]')
     ax2.set_xlim(0, 800)
     ax2.legend(frameon=False, fontsize=9)
     ax2.set_title('Velocity Distributions')

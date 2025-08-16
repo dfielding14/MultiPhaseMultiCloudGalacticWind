@@ -8,10 +8,9 @@ Based on Fielding & Bryan (2024).
 from .wind_model import WindModel
 from .config import WindConfig, get_default_config
 from .constants import *
-from .plotting import (setup_plotting_style, plot_wind_solution, 
-                      plot_velocity_distribution, plot_column_density_distribution)
-from .observables import (calculate_velocity_distribution, 
-                         calculate_velocity_moments,
+from .plotting import (setup_plotting_style, plot_wind_solution, plot_profiles,
+                      plot_column_density_distribution)
+from .observables import (calculate_velocity_moments,
                          calculate_mass_weighted_velocity,
                          calculate_column_density_distribution,
                          calculate_column_density_by_species)
@@ -21,7 +20,7 @@ from .analysis_helpers import (Field_Length, Field_Length_mix, cloud_radius, clo
 
 __version__ = "0.1.0"
 __all__ = ["WindModel", "WindConfig", "get_default_config", "setup_plotting_style", "plot_wind_solution",
-           "plot_velocity_distribution", "plot_column_density_distribution",
-           "calculate_velocity_distribution", "calculate_velocity_moments", 
+           "plot_profiles", "plot_column_density_distribution",
+           "calculate_velocity_moments", 
            "calculate_mass_weighted_velocity", "calculate_column_density_distribution",
            "calculate_column_density_by_species"]

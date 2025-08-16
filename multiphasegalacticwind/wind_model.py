@@ -143,11 +143,6 @@ class WindModel:
         elif r_star_kpc is None:
             r_star_kpc = 0.3  # default
             
-        if T_cl is None and T_cloud is not None:
-            T_cl = T_cloud
-        elif T_cl is None:
-            T_cl = 1e4  # default
-            
         # Handle cloud mass range
         if cloud_mass_range is None:
             if log_M_cloud_min is not None and log_M_cloud_max is not None:
@@ -160,6 +155,9 @@ class WindModel:
             # Add redshift to config_kwargs if not already there
             if 'redshift' not in config_kwargs:
                 config_kwargs['redshift'] = redshift
+            # Add T_cl to config_kwargs if provided
+            if T_cl is not None or T_cloud is not None:
+                config_kwargs['T_cl'] = T_cl if T_cl is not None else T_cloud
             config = WindConfig(**config_kwargs)
         else:
             # Override any parameters passed as kwargs
@@ -169,6 +167,9 @@ class WindModel:
             # Also set redshift on config if provided
             if redshift != config.redshift:
                 config.redshift = redshift
+            # Also set T_cl on config if provided
+            if T_cl is not None or T_cloud is not None:
+                config.T_cl = T_cl if T_cl is not None else T_cloud
         self.config = config
         
         # Store parameters
@@ -179,12 +180,24 @@ class WindModel:
         self.eta_M_cold = eta_M_cold
         self.eta_E = eta_E
         self.r_star_kpc = r_star_kpc
-        self.T_cl = T_cl
         self.r_max_kpc = r_max_kpc
         self.rtol = rtol
         self.atol = atol
         self.progress_callback = progress_callback
         self.progress_interval = progress_interval
+        
+        # Warn about potentially problematic parameters
+        if eta_M < 0.15 and eta_M_cold > 2 * eta_M:
+            import warnings
+            warnings.warn(
+                f"Warning: eta_M={eta_M:.2f} and eta_M_cold={eta_M_cold:.2f} may lead to numerical issues.\n"
+                "The cold mass loading is much higher than hot mass loading, which can cause:\n"
+                "  - Excessive cooling leading to negative pressure/density\n"
+                "  - Numerical stiffness causing integration to hang\n"
+                "Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)",
+                UserWarning,
+                stacklevel=2
+            )
         
         # Set up cloud distribution
         log_M_cloud_min = np.log10(cloud_mass_range[0])
@@ -204,6 +217,11 @@ class WindModel:
         # Load cooling table
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         self.cooling_table_path = os.path.join(data_dir, 'Lambda_tab_redshifts.npz')
+    
+    @property
+    def T_cl(self) -> float:
+        """Cloud temperature in K. For backward compatibility."""
+        return self.config.T_cl
     
     def _calculate_sonic_point_conditions(self) -> None:
         """
@@ -339,7 +357,7 @@ class WindModel:
         )
         
         # Extended params tuple including source terms and cooling interpolator
-        params = (v_circ_cgs, self.Ndot_cloud0, self.T_cl, 
+        params = (v_circ_cgs, self.Ndot_cloud0, self.config.T_cl, 
                   injection_radius, injection_power, self.config.to_dict(),
                   r0, Edot_per_Vol, Mdot_per_Vol, cooling_interpolator)
         
@@ -349,15 +367,23 @@ class WindModel:
         mach_initial = y0[0] / np.sqrt(cs_sq_initial)
         
         # Create event functions with params
+        from .core_physics import (create_negative_pressure_event, 
+                                   create_negative_density_event,
+                                   create_nan_state_event)
+        
         wind_negative = create_wind_negative_event(params)
         cold_wind = create_cold_wind_event(params)
         all_clouds_frozen = create_all_clouds_frozen_event(params)
         cloud_density_low = create_cloud_density_low_event(params)
         cloud_velocity_low = create_cloud_velocity_low_event(params)
+        negative_pressure = create_negative_pressure_event(params)
+        negative_density = create_negative_density_event(params)
+        nan_state = create_nan_state_event(params)
         
         # Create list of events - always include these
         events = [wind_negative, cold_wind, all_clouds_frozen, 
-                  cloud_density_low, cloud_velocity_low]
+                  cloud_density_low, cloud_velocity_low,
+                  negative_pressure, negative_density, nan_state]
         
         # Only add supersonic event if starting subsonic
         # (Don't need it if already supersonic)
@@ -480,33 +506,17 @@ class Solution:
         else:
             return np.nan
     
-    def calculate_velocity_distribution(self, **kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Calculate the velocity distribution dN/dv.
-        
-        Parameters
-        ----------
-        **kwargs : dict
-            Arguments passed to observables.calculate_velocity_distribution
-            
-        Returns
-        -------
-        v_cloud : array
-            Cloud velocities [km/s by default]
-        dN_dv : array
-            Velocity distribution
-        """
-        from .observables import calculate_velocity_distribution
-        return calculate_velocity_distribution(self, **kwargs)
-    
     def calculate_velocity_moments(self, **kwargs: Any) -> Dict[str, float]:
         """
-        Calculate velocity distribution and its moments.
+        Calculate velocity moments from column density distribution.
+        
+        This uses the column density distribution (observable quantity)
+        rather than number density distribution.
         
         Parameters
         ----------
         **kwargs : dict
-            Arguments for velocity distribution calculation
+            Arguments for column density distribution calculation
             
         Returns
         -------
@@ -514,7 +524,7 @@ class Solution:
             Dictionary with mean, dispersion, etc.
         """
         from .observables import calculate_velocity_moments
-        v_cloud, dN_dv = self.calculate_velocity_distribution(**kwargs)
+        v_cloud, dN_dv = self.calculate_column_density_distribution(**kwargs)
         return calculate_velocity_moments(v_cloud, dN_dv)
     
     def calculate_column_density_distribution(self, **kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:

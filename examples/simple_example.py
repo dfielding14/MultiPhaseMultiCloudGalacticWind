@@ -6,7 +6,6 @@ This example shows the basic usage in just a few lines of code.
 """
 
 from multiphasegalacticwind import (WindModel, plot_wind_solution, 
-                                   plot_velocity_distribution,
                                    plot_column_density_distribution)
 
 # Create and run a wind model
@@ -45,11 +44,9 @@ print(f"  Max dN/dv: {dN_dv.max():.2e} cm^-2 / (km/s)")
 fig1, axes = plot_wind_solution(solution)
 fig1.savefig('wind_profiles.pdf')
 
-fig2, ax = plot_velocity_distribution(solution)
-fig2.savefig('velocity_distribution.pdf')
-
-fig3, ax = plot_column_density_distribution(solution)
-fig3.savefig('column_density.pdf')
+# Plot column density distribution with velocity moments
+fig2, ax = plot_column_density_distribution(solution, show_moments=True)
+fig2.savefig('column_density_distribution.pdf')
 
 print("\nPlots saved as PDF files")
 

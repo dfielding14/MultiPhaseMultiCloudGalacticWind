@@ -704,43 +704,45 @@ def create_step_size_event(params, min_relative_step=1e-8, n_small_steps=100):
     step_size_event : function
         Event function that triggers when integration is stuck
     """
-    # Track state between calls
-    state = {
-        'last_r': None,
-        'small_step_count': 0,
-        'total_steps': 0,
-        'start_time': None,
-        'last_check_r': None
-    }
-    
     import time
     from .constants import kpc
     
-    def step_size_event(r, y):
-        """Check if integration is making progress."""
-        state['total_steps'] += 1
+    # Use a class to properly encapsulate state for each instance
+    class StepSizeMonitor:
+        def __init__(self):
+            self.last_r = None
+            self.small_step_count = 0
+            self.total_steps = 0
+            self.start_time = None
+            self.last_check_r = None
         
-        # Initialize timer
-        if state['start_time'] is None:
-            state['start_time'] = time.time()
-            state['last_check_r'] = r
-            return 1.0  # OK on first call
-        
-        # Check progress every 5 seconds
-        elapsed = time.time() - state['start_time']
-        if elapsed > 5.0:
-            # Check how far we've progressed
-            progress = abs(r - state['last_check_r']) / kpc
-            if progress < 0.001:  # Less than 1 pc progress in 5 seconds
-                # We're stuck
-                return 0.0  # Trigger termination
-            # Reset for next check
-            state['start_time'] = time.time()
-            state['last_check_r'] = r
-        
-        # Always return positive (no termination) unless stuck
-        return 1.0
+        def __call__(self, r, y):
+            """Check if integration is making progress."""
+            self.total_steps += 1
+            
+            # Initialize timer on first call
+            if self.start_time is None:
+                self.start_time = time.time()
+                self.last_check_r = r
+                return 1.0  # OK on first call
+            
+            # Check progress every 5 seconds
+            elapsed = time.time() - self.start_time
+            if elapsed > 5.0:
+                # Check how far we've progressed
+                progress = abs(r - self.last_check_r) / kpc
+                if progress < 0.001:  # Less than 1 pc progress in 5 seconds
+                    # We're stuck
+                    return 0.0  # Trigger termination
+                # Reset for next check
+                self.start_time = time.time()
+                self.last_check_r = r
+            
+            # Always return positive (no termination) unless stuck
+            return 1.0
     
+    # Create a new instance for this event
+    step_size_event = StepSizeMonitor()
     step_size_event.terminal = True
     step_size_event.direction = 0  # No direction checking
     return step_size_event

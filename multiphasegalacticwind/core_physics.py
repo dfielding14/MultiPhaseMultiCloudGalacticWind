@@ -681,6 +681,71 @@ def create_negative_density_event(params):
 
 
 # ----------------------------------------------------------------------------
+# Integration Health Events - Detect stuck integration
+# ----------------------------------------------------------------------------
+
+def create_step_size_event(params, min_relative_step=1e-8, n_small_steps=100):
+    """Create event to detect when integration is stuck taking tiny steps.
+    
+    Terminates integration if it takes too many steps without making progress,
+    indicating the solver is stuck on numerical stiffness.
+    
+    Parameters
+    ----------
+    params : tuple
+        Full parameter tuple passed to Wind_Evo (included for consistency)
+    min_relative_step : float, optional
+        Minimum relative step size Δr/r before considering stuck (default: 1e-8)
+    n_small_steps : int, optional
+        Number of consecutive small steps before terminating (default: 100)
+        
+    Returns
+    -------
+    step_size_event : function
+        Event function that triggers when integration is stuck
+    """
+    # Track state between calls
+    state = {
+        'last_r': None,
+        'small_step_count': 0,
+        'total_steps': 0,
+        'start_time': None,
+        'last_check_r': None
+    }
+    
+    import time
+    from .constants import kpc
+    
+    def step_size_event(r, y):
+        """Check if integration is making progress."""
+        state['total_steps'] += 1
+        
+        # Initialize timer
+        if state['start_time'] is None:
+            state['start_time'] = time.time()
+            state['last_check_r'] = r
+            return 1.0  # OK on first call
+        
+        # Check progress every 5 seconds
+        elapsed = time.time() - state['start_time']
+        if elapsed > 5.0:
+            # Check how far we've progressed
+            progress = abs(r - state['last_check_r']) / kpc
+            if progress < 0.001:  # Less than 1 pc progress in 5 seconds
+                # We're stuck
+                return 0.0  # Trigger termination
+            # Reset for next check
+            state['start_time'] = time.time()
+            state['last_check_r'] = r
+        
+        # Always return positive (no termination) unless stuck
+        return 1.0
+    
+    step_size_event.terminal = True
+    step_size_event.direction = 0  # No direction checking
+    return step_size_event
+
+# ----------------------------------------------------------------------------
 # Progress Tracking Events - Non-terminating monitoring
 # ----------------------------------------------------------------------------
 

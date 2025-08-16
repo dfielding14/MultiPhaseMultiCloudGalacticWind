@@ -15,7 +15,7 @@ from .core_physics import (
     create_supersonic_event, create_subsonic_event, create_wind_negative_event,
     create_cold_wind_event, create_all_clouds_frozen_event,
     create_cloud_density_low_event, create_cloud_velocity_low_event,
-    create_progress_event
+    create_progress_event, create_step_size_event
 )
 from .constants import *
 from .config import WindConfig, get_default_config
@@ -379,11 +379,12 @@ class WindModel:
         negative_pressure = create_negative_pressure_event(params)
         negative_density = create_negative_density_event(params)
         nan_state = create_nan_state_event(params)
+        step_size = create_step_size_event(params, min_relative_step=1e-7, n_small_steps=20)
         
         # Create list of events - always include these
         events = [wind_negative, cold_wind, all_clouds_frozen, 
                   cloud_density_low, cloud_velocity_low,
-                  negative_pressure, negative_density, nan_state]
+                  negative_pressure, negative_density, nan_state, step_size]
         
         # Only add supersonic event if starting subsonic
         # (Don't need it if already supersonic)
@@ -416,13 +417,15 @@ class WindModel:
             )
             events.append(progress_event)
         
-        # Run the integration
+        # Run the integration with maximum evaluations to prevent hanging
         sol = solve_ivp(
             lambda r, y: Wind_Evo(r, y, params),
             r_span, y0,
             rtol=self.rtol, atol=self.atol,
             dense_output=True,
-            events=events
+            events=events,
+            max_step=0.1*kpc,  # Maximum step size to prevent jumping too far
+            first_step=1e-6*kpc  # Small first step to handle near-equilibrium start
         )
         
         # Also run hot-only solution for comparison

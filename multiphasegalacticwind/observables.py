@@ -6,13 +6,16 @@ moments, which are useful for comparing model predictions with observations.
 """
 
 import numpy as np
-from .constants import mp, kb, kpc, Msun
+from .constants import mp, kb, kpc, Msun, km
 from .config import get_default_config
+
+# Mean molecular weight for ionized cold gas (following Xinfeng_data)
+mu_cool = 1.4  # Mean atomic mass per proton for ionized gas
 
 
 def calculate_cloud_density(solution, cloud_index=None, 
-                           injection_radius_kpc=0.3, 
-                           injection_power=6.0):
+                           injection_radius_kpc=None, 
+                           injection_power=None):
     """
     Calculate the number density of clouds as a function of radius.
     
@@ -22,16 +25,25 @@ def calculate_cloud_density(solution, cloud_index=None,
         The wind solution from WindModel.run()
     cloud_index : int, optional
         Index of specific cloud species. If None, sum over all species.
-    injection_radius_kpc : float
-        Radius below which cloud injection is enhanced [kpc]
-    injection_power : float
-        Power law index for cloud injection profile
+    injection_radius_kpc : float, optional
+        Radius below which cloud injection is enhanced [kpc].
+        If None, uses model's injection radius from config.
+    injection_power : float, optional
+        Power law index for cloud injection profile.
+        If None, uses model's injection power from config.
         
     Returns
     -------
     cloud_density : array
         Number density of clouds [cm^-3]
     """
+    # Get injection parameters from model if not provided
+    if injection_radius_kpc is None:
+        r0_kpc = solution.model.r_star_kpc
+        injection_radius_kpc = solution.model.config.cold_cloud_injection_radial_extent_frac * r0_kpc
+    if injection_power is None:
+        injection_power = solution.model.config.cold_cloud_injection_radial_power
+    
     r = solution.sol.t  # radius in cm
     r_kpc = r / kpc
     
@@ -121,13 +133,13 @@ def calculate_velocity_moments(v_cloud, dN_dv, max_order=3):
 
 def calculate_column_density_distribution(solution, cloud_index=None,
                                         r_min_kpc=0.05, r_max_kpc=100.0,
-                                        injection_radius_kpc=0.3,
-                                        injection_power=6.0):
+                                        injection_radius_kpc=None,
+                                        injection_power=None):
     """
     Calculate dN/dv in column density units [cm^-2 / (km/s)].
     
-    This is suitable for comparison with absorption line observations.
-    Uses the gradient method: dN/dv = (dN/dr) / (dv/dr)
+    Following the Xinfeng_data approach for consistency with previous work.
+    This uses direct gradient method without path length multiplication.
     
     Parameters
     ----------
@@ -139,10 +151,12 @@ def calculate_column_density_distribution(solution, cloud_index=None,
         Minimum radius to include [kpc]
     r_max_kpc : float
         Maximum radius to include [kpc]
-    injection_radius_kpc : float
-        Radius below which cloud injection is enhanced [kpc]
-    injection_power : float
-        Power law index for cloud injection profile
+    injection_radius_kpc : float, optional
+        Radius below which cloud injection is enhanced [kpc].
+        If None, uses model's injection radius from config.
+    injection_power : float, optional
+        Power law index for cloud injection profile.
+        If None, uses model's injection power from config.
         
     Returns
     -------
@@ -151,108 +165,143 @@ def calculate_column_density_distribution(solution, cloud_index=None,
     dN_dv_column : array
         Column density distribution [cm^-2 / (km/s)]
     """
-    # Get radius array
+    # Get radius array in cm
     r = solution.sol.t  # cm
     r_kpc = r / kpc
     
     # Find indices for radius range
     mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
     r_use = r[mask]
+    r_kpc_use = r_kpc[mask]
     
-    # Calculate path length through each shell (assuming spherical geometry)
-    path_length = 2 * r_use  # diameter
+    # Get injection parameters from model if not provided
+    if injection_radius_kpc is None:
+        r0_kpc = solution.model.r_star_kpc
+        injection_radius_kpc = solution.model.config.cold_cloud_injection_radial_extent_frac * r0_kpc
+    if injection_power is None:
+        injection_power = solution.model.config.cold_cloud_injection_radial_power
+    
+    # Get injection function (following Xinfeng_data line 249)
+    injection_function = np.where(r_kpc_use < injection_radius_kpc,
+                                 (r_kpc_use / injection_radius_kpc)**injection_power,
+                                 1.0)
+    
+    # Get wind parameters
+    Omwind = solution.model.config.Omwind
     
     if cloud_index is not None:
         # Single cloud species
-        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask] / 1e5  # km/s
-        M_cloud = solution.sol.y[4 + cloud_index, mask]
+        v_cloud_cms = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask]  # cm/s
+        M_cloud = solution.sol.y[4 + cloud_index, mask]  # grams
+        Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]  # number/s
         
         # Skip if cloud is destroyed
         if np.max(M_cloud) < solution.model.config.M_cloud_min:
             return np.array([0.0]), np.array([0.0])
         
-        # Cloud number density
-        cloud_density = calculate_cloud_density(solution, cloud_index,
-                                              injection_radius_kpc, injection_power)
-        n_cloud = cloud_density[mask]
+        # Calculate cloud mass density (following Xinfeng_data line 453)
+        # rho = Ndot * M * injection / (Omega * r^2 * v)
+        cloud_density = (Ndot_cloud * M_cloud * injection_function / 
+                        (Omwind * r_use**2 * v_cloud_cms))
         
-        # Gas density (n_H) in cold phase
-        rho_cold = n_cloud * M_cloud
-        n_H_cold = rho_cold / (solution.model.config.mu * mp)
+        # Convert to hydrogen number density using mu_cool
+        n_H = cloud_density / (mu_cool * mp)
         
-        # Column density: N = integral of n_H * dl
-        N_column = n_H_cold * path_length
+        # Calculate velocity gradient
+        grad_v = np.gradient(v_cloud_cms, r_use)  # (cm/s) per cm
         
-        # Calculate gradients
-        dN_dr = np.gradient(N_column, r_use)  # cm^-2 per cm
-        dv_dr = np.gradient(v_cloud * 1e5, r_use)  # (cm/s) per cm
+        # Calculate dN/dv (following Xinfeng_data line 470)
+        dN_dv_column = np.zeros_like(v_cloud_cms)
         
-        # Calculate dN/dv using chain rule
-        # dN/dv = (dN/dr) / (dv/dr) with proper units
-        # Result should be in cm^-2 per (km/s)
-        dN_dv_column = np.zeros_like(v_cloud)
-        valid = np.abs(dv_dr) > 1e-20  # avoid division by zero (use small threshold for cgs units)
-        dN_dv_column[valid] = dN_dr[valid] / dv_dr[valid] * 1e5  # convert to per km/s
+        # Check for positive gradient (normal case)
+        if np.min(grad_v) > 0:
+            # Avoid exact zeros
+            grad_v = np.where(grad_v == 0, 1e-30, grad_v)
+            dN_dv_column = n_H / grad_v  # cm^-2 per (cm/s)
+            
+        else:
+            # Fallback method when gradient becomes negative (Xinfeng_data line 487)
+            # This rebins the data - we'll use a simpler interpolation approach
+            dr = np.gradient(r_use)
+            dN = n_H * dr  # column density increment
+            
+            # Sort by velocity and accumulate
+            sort_idx = np.argsort(v_cloud_cms)
+            v_sorted = v_cloud_cms[sort_idx]
+            dN_sorted = dN[sort_idx]
+            
+            # Create velocity bins
+            n_bins = max(10, len(v_cloud_cms) // 8)
+            v_bins = np.linspace(v_sorted.min(), v_sorted.max(), n_bins)
+            v_centers = 0.5 * (v_bins[:-1] + v_bins[1:])
+            
+            # Bin the column density
+            dN_binned, _ = np.histogram(v_sorted, bins=v_bins, weights=dN_sorted)
+            dv_bins = np.diff(v_bins)
+            dN_dv_binned = dN_binned / dv_bins
+            
+            # Interpolate back to original velocity grid
+            from scipy.interpolate import interp1d
+            f_interp = interp1d(v_centers, dN_dv_binned, 
+                              kind='linear', fill_value=0, bounds_error=False)
+            dN_dv_column = f_interp(v_cloud_cms)
+        
+        # Convert velocity to km/s
+        v_cloud_kms = v_cloud_cms / 1e5
+        # Convert dN/dv from per (cm/s) to per (km/s)
+        dN_dv_column = dN_dv_column * 1e5
         
     else:
         # Sum contributions from all cloud species
-        # First collect all velocities to determine output grid
-        all_velocities = []
-        for i in range(solution.model.N_cloud_species):
-            v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask] / 1e5  # km/s
-            M_cl_i = solution.sol.y[4 + i, mask]
-            if np.max(M_cl_i) >= solution.model.config.M_cloud_min:
-                all_velocities.extend(v_cl_i)
-        
-        if len(all_velocities) == 0:
-            return np.array([0.0]), np.array([0.0])
-        
-        # Use velocity grid from first surviving species for output
-        # (all species have same velocity at each radius)
-        v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + 0, mask] / 1e5
-        dN_dv_column = np.zeros_like(v_cloud)
+        # Get velocity from first species as reference (all species have same v at each r)
+        v_cloud_cms = solution.sol.y[4 + solution.model.N_cloud_species, mask]  # cm/s
+        v_cloud_kms = v_cloud_cms / 1e5
+        dN_dv_column = np.zeros_like(v_cloud_cms)
         
         # Calculate dN/dv for each species and sum
         for i in range(solution.model.N_cloud_species):
-            v_cl_i = solution.sol.y[4 + solution.model.N_cloud_species + i, mask] / 1e5  # km/s
-            M_cl_i = solution.sol.y[4 + i, mask]
+            M_cl_i = solution.sol.y[4 + i, mask]  # grams
             
             # Skip if cloud is destroyed
             if np.max(M_cl_i) < solution.model.config.M_cloud_min:
                 continue
+                
+            v_cl_i_cms = solution.sol.y[4 + solution.model.N_cloud_species + i, mask]  # cm/s
+            Ndot_i = solution.model.Ndot_cloud0[i]
             
-            # Cloud density for this species
-            cloud_density_i = calculate_cloud_density(solution, i,
-                                                    injection_radius_kpc, injection_power)
-            n_cl_i = cloud_density_i[mask]
+            # Calculate mass density for this species
+            cloud_density_i = (Ndot_i * M_cl_i * injection_function /
+                             (Omwind * r_use**2 * v_cl_i_cms))
             
-            # Gas density for this species
-            rho_i = n_cl_i * M_cl_i
-            n_H_i = rho_i / (solution.model.config.mu * mp)
+            # Convert to hydrogen number density
+            n_H_i = cloud_density_i / (mu_cool * mp)
             
-            # Column density for this species
-            N_i = n_H_i * path_length
+            # Calculate gradient
+            grad_v_i = np.gradient(v_cl_i_cms, r_use)
             
-            # Gradients for this species
-            dN_dr_i = np.gradient(N_i, r_use)  # cm^-2 per cm
-            dv_dr_i = np.gradient(v_cl_i * 1e5, r_use)  # (cm/s) per cm
-            
-            # Add this species' contribution to total dN/dv
-            valid = np.abs(dv_dr_i) > 1e-20  # small threshold for cgs units
-            dN_dv_i = np.zeros_like(v_cl_i)
-            dN_dv_i[valid] = dN_dr_i[valid] / dv_dr_i[valid] * 1e5  # convert to per km/s
+            # Calculate dN/dv for this species
+            if np.min(grad_v_i) > 0:
+                grad_v_i = np.where(grad_v_i == 0, 1e-30, grad_v_i)
+                dN_dv_i = n_H_i / grad_v_i * 1e5  # Convert to per (km/s)
+            else:
+                # Fallback for negative gradients
+                dr = np.gradient(r_use)
+                dN_i = n_H_i * dr
+                # Simple average for this species
+                dN_dv_i = np.sum(dN_i) / (v_cl_i_cms.max() - v_cl_i_cms.min()) * 1e5
+                dN_dv_i = np.ones_like(v_cl_i_cms) * dN_dv_i
             
             dN_dv_column += dN_dv_i
     
     # Take absolute value (physical column density is positive)
     dN_dv_column = np.abs(dN_dv_column)
     
-    return v_cloud, dN_dv_column
+    return v_cloud_kms, dN_dv_column
 
 
 def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.0,
-                                      injection_radius_kpc=0.3,
-                                      injection_power=6.0):
+                                      injection_radius_kpc=None,
+                                      injection_power=None):
     """
     Calculate dN/dv for each cloud species separately.
     
@@ -267,10 +316,12 @@ def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.
         Minimum radius to include [kpc]
     r_max_kpc : float
         Maximum radius to include [kpc]
-    injection_radius_kpc : float
-        Radius below which cloud injection is enhanced [kpc]
-    injection_power : float
-        Power law index for cloud injection profile
+    injection_radius_kpc : float, optional
+        Radius below which cloud injection is enhanced [kpc].
+        If None, uses model's injection radius from config.
+    injection_power : float, optional
+        Power law index for cloud injection profile.
+        If None, uses model's injection power from config.
         
     Returns
     -------

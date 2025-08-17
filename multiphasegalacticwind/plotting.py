@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from .constants import Msun, yr
+from .constants import Msun, yr, kpc
 
 # Try to import cmasher for colormaps
 try:
@@ -126,7 +126,8 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
         Mdot_cl_total = np.zeros_like(solution.r)
 
         # Get injection parameters
-        injection_radius = solution.model.config.cold_cloud_injection_radial_extent
+        r0 = solution.model.r_star_kpc * kpc
+        injection_radius = solution.model.config.cold_cloud_injection_radial_extent_frac * r0
         injection_power = solution.model.config.cold_cloud_injection_radial_power
 
         for i in range(solution.model.N_cloud_species):

@@ -151,7 +151,8 @@ def get_cooling_interpolator(mu: float, metallicity: float, redshift: float, ver
                     T = 1e2
                 try:
                     Lambda_P_rho_tab[i,j] = Lambda((np.log10(rho/(muH*mp)), np.log10(T), metallicity, redshift))
-                except:
+                except (ValueError, IndexError) as e:
+                    # Interpolation can fail at boundaries
                     Lambda_P_rho_tab[i,j] = 1e-30
             if verbose and i % 10 == 0:
                 print(f"  Progress: {i}/{len(Ps)}")
@@ -207,7 +208,7 @@ def tcool_P(T: Union[float, np.ndarray], P: Union[float, np.ndarray], metallicit
             # Check cache
             if cache_key in _tcool_cache:
                 return _tcool_cache[cache_key]
-        except:
+        except (TypeError, ValueError):
             # If conversion fails, just skip caching
             is_scalar = False
     

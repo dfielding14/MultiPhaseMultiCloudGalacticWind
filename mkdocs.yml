@@ -1,0 +1,102 @@
+site_name: Multiphase Galactic Wind Model
+site_description: Documentation for the multiphase galactic wind simulation package
+site_author: Based on Fielding & Bryan (2024)
+site_url: https://yourusername.github.io/GalacticWindsMultiphaseAnalytic/
+
+repo_url: https://github.com/yourusername/GalacticWindsMultiphaseAnalytic
+repo_name: GalacticWindsMultiphaseAnalytic
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+  language: en
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+      primary: indigo
+      accent: indigo
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+      primary: indigo
+      accent: indigo
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.mark
+  - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting_started/installation.md
+    - Quick Start: getting_started/quickstart.md
+    - Examples: getting_started/examples.md
+    - Notebooks & Gallery: examples/notebooks.md
+  - MCMC Fitting:
+    - Overview: fitting/overview.md
+    - Fitting Guide: fitting/mcmc_guide.md
+    - CLASSY Analysis: fitting/classy_example.md
+    - Emulator Plan: fitting/emulator_plan.md
+    - Advanced Topics: fitting/advanced.md
+  - Running Models:
+    - Parameter Guide: guide/parameters.md
+    - Wind Models: api/wind_model.md
+    - Configuration: api/config.md
+    - Observables: guide/observables.md
+  - Physics & Theory:
+    - Overview: physics/overview.md
+    - Hot Wind Equations: physics/hot_wind_equations.md
+    - Full Equations: physics/equations.md
+    - Cooling Physics: physics/cooling.md
+    - TRML Physics: physics/trml.md
+  - Tutorials:
+    - Basic Wind Model: tutorials/basic_model.md
+    - Fitting Example: tutorials/fitting_example.md
+    - Parameter Study: tutorials/parameter_study.md
+    - Visualization: tutorials/plotting.md
+  - API Reference:
+    - WindModel: api/wind_model.md
+    - WindConfig: api/config.md
+    - Fitting Classes: api/fitting.md
+    - Plotting: api/plotting.md
+  - Development:
+    - Code Review: development/code_review.md
+    - Bug Fixes: development/fixes.md
+    - Contributing: development/contributing.md
+    - Testing: development/testing.md
+  - About:
+    - References: about/references.md
+    - Changelog: about/changelog.md
+    - License: about/license.md

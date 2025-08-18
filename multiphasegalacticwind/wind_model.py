@@ -211,6 +211,9 @@ class WindModel:
                 alpha_cloud=cloud_alpha, eta_M_cold_tot=eta_M_cold, SFR=SFR*Msun/yr
             )
 
+        # Validate parameters
+        self._validate_parameters()
+        
         # Calculate sonic point conditions from physics
         self._calculate_sonic_point_conditions()
 
@@ -222,6 +225,46 @@ class WindModel:
     def T_cl(self) -> float:
         """Cloud temperature in K. For backward compatibility."""
         return self.config.T_cl
+    
+    def _validate_parameters(self) -> None:
+        """
+        Validate that all parameters are physically reasonable.
+        
+        Raises
+        ------
+        ValueError
+            If any parameter is outside valid range
+        """
+        # Basic parameter checks
+        if self.SFR <= 0:
+            raise ValueError(f"SFR must be positive, got {self.SFR}")
+        if self.v_circ <= 0:
+            raise ValueError(f"v_circ must be positive, got {self.v_circ}")
+        if self.eta_M <= 0:
+            raise ValueError(f"eta_M must be positive, got {self.eta_M}")
+        if self.eta_M_cold < 0:
+            raise ValueError(f"eta_M_cold must be non-negative, got {self.eta_M_cold}")
+        if self.eta_E <= 0:
+            raise ValueError(f"eta_E must be positive, got {self.eta_E}")
+        if self.r_star_kpc <= 0:
+            raise ValueError(f"r_star_kpc must be positive, got {self.r_star_kpc}")
+        if self.r_max_kpc <= self.r_star_kpc:
+            raise ValueError(f"r_max_kpc must be greater than r_star_kpc, got {self.r_max_kpc} <= {self.r_star_kpc}")
+        
+        # Cloud mass range checks
+        if self.M_cloud0[0] <= 0:
+            raise ValueError(f"Minimum cloud mass must be positive")
+        if self.M_cloud0[-1] <= self.M_cloud0[0]:
+            raise ValueError(f"Maximum cloud mass must be greater than minimum")
+        
+        # Numerical tolerances
+        if self.rtol <= 0 or self.rtol >= 1:
+            raise ValueError(f"rtol must be in (0, 1), got {self.rtol}")
+        if self.atol <= 0:
+            raise ValueError(f"atol must be positive, got {self.atol}")
+        
+        # Config validation
+        self.config.validate()
 
     def _calculate_sonic_point_conditions(self) -> None:
         """

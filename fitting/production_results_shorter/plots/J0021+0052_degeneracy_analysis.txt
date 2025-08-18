@@ -1,0 +1,20 @@
+PARAMETER DEGENERACY ANALYSIS
+============================================================
+
+Correlation Matrix:
+----------------------------------------
+eta_M        - eta_M       : +1.000
+eta_M        - eta_M_cold  : +0.085
+eta_M        - eta_E       : +0.466
+eta_M_cold   - eta_M_cold  : +1.000
+eta_M_cold   - eta_E       : -0.137
+eta_E        - eta_E       : +1.000
+
+Condition Number: 116512246729.6
+
+Eigenvalues: [1.96576773e-01 1.30522107e-02 1.68717692e-12]
+
+Principal Components:
+PC1: [-9.89142560e-01 -2.32901769e-07 -1.46959163e-01]
+PC2: [-1.46959163e-01 -2.35654397e-06  9.89142560e-01]
+PC3: [ 5.76688783e-07 -1.00000000e+00 -2.29673089e-06]

@@ -1,0 +1,1916 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the multiphase galactic wind simulation package">
+      
+      
+        <meta name="author" content="Based on Fielding & Bryan (2024)">
+      
+      
+        <link rel="canonical" href="https://yourusername.github.io/GalacticWindsMultiphaseAnalytic/code_review/analysis_helpers_review/">
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.17">
+    
+    
+      
+        <title>Analysis Helpers Module - Comprehensive Code Review - Multiphase Galactic Wind Model</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.7e37652d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#analysis-helpers-module-comprehensive-code-review" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Multiphase Galactic Wind Model" class="md-header__button md-logo" aria-label="Multiphase Galactic Wind Model" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Multiphase Galactic Wind Model
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Analysis Helpers Module - Comprehensive Code Review
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/GalacticWindsMultiphaseAnalytic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GalacticWindsMultiphaseAnalytic
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting_started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../physics/overview/" class="md-tabs__link">
+          
+  
+  
+  Physics
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/wind_model/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/parameters/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/code_review.md" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../about/references.md" class="md-tabs__link">
+          
+  
+  
+  About
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Multiphase Galactic Wind Model" class="md-nav__button md-logo" aria-label="Multiphase Galactic Wind Model" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Multiphase Galactic Wind Model
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/GalacticWindsMultiphaseAnalytic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GalacticWindsMultiphaseAnalytic
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Getting Started
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Getting Started
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Installation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Quick Start
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Physics
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Physics
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/equations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Equations
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/trml.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    TRML Physics
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/cooling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Cooling
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            API Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/wind_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    WindModel
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    WindConfig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/core_physics.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Core Physics
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/observables.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Observables
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/plotting.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plotting
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/analysis_helpers.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Analysis
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    User Guide
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            User Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Parameter Selection
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/workflows.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Common Workflows
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/troubleshooting.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/performance.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Performance Tips
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Development
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Development
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/code_review.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Code Review
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/fixes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Bug Fixes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/testing.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Testing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    About
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            About
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/references.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    References
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/license.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    License
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/changelog.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Changelog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#function-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      Function Analysis
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Function Analysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-field_length-lines-17-53" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Field_Length() (Lines 17-53)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-field_length_mix-lines-56-98" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Field_Length_mix() (Lines 56-98)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-cloud_radius-lines-101-143" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. cloud_radius() (Lines 101-143)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-cloud_ksi-lines-146-222" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. cloud_ksi() (Lines 146-222)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-cooling_and_acceleration-lines-225-281" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Cooling_and_Acceleration() (Lines 225-281)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-gradient_components-lines-284-330" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Gradient_Components() (Lines 284-330)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-calculate_cloud_moments-lines-333-413" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. calculate_cloud_moments() (Lines 333-413)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-get_cloud_mass_spectrum-lines-416-471" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. get_cloud_mass_spectrum() (Lines 416-471)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#critical-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      Critical Issues
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Critical Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-wrong-units-in-cloud_radius" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Wrong Units in cloud_radius()
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-placeholder-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Placeholder Values
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-hardcoded-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Hardcoded Parameters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-inconsistent-config-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Inconsistent Config Usage
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#physics-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Physics Implementation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Physics Implementation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#thermal-conduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Thermal Conduction
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixed-layer-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      Mixed Layer Properties
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloud-mixing-parameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cloud Mixing Parameter
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation-needs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Documentation Needs
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Documentation Needs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#high-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      High Priority
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#medium-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      Medium Priority
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-improvements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Recommended Improvements
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Improvements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immediate-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Immediate Fixes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-enhancements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Future Enhancements
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Testing Requirements
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing Requirements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unit Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#physics-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Physics Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Integration Tests
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-quality-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Code Quality Metrics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="analysis-helpers-module-comprehensive-code-review">Analysis Helpers Module - Comprehensive Code Review</h1>
+<h2 id="module-overview">Module Overview</h2>
+<p><strong>File</strong>: <code>multiphasegalacticwind/analysis_helpers.py</code><br />
+<strong>Lines</strong>: 471<br />
+<strong>Purpose</strong>: Diagnostic and analysis functions for wind solutions</p>
+<h2 id="function-analysis">Function Analysis</h2>
+<h3 id="1-field_length-lines-17-53">1. <code>Field_Length()</code> (Lines 17-53)</h3>
+<p><strong>Purpose</strong>: Calculate Field length for thermal conduction
+<strong>Physics</strong>: <span class="arithmatex">\(L_{Field} = \sqrt{\kappa T / \dot{e}_{cool}}\)</span></p>
+<p><strong>Implementation</strong>:
+- Uses Spitzer thermal conductivity: <span class="arithmatex">\(\kappa = 5×10^{-7} T^{2.5}\)</span>
+- Gets minimum cooling time from interpolator
+- Returns characteristic conduction length</p>
+<p><strong>Issues</strong>:
+- Line 46: <code>f_spitzer = 1.0</code> hardcoded (should be configurable)
+- Line 51: Complex cooling rate calculation inline</p>
+<h3 id="2-field_length_mix-lines-56-98">2. <code>Field_Length_mix()</code> (Lines 56-98)</h3>
+<p><strong>Purpose</strong>: Field length for mixed temperature layer
+<strong>Physics</strong>: Uses geometric mean <span class="arithmatex">\(T_{mix} = \sqrt{T_{hot} \cdot T_{cold}}\)</span></p>
+<p><strong>Key Features</strong>:
+- Mixed temperature and metallicity
+- Same Spitzer conductivity formula
+- Uses tcool_P for cooling time</p>
+<p><strong>Issues</strong>:
+- Line 84: Hardcoded <code>T_cl = 1e4</code> instead of using config
+- Line 88: Uses config for Z_cloud but not T_cl (inconsistent)</p>
+<h3 id="3-cloud_radius-lines-101-143">3. <code>cloud_radius()</code> (Lines 101-143)</h3>
+<p><strong>Purpose</strong>: Calculate cloud radii from mass and density
+<strong>Formula</strong>: <span class="arithmatex">\(r_{cloud} = (3M/(4\pi\rho))^{1/3}\)</span></p>
+<p><strong>Critical Issue</strong> (Line 135):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">rho_cloud</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">mu</span> <span class="o">*</span> <span class="n">mp</span> <span class="o">*</span> <span class="n">kb</span> <span class="o">*</span> <span class="mf">1e4</span> <span class="o">/</span> <span class="n">kb</span>  <span class="c1"># At T_cloud = 10^4 K</span>
+</code></pre></div>
+This simplifies to <code>rho_cloud = config.mu * mp * 1e4</code> which has wrong units!
+Should be: <code>rho_cloud = Pressure / (kb * T_cloud) * (config.mu * mp)</code></p>
+<h3 id="4-cloud_ksi-lines-146-222">4. <code>cloud_ksi()</code> (Lines 146-222)</h3>
+<p><strong>Purpose</strong>: Calculate cloud mixing parameter ξ
+<strong>Physics</strong>: <span class="arithmatex">\(\xi = r_{cloud} / (v_{turb} \cdot t_{cool})\)</span></p>
+<p><strong>Key Features</strong>:
+- Controls TRML mass transfer strength
+- Uses mixed layer properties
+- Handles destroyed clouds</p>
+<p><strong>Issues</strong>:
+- Line 194: Hardcoded <code>T_cl = 1e4</code>
+- Line 214: Arbitrary fallback <code>1e10*Myr</code> for negative cooling</p>
+<h3 id="5-cooling_and_acceleration-lines-225-281">5. <code>Cooling_and_Acceleration()</code> (Lines 225-281)</h3>
+<p><strong>Purpose</strong>: Calculate cooling rates and acceleration terms
+<strong>Returns</strong>: Dictionary with cooling and dynamics diagnostics</p>
+<p><strong>Issues</strong>:
+- Line 269: Hardcoded <code>v_circ = 150.0 * km</code>
+- Line 271: Simplified density gradient assumption
+- Should use actual model parameters</p>
+<h3 id="6-gradient_components-lines-284-330">6. <code>Gradient_Components()</code> (Lines 284-330)</h3>
+<p><strong>Purpose</strong>: Break down gradient terms by physical process
+<strong>Status</strong>: <strong>NOT IMPLEMENTED</strong> - returns placeholder values</p>
+<p><strong>Note</strong>: Comments indicate this needs access to Wind_Evo internals</p>
+<h3 id="7-calculate_cloud_moments-lines-333-413">7. <code>calculate_cloud_moments()</code> (Lines 333-413)</h3>
+<p><strong>Purpose</strong>: Calculate statistical moments of cloud distribution
+<strong>Returns</strong>: Mass flux, average velocity, dispersion, metallicity</p>
+<p><strong>Critical Issue</strong> (Line 382):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">number_density_cloud</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">cloud_exists</span><span class="p">,</span> <span class="mf">1e-10</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>  <span class="c1"># cm^-3</span>
+</code></pre></div>
+Uses placeholder value instead of actual calculation!</p>
+<h3 id="8-get_cloud_mass_spectrum-lines-416-471">8. <code>get_cloud_mass_spectrum()</code> (Lines 416-471)</h3>
+<p><strong>Purpose</strong>: Calculate cloud mass spectrum dN/dlogM
+<strong>Algorithm</strong>:
+1. Create logarithmic mass bins
+2. Count clouds in each bin
+3. Normalize by bin width</p>
+<p><strong>Good Design</strong>:
+- Handles empty distributions
+- Flexible binning
+- Proper logarithmic normalization</p>
+<h2 id="critical-issues">Critical Issues</h2>
+<h3 id="1-wrong-units-in-cloud_radius">1. <strong>Wrong Units in cloud_radius()</strong></h3>
+<p>Line 135 has dimensional error in density calculation</p>
+<h3 id="2-placeholder-values">2. <strong>Placeholder Values</strong></h3>
+<ul>
+<li>Line 382: Fake number density <code>1e-10</code></li>
+<li>Lines 309-330: Unimplemented gradient components</li>
+</ul>
+<h3 id="3-hardcoded-parameters">3. <strong>Hardcoded Parameters</strong></h3>
+<p>Multiple hardcoded values that should use config:
+- T_cl = 1e4 (lines 84, 194)
+- v_circ = 150 km/s (line 269)
+- f_spitzer = 1.0 (lines 46, 92)</p>
+<h3 id="4-inconsistent-config-usage">4. <strong>Inconsistent Config Usage</strong></h3>
+<p>Some functions use config.T_cl, others hardcode 1e4</p>
+<h2 id="physics-implementation">Physics Implementation</h2>
+<h3 id="thermal-conduction">Thermal Conduction</h3>
+<p>Spitzer conductivity: <span class="arithmatex">\(\kappa = 5×10^{-7} T^{2.5}\)</span> erg cm⁻¹ s⁻¹ K⁻¹
+Field length: Balance of conduction and cooling</p>
+<h3 id="mixed-layer-properties">Mixed Layer Properties</h3>
+<p>Geometric means for temperature and metallicity:
+- <span class="arithmatex">\(T_{mix} = \sqrt{T_{hot} \cdot T_{cold}}\)</span>
+- <span class="arithmatex">\(Z_{mix} = \sqrt{Z_{hot} \cdot Z_{cold}}\)</span></p>
+<h3 id="cloud-mixing-parameter">Cloud Mixing Parameter</h3>
+<p><span class="arithmatex">\(<span class="arithmatex">\(\xi = \frac{r_{cloud}}{v_{turb} \cdot t_{cool,mix}}\)</span>\)</span>
+Controls transition between cooling-limited (ξ &lt; 1) and mixing-limited (ξ &gt; 1)</p>
+<h2 id="documentation-needs">Documentation Needs</h2>
+<h3 id="high-priority">High Priority</h3>
+<ol>
+<li>Fix dimensional errors in formulas</li>
+<li>Document units for all quantities</li>
+<li>Explain physics of each diagnostic</li>
+</ol>
+<h3 id="medium-priority">Medium Priority</h3>
+<ol>
+<li>Add references for Spitzer conductivity</li>
+<li>Document assumptions (spherical clouds, etc.)</li>
+<li>Explain gradient component breakdown</li>
+</ol>
+<h2 id="recommended-improvements">Recommended Improvements</h2>
+<h3 id="immediate-fixes">Immediate Fixes</h3>
+<ol>
+<li>
+<p><strong>Fix cloud_radius density calculation</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">cloud_radius</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">N_cloud_species</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="c1"># Get pressure from state</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">Pressure</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="c1"># Calculate cloud density properly</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">rho_cloud</span> <span class="o">=</span> <span class="n">Pressure</span> <span class="o">/</span> <span class="p">(</span><span class="n">kb</span> <span class="o">*</span> <span class="n">config</span><span class="o">.</span><span class="n">T_cl</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">mu</span> <span class="o">*</span> <span class="n">mp</span><span class="p">)</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="c1"># Rest of calculation...</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Remove hardcoded parameters</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">Cooling_and_Acceleration</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">v_circ</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">if</span> <span class="n">v_circ</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>        <span class="n">v_circ</span> <span class="o">=</span> <span class="mf">150.0</span> <span class="o">*</span> <span class="n">km</span>  <span class="c1"># Default</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="c1"># Use passed value</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Implement cloud number density</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_cloud_number_density</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">model</span><span class="p">):</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Calculate actual cloud number density.&quot;&quot;&quot;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="c1"># Use injection profile and flux conservation</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">Ndot_cloud</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">Ndot_cloud0</span> <span class="o">*</span> <span class="n">injection_function</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">n_cloud</span> <span class="o">=</span> <span class="n">Ndot_cloud</span> <span class="o">/</span> <span class="p">(</span><span class="n">Omega</span> <span class="o">*</span> <span class="n">r</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">v_cloud</span><span class="p">)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="k">return</span> <span class="n">n_cloud</span>
+</code></pre></div></p>
+</li>
+</ol>
+<h3 id="future-enhancements">Future Enhancements</h3>
+<ol>
+<li>
+<p><strong>Complete gradient components</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">Gradient_Components</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">model</span><span class="p">):</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="c1"># Actually calculate each component</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="c1"># Requires refactoring Wind_Evo to expose components</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Add more diagnostics</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">calculate_mixing_efficiency</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Calculate TRML mixing efficiency metrics.&quot;&quot;&quot;</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">calculate_energy_budget</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Track energy gains/losses.&quot;&quot;&quot;</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Create diagnostic suite</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">WindDiagnostics</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">solution</span><span class="p">):</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">solution</span> <span class="o">=</span> <span class="n">solution</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">full_analysis</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Run all diagnostics.&quot;&quot;&quot;</span>
+</code></pre></div></p>
+</li>
+</ol>
+<h2 id="testing-requirements">Testing Requirements</h2>
+<h3 id="unit-tests">Unit Tests</h3>
+<ol>
+<li><code>test_field_length</code>: Verify thermal conduction calculation</li>
+<li><code>test_cloud_radius</code>: Check mass-radius relation</li>
+<li><code>test_cloud_ksi</code>: Validate mixing parameter</li>
+<li><code>test_mass_spectrum</code>: Test binning and normalization</li>
+</ol>
+<h3 id="physics-tests">Physics Tests</h3>
+<ol>
+<li>Field length should increase with temperature</li>
+<li>Cloud radius ∝ M^(1/3)</li>
+<li>ξ parameter range [10^-3, 10^3]</li>
+</ol>
+<h3 id="integration-tests">Integration Tests</h3>
+<ol>
+<li>Compare with known solutions</li>
+<li>Test with actual Solution objects</li>
+<li>Verify conservation laws</li>
+</ol>
+<h2 id="code-quality-metrics">Code Quality Metrics</h2>
+<ul>
+<li><strong>Documentation</strong>: ~35% (basic docstrings)</li>
+<li><strong>Type Hints</strong>: ~60% (good coverage)</li>
+<li><strong>Error Handling</strong>: Poor (no validation)</li>
+<li><strong>Implementation</strong>: Incomplete (placeholder values)</li>
+<li><strong>Test Coverage</strong>: Unknown</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The analysis_helpers module provides diagnostic functions but needs:</p>
+<ol>
+<li><strong>Critical fixes</strong>: Dimensional errors, placeholder values</li>
+<li><strong>Completion</strong>: Implement gradient components, proper densities</li>
+<li><strong>Consistency</strong>: Use config parameters throughout</li>
+<li><strong>Documentation</strong>: Add physics explanations and units</li>
+<li><strong>Testing</strong>: Comprehensive validation suite</li>
+</ol>
+<p>The module has good structure but several functions are incomplete or incorrect. The Field length and mixing parameter calculations are valuable diagnostics once fixed.</p>
+<p>Key functions like <code>cloud_radius()</code> have dimensional errors that must be corrected before use.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.92b07e13.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

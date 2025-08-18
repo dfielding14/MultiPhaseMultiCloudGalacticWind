@@ -81,7 +81,7 @@ def Field_Length_mix(state: np.ndarray, config: Optional[WindConfig] = None) -> 
     T_wind = Pressure / kb / (rho_wind / (config.mu * mp))
     
     # Mixed temperature (geometric mean with cloud temperature)
-    T_cl = 1e4  # Default cloud temperature
+    T_cl = config.T_cl  # Use config cloud temperature
     T_mix = np.sqrt(T_wind * T_cl)
     
     # Mixed metallicity
@@ -102,6 +102,8 @@ def cloud_radius(r: float, state: np.ndarray, config: Optional[WindConfig] = Non
                  N_cloud_species: Optional[int] = None) -> np.ndarray:
     """
     Calculate cloud radii from their masses and densities.
+    
+    Assumes pressure equilibrium between hot and cold phases.
     
     Parameters
     ----------
@@ -131,8 +133,13 @@ def cloud_radius(r: float, state: np.ndarray, config: Optional[WindConfig] = Non
     if N_cloud_species == 1:
         M_cloud = np.atleast_1d(M_cloud)
         
-    # Calculate cloud density
-    rho_cloud = config.mu * mp * kb * 1e4 / kb  # At T_cloud = 10^4 K
+    # Get pressure from state
+    Pressure = state[2]  # dyne/cm^2
+    
+    # Calculate cloud density from pressure equilibrium
+    # P = n * k * T, so rho = (mu * mp) * n = (mu * mp) * P / (k * T)
+    T_cloud = config.T_cl  # K
+    rho_cloud = (config.mu * mp) * Pressure / (kb * T_cloud)  # g/cm^3
     
     # Cloud radius from mass and density
     r_cloud = (M_cloud / (4*np.pi/3. * rho_cloud))**(1/3.)
@@ -191,7 +198,7 @@ def cloud_ksi(r: float, state: np.ndarray, config: Optional[WindConfig] = None,
     # Calculate derived quantities
     Z_wind = rhoZ_wind / rho_wind
     T_wind = Pressure / kb / (rho_wind / (config.mu * mp))
-    T_cl = 1e4  # Cloud temperature
+    T_cl = config.T_cl  # Cloud temperature from config
     
     # Cloud properties
     r_cl = cloud_radius(r, state, config, N_cloud_species)
@@ -332,7 +339,8 @@ def Gradient_Components(r: float, state: np.ndarray,
 
 def calculate_cloud_moments(r: float, state: np.ndarray, 
                            config: Optional[WindConfig] = None,
-                           N_cloud_species: Optional[int] = None) -> Dict[str, float]:
+                           N_cloud_species: Optional[int] = None,
+                           Ndot_cloud0: Optional[np.ndarray] = None) -> Dict[str, float]:
     """
     Calculate moments of the cloud distribution.
     
@@ -346,6 +354,8 @@ def calculate_cloud_moments(r: float, state: np.ndarray,
         Configuration object
     N_cloud_species : int, optional
         Number of cloud species
+    Ndot_cloud0 : array, optional
+        Cloud injection rates [1/s] for each species
         
     Returns
     -------
@@ -377,9 +387,33 @@ def calculate_cloud_moments(r: float, state: np.ndarray,
     # Mask for existing clouds
     cloud_exists = M_cloud > config.M_cloud_min
     
-    # Number density (simplified - would need full calculation)
-    # For now, use a placeholder
-    number_density_cloud = np.where(cloud_exists, 1e-10, 0.0)  # cm^-3
+    # Calculate actual cloud number density if injection rates provided
+    if Ndot_cloud0 is not None:
+        # Get injection parameters
+        r0 = r  # Assuming we're past the injection region for simplicity
+        injection_radius = config.cold_cloud_injection_radial_extent_frac * r0
+        injection_power = config.cold_cloud_injection_radial_power
+        
+        # Calculate injection function
+        r_kpc = r / kpc
+        injection_radius_kpc = injection_radius / kpc
+        if r_kpc < injection_radius_kpc:
+            injection_function = (r_kpc / injection_radius_kpc)**injection_power
+        else:
+            injection_function = 1.0
+            
+        # Number conservation: n_cloud = Ndot * f_inj / (Omega * r^2 * v)
+        number_density_cloud = np.zeros_like(M_cloud)
+        for i in range(N_cloud_species):
+            if cloud_exists[i] and v_cloud[i] > 0:
+                number_density_cloud[i] = (Ndot_cloud0[i] * injection_function / 
+                                          (config.Omwind * r**2 * v_cloud[i]))
+    else:
+        # Without injection rates, we can't calculate actual density
+        # Use a more reasonable estimate based on typical values
+        # Typical cloud densities are ~10^-8 to 10^-6 cm^-3 at 10 kpc
+        typical_density = 1e-7 * (kpc / r)**2  # Scale with r^-2
+        number_density_cloud = np.where(cloud_exists, typical_density, 0.0)
     
     # Mass flux
     Mdot_cloud = 4 * np.pi * r**2 * number_density_cloud * M_cloud * v_cloud

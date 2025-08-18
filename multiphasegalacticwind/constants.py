@@ -9,7 +9,7 @@ Model parameters should be set via WindConfig in config.py.
 gamma = 5/3.                    # Adiabatic index
 kb = 1.3806488e-16             # Boltzmann constant [erg/K]
 mp = 1.67373522381e-24         # Proton mass [g]
-G = 6.673e-8                   # Gravitational constant [cm^3/g/s^2]
+G = 6.67430e-8                 # Gravitational constant [cm^3/g/s^2] (CODATA 2018)
 
 # Unit conversions
 km = 1e5                       # km to cm
@@ -20,7 +20,7 @@ Gyr = 3.1536e16               # Gigayear [s]
 pc = 3.086e18                  # parsec [cm]
 kpc = 1.0e3 * pc              # kiloparsec [cm]
 Mpc = 1.0e6 * pc              # Megaparsec [cm]
-Msun = 2.e33                   # Solar mass [g]
+Msun = 1.98892e33              # Solar mass [g] (IAU 2015)
 keV = 1.60218e-9              # keV to erg
 
 # Cosmology (Planck 2015)

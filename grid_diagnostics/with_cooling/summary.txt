@@ -1,0 +1,89 @@
+Parameter Grid Results - with_cooling
+============================================================
+Galaxy: J0021+0052 (SFR=3.0 Msun/yr, v_circ=0.001 km/s)
+Cooling factor: 1.0
+Success rate: 0/27 (0.0%)
+
+Detailed Results:
+------------------------------------------------------------
+FAILED: η_M=0.1, η_M_cold=0.1, η_E=0.1
+  → Partial: r_max=21.6 kpc, v_end=666 km/s
+
+FAILED: η_M=0.1, η_M_cold=0.1, η_E=0.5
+  → Partial: r_max=41.5 kpc, v_end=1580 km/s
+
+FAILED: η_M=0.1, η_M_cold=0.1, η_E=2.0
+  → Integration stopped at 0.79 kpc
+
+FAILED: η_M=0.1, η_M_cold=0.3, η_E=0.1
+  → Partial: r_max=2.7 kpc, v_end=465 km/s
+
+FAILED: η_M=0.1, η_M_cold=0.3, η_E=0.5
+  → Partial: r_max=14.2 kpc, v_end=1092 km/s
+
+FAILED: η_M=0.1, η_M_cold=0.3, η_E=2.0
+  → Integration stopped at 0.85 kpc
+
+FAILED: η_M=0.1, η_M_cold=1.0, η_E=0.1
+  → Integration stopped at 0.62 kpc
+
+FAILED: η_M=0.1, η_M_cold=1.0, η_E=0.5
+  → Integration stopped at 0.30 kpc
+
+FAILED: η_M=0.1, η_M_cold=1.0, η_E=2.0
+  → Integration stopped at 0.30 kpc
+
+FAILED: η_M=0.3, η_M_cold=0.1, η_E=0.1
+  → Partial: r_max=19.1 kpc, v_end=470 km/s
+
+FAILED: η_M=0.3, η_M_cold=0.1, η_E=0.5
+  → Partial: r_max=45.2 kpc, v_end=1094 km/s
+
+FAILED: η_M=0.3, η_M_cold=0.1, η_E=2.0
+  → Partial: r_max=42.4 kpc, v_end=2251 km/s
+
+FAILED: η_M=0.3, η_M_cold=0.3, η_E=0.1
+  → Partial: r_max=2.2 kpc, v_end=389 km/s
+
+FAILED: η_M=0.3, η_M_cold=0.3, η_E=0.5
+  → Partial: r_max=14.7 kpc, v_end=871 km/s
+
+FAILED: η_M=0.3, η_M_cold=0.3, η_E=2.0
+  → Partial: r_max=50.0 kpc, v_end=1817 km/s
+
+FAILED: η_M=0.3, η_M_cold=1.0, η_E=0.1
+  → Integration stopped at 0.64 kpc
+
+FAILED: η_M=0.3, η_M_cold=1.0, η_E=0.5
+  → Partial: r_max=1.7 kpc, v_end=575 km/s
+
+FAILED: η_M=0.3, η_M_cold=1.0, η_E=2.0
+  → Partial: r_max=14.9 kpc, v_end=1166 km/s
+
+FAILED: η_M=1.0, η_M_cold=0.1, η_E=0.1
+  → Integration stopped at 0.42 kpc
+
+FAILED: η_M=1.0, η_M_cold=0.1, η_E=0.5
+  → Partial: r_max=23.8 kpc, v_end=652 km/s
+
+FAILED: η_M=1.0, η_M_cold=0.1, η_E=2.0
+  → Partial: r_max=50.0 kpc, v_end=1336 km/s
+
+FAILED: η_M=1.0, η_M_cold=0.3, η_E=0.1
+  → Integration stopped at 0.42 kpc
+
+FAILED: η_M=1.0, η_M_cold=0.3, η_E=0.5
+  → Partial: r_max=8.7 kpc, v_end=583 km/s
+
+FAILED: η_M=1.0, η_M_cold=0.3, η_E=2.0
+  → Partial: r_max=41.4 kpc, v_end=1205 km/s
+
+FAILED: η_M=1.0, η_M_cold=1.0, η_E=0.1
+  → Integration stopped at 0.43 kpc
+
+FAILED: η_M=1.0, η_M_cold=1.0, η_E=0.5
+  → Partial: r_max=1.4 kpc, v_end=473 km/s
+
+FAILED: η_M=1.0, η_M_cold=1.0, η_E=2.0
+  → Partial: r_max=6.4 kpc, v_end=950 km/s
+

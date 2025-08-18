@@ -1,0 +1,36 @@
+/Users/dbf75/Work/Research/GalacticWindsMultiphaseAnalytic/diagnose_parameter_space_v2.py:78: UserWarning: Warning: eta_M=0.10 and eta_M_cold=0.30 may lead to numerical issues.
+The cold mass loading is much higher than hot mass loading, which can cause:
+  - Excessive cooling leading to negative pressure/density
+  - Numerical stiffness causing integration to hang
+Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)
+  model = WindModel(
+/Users/dbf75/Work/Research/GalacticWindsMultiphaseAnalytic/diagnose_parameter_space_v2.py:78: UserWarning: Warning: eta_M=0.10 and eta_M_cold=0.30 may lead to numerical issues.
+The cold mass loading is much higher than hot mass loading, which can cause:
+  - Excessive cooling leading to negative pressure/density
+  - Numerical stiffness causing integration to hang
+Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)
+  model = WindModel(
+/Users/dbf75/Work/Research/GalacticWindsMultiphaseAnalytic/diagnose_parameter_space_v2.py:78: UserWarning: Warning: eta_M=0.10 and eta_M_cold=0.30 may lead to numerical issues.
+The cold mass loading is much higher than hot mass loading, which can cause:
+  - Excessive cooling leading to negative pressure/density
+  - Numerical stiffness causing integration to hang
+Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)
+  model = WindModel(
+/Users/dbf75/Work/Research/GalacticWindsMultiphaseAnalytic/diagnose_parameter_space_v2.py:78: UserWarning: Warning: eta_M=0.10 and eta_M_cold=1.00 may lead to numerical issues.
+The cold mass loading is much higher than hot mass loading, which can cause:
+  - Excessive cooling leading to negative pressure/density
+  - Numerical stiffness causing integration to hang
+Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)
+  model = WindModel(
+/Users/dbf75/Work/Research/GalacticWindsMultiphaseAnalytic/diagnose_parameter_space_v2.py:78: UserWarning: Warning: eta_M=0.10 and eta_M_cold=1.00 may lead to numerical issues.
+The cold mass loading is much higher than hot mass loading, which can cause:
+  - Excessive cooling leading to negative pressure/density
+  - Numerical stiffness causing integration to hang
+Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)
+  model = WindModel(
+/Users/dbf75/Work/Research/GalacticWindsMultiphaseAnalytic/diagnose_parameter_space_v2.py:78: UserWarning: Warning: eta_M=0.10 and eta_M_cold=1.00 may lead to numerical issues.
+The cold mass loading is much higher than hot mass loading, which can cause:
+  - Excessive cooling leading to negative pressure/density
+  - Numerical stiffness causing integration to hang
+Consider using more balanced parameters (e.g., eta_M=0.2, eta_M_cold=0.2)
+  model = WindModel(

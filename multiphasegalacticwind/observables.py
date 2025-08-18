@@ -253,12 +253,23 @@ def calculate_column_density_distribution(solution, cloud_index=None,
         
     else:
         # Sum contributions from all cloud species
-        # Get velocity from first species as reference (all species have same v at each r)
-        v_cloud_cms = solution.sol.y[4 + solution.model.N_cloud_species, mask]  # cm/s
+        # Each species has its own velocity evolution, so we need to handle them separately
+        # and then combine onto a common velocity grid
+        
+        # Find velocity range across all species
+        v_min, v_max = np.inf, -np.inf
+        for i in range(solution.model.N_cloud_species):
+            v_cl_i_cms = solution.sol.y[4 + solution.model.N_cloud_species + i, mask]
+            v_min = min(v_min, np.min(v_cl_i_cms))
+            v_max = max(v_max, np.max(v_cl_i_cms))
+        
+        # Create common velocity grid for output
+        n_v_points = len(mask[mask])
+        v_cloud_cms = np.linspace(v_min, v_max, n_v_points)
         v_cloud_kms = v_cloud_cms / 1e5
         dN_dv_column = np.zeros_like(v_cloud_cms)
         
-        # Calculate dN/dv for each species and sum
+        # Calculate dN/dv for each species and interpolate to common grid
         for i in range(solution.model.N_cloud_species):
             M_cl_i = solution.sol.y[4 + i, mask]  # grams
             
@@ -283,15 +294,31 @@ def calculate_column_density_distribution(solution, cloud_index=None,
             if np.min(grad_v_i) > 0:
                 grad_v_i = np.where(grad_v_i == 0, 1e-30, grad_v_i)
                 dN_dv_i = n_H_i / grad_v_i * 1e5  # Convert to per (km/s)
+                
+                # Interpolate to common velocity grid
+                from scipy.interpolate import interp1d
+                if len(np.unique(v_cl_i_cms)) > 1:  # Need at least 2 unique points
+                    f_interp = interp1d(v_cl_i_cms, dN_dv_i, 
+                                      kind='linear', fill_value=0, bounds_error=False)
+                    dN_dv_i_interp = f_interp(v_cloud_cms)
+                else:
+                    dN_dv_i_interp = np.zeros_like(v_cloud_cms)
             else:
                 # Fallback for negative gradients
                 dr = np.gradient(r_use)
                 dN_i = n_H_i * dr
-                # Simple average for this species
-                dN_dv_i = np.sum(dN_i) / (v_cl_i_cms.max() - v_cl_i_cms.min()) * 1e5
-                dN_dv_i = np.ones_like(v_cl_i_cms) * dN_dv_i
+                # Distribute uniformly across velocity range of this species
+                total_column = np.sum(dN_i)
+                v_range = v_cl_i_cms.max() - v_cl_i_cms.min()
+                if v_range > 0:
+                    # Create uniform distribution for this species
+                    in_range = (v_cloud_cms >= v_cl_i_cms.min()) & (v_cloud_cms <= v_cl_i_cms.max())
+                    dN_dv_i_interp = np.zeros_like(v_cloud_cms)
+                    dN_dv_i_interp[in_range] = total_column / v_range * 1e5
+                else:
+                    dN_dv_i_interp = np.zeros_like(v_cloud_cms)
             
-            dN_dv_column += dN_dv_i
+            dN_dv_column += dN_dv_i_interp
     
     # Take absolute value (physical column density is positive)
     dN_dv_column = np.abs(dN_dv_column)

@@ -32,46 +32,56 @@ class WindConfig:
         >>> config = WindConfig(f_turb0=0.2, drag_coeff=0.3)
         >>> model = WindModel(config=config, SFR=10.0)
         """
+        # Get custom defaults if they exist
+        custom_defaults = getattr(self.__class__, '_custom_defaults', {})
+        
+        # Helper function to get value with custom defaults
+        def get_param(key, default):
+            return kwargs.get(key, custom_defaults.get(key, default))
+        
         # Gas properties
-        self.mu = kwargs.get('mu', 0.62)  # Mean molecular weight
+        self.mu = get_param('mu', 0.62)  # Mean molecular weight
         # Metallicity parameters (relative to solar)
-        self.Z_hot_over_Z_solar = kwargs.get('Z_hot_over_Z_solar', kwargs.get('metallicity', 10**-0.5))  # Hot gas metallicity
+        self.Z_hot_over_Z_solar = kwargs.get('Z_hot_over_Z_solar', 
+                                            kwargs.get('metallicity', 
+                                                      custom_defaults.get('Z_hot_over_Z_solar', 
+                                                                        custom_defaults.get('metallicity', 10**-0.5))))
         self.metallicity = self.Z_hot_over_Z_solar  # Keep for backward compatibility
-        self.redshift = kwargs.get('redshift', 0.0)  # Redshift for cooling function
+        self.redshift = get_param('redshift', 0.0)  # Redshift for cooling function
 
         # Wind geometry
-        self.half_opening_angle = kwargs.get('half_opening_angle', np.pi/2)
+        self.half_opening_angle = get_param('half_opening_angle', np.pi/2)
         self.Omwind = 4*np.pi*(1.0 - np.cos(self.half_opening_angle))
 
         # Cloud destruction threshold
-        self.M_cloud_min = kwargs.get('M_cloud_min', 1e-2*Msun)
+        self.M_cloud_min = get_param('M_cloud_min', 1e-2*Msun)
 
         # TRML (Turbulent Radiative Mixing Layer) parameters
-        self.CoolingAreaChiPower = kwargs.get('CoolingAreaChiPower', 0.5)
-        self.ColdTurbulenceChiPower = kwargs.get('ColdTurbulenceChiPower', -0.5)
-        self.TurbulentVelocityChiPower = kwargs.get('TurbulentVelocityChiPower', 0.0)
-        self.geometric_factor = kwargs.get('geometric_factor', 1.0)
-        self.Mdot_coefficient = kwargs.get('Mdot_coefficient', 1.0/3.0)
-        self.Cooling_Factor = kwargs.get('Cooling_Factor', 1.0)
-        self.drag_coeff = kwargs.get('drag_coeff', 0.5)
-        self.f_turb0 = kwargs.get('f_turb0', 0.1)
+        self.CoolingAreaChiPower = get_param('CoolingAreaChiPower', 0.5)
+        self.ColdTurbulenceChiPower = get_param('ColdTurbulenceChiPower', -0.5)
+        self.TurbulentVelocityChiPower = get_param('TurbulentVelocityChiPower', 0.0)
+        self.geometric_factor = get_param('geometric_factor', 1.0)
+        self.Mdot_coefficient = get_param('Mdot_coefficient', 1.0/3.0)
+        self.Cooling_Factor = get_param('Cooling_Factor', 1.0)
+        self.drag_coeff = get_param('drag_coeff', 0.5)
+        self.f_turb0 = get_param('f_turb0', 0.1)
 
         # Cold cloud injection parameters
-        self.cold_cloud_injection_radial_power = kwargs.get('cold_cloud_injection_radial_power', 6)
-        self.cold_cloud_injection_radial_extent_frac = kwargs.get('cold_cloud_injection_radial_extent_frac', 1.33)  # fraction of r0
-        self.v_cloud_init = kwargs.get('v_cloud_init', 100.0)  # km/s, initial cloud velocity
-        self.v_cloud_min = kwargs.get('v_cloud_min', 1.0)  # km/s, minimum cloud velocity before termination
-        self.cloud_radial_offset = kwargs.get('cloud_radial_offset', 0.01)  # fractional offset from sonic radius
-        self.Z_cloud_over_Z_solar = kwargs.get('Z_cloud_over_Z_solar', 0.3)  # Cloud metallicity relative to solar
-        self.T_cl = kwargs.get('T_cl', 1e4)  # K, cloud temperature
+        self.cold_cloud_injection_radial_power = get_param('cold_cloud_injection_radial_power', 6)
+        self.cold_cloud_injection_radial_extent_frac = get_param('cold_cloud_injection_radial_extent_frac', 1.33)  # fraction of r0
+        self.v_cloud_init = get_param('v_cloud_init', 100.0)  # km/s, initial cloud velocity
+        self.v_cloud_min = get_param('v_cloud_min', 1.0)  # km/s, minimum cloud velocity before termination
+        self.cloud_radial_offset = get_param('cloud_radial_offset', 0.01)  # fractional offset from sonic radius
+        self.Z_cloud_over_Z_solar = get_param('Z_cloud_over_Z_solar', 0.3)  # Cloud metallicity relative to solar
+        self.T_cl = get_param('T_cl', 1e4)  # K, cloud temperature
 
         # Supernova feedback parameters
-        self.E_SN = kwargs.get('E_SN', 1e51)  # erg, energy per supernova
-        self.mstar = kwargs.get('mstar', 100.0)  # Msun, stellar mass per supernova
+        self.E_SN = get_param('E_SN', 1e51)  # erg, energy per supernova
+        self.mstar = get_param('mstar', 100.0)  # Msun, stellar mass per supernova
 
         # Event detection parameters
-        self.sonic_point_offset = kwargs.get('sonic_point_offset', 1e-6)  # Small offset from Mach=1 for initial conditions
-        self.sonic_transition_tolerance = kwargs.get('sonic_transition_tolerance', 0.01)  # Tolerance for detecting sonic transitions
+        self.sonic_point_offset = get_param('sonic_point_offset', 1e-6)  # Small offset from Mach=1 for initial conditions
+        self.sonic_transition_tolerance = get_param('sonic_transition_tolerance', 0.01)  # Tolerance for detecting sonic transitions
 
     def to_dict(self) -> Dict[str, Any]:
         """Return configuration as a dictionary."""
@@ -104,6 +114,63 @@ class WindConfig:
             'sonic_transition_tolerance': self.sonic_transition_tolerance
         }
 
+    def validate(self) -> None:
+        """
+        Validate configuration parameters are physically reasonable.
+        
+        Raises
+        ------
+        ValueError
+            If any parameter is outside valid range
+        """
+        # Gas properties
+        if self.mu <= 0:
+            raise ValueError(f"mu must be positive, got {self.mu}")
+        if self.Z_hot_over_Z_solar < 0:
+            raise ValueError(f"Z_hot_over_Z_solar must be non-negative, got {self.Z_hot_over_Z_solar}")
+        if self.redshift < 0:
+            raise ValueError(f"redshift must be non-negative, got {self.redshift}")
+            
+        # Wind geometry
+        if not 0 < self.half_opening_angle <= np.pi:
+            raise ValueError(f"half_opening_angle must be in (0, π], got {self.half_opening_angle}")
+            
+        # Cloud properties
+        if self.M_cloud_min <= 0:
+            raise ValueError(f"M_cloud_min must be positive, got {self.M_cloud_min}")
+        if self.T_cl <= 0:
+            raise ValueError(f"T_cl must be positive, got {self.T_cl}")
+            
+        # TRML parameters
+        if not 0 < self.f_turb0 < 1:
+            raise ValueError(f"f_turb0 must be in (0, 1), got {self.f_turb0}")
+        if self.drag_coeff <= 0:
+            raise ValueError(f"drag_coeff must be positive, got {self.drag_coeff}")
+        if self.Mdot_coefficient <= 0:
+            raise ValueError(f"Mdot_coefficient must be positive, got {self.Mdot_coefficient}")
+            
+        # Cloud injection
+        if self.v_cloud_init < 0:
+            raise ValueError(f"v_cloud_init must be non-negative, got {self.v_cloud_init}")
+        if self.v_cloud_min < 0:
+            raise ValueError(f"v_cloud_min must be non-negative, got {self.v_cloud_min}")
+        if self.cloud_radial_offset < 0:
+            raise ValueError(f"cloud_radial_offset must be non-negative, got {self.cloud_radial_offset}")
+        if self.cold_cloud_injection_radial_extent_frac <= 0:
+            raise ValueError(f"cold_cloud_injection_radial_extent_frac must be positive, got {self.cold_cloud_injection_radial_extent_frac}")
+            
+        # Supernova parameters
+        if self.E_SN <= 0:
+            raise ValueError(f"E_SN must be positive, got {self.E_SN}")
+        if self.mstar <= 0:
+            raise ValueError(f"mstar must be positive, got {self.mstar}")
+            
+        # Numerical parameters
+        if self.sonic_point_offset <= 0:
+            raise ValueError(f"sonic_point_offset must be positive, got {self.sonic_point_offset}")
+        if self.sonic_transition_tolerance <= 0:
+            raise ValueError(f"sonic_transition_tolerance must be positive, got {self.sonic_transition_tolerance}")
+
     @classmethod
     def set_defaults(cls, **kwargs: Any) -> None:
         """
@@ -117,11 +184,27 @@ class WindConfig:
         >>> # Now all new configs will use these defaults
         >>> config = WindConfig()  # Will have f_turb0=0.2, drag_coeff=0.3
         """
+        # Store custom defaults as class attribute
+        if not hasattr(cls, '_custom_defaults'):
+            cls._custom_defaults = {}
+        
+        # Validate that keys are valid parameter names
+        valid_params = {
+            'mu', 'Z_hot_over_Z_solar', 'metallicity', 'redshift',
+            'half_opening_angle', 'M_cloud_min', 'CoolingAreaChiPower',
+            'ColdTurbulenceChiPower', 'TurbulentVelocityChiPower',
+            'geometric_factor', 'Mdot_coefficient', 'Cooling_Factor',
+            'drag_coeff', 'f_turb0', 'cold_cloud_injection_radial_power',
+            'cold_cloud_injection_radial_extent_frac', 'v_cloud_init',
+            'v_cloud_min', 'cloud_radial_offset', 'Z_cloud_over_Z_solar',
+            'T_cl', 'E_SN', 'mstar', 'sonic_point_offset',
+            'sonic_transition_tolerance'
+        }
+        
         for key, value in kwargs.items():
-            if hasattr(cls, f'_default_{key}'):
-                setattr(cls, f'_default_{key}', value)
-            else:
+            if key not in valid_params:
                 raise ValueError(f"Unknown parameter: {key}")
+            cls._custom_defaults[key] = value
 
 
 # Create a default configuration instance

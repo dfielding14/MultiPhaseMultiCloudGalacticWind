@@ -206,7 +206,8 @@ def Wind_Evo(r, state, params):
     drhodt = -1.0 * np.sum(number_density_cloud * Mdot_cloud)
 
     # Momentum source
-    p_dot_ram = 0.5 * drag_coeff * rho_wind * np.pi * v_rel**2 * r_cloud**2
+    # Fix: Use v_rel * |v_rel| to preserve sign (drag opposes relative motion)
+    p_dot_ram = 0.5 * drag_coeff * rho_wind * np.pi * v_rel * np.abs(v_rel) * r_cloud**2
     p_dot_transfer = v_wind*Mdot_grow + v_cloud*Mdot_loss
     dpdt = -1.0 * np.sum(number_density_cloud * (p_dot_transfer + p_dot_ram))
 
@@ -218,15 +219,32 @@ def Wind_Evo(r, state, params):
     # Metallicity source
     drhoZdt = -1.0 * np.sum(number_density_cloud * (Z_wind*Mdot_grow + Z_cloud*Mdot_loss))
 
-    # wind gradients
-    dv_dr    = (v_wind/r)/(1.0-(1.0/Mach_sq_wind)) * ( 2.0/Mach_sq_wind - (vc/v_wind)**2
+    # wind gradients with regularization near sonic point
+    # The factor (1 - 1/M²) causes a singularity at M = 1
+    # Apply regularization when close to sonic
+    sonic_regularization_width = 0.01  # Width of regularization region
+    
+    # Check if we're near the sonic point
+    if np.abs(Mach_sq_wind - 1.0) < sonic_regularization_width:
+        # Near sonic point - use L'Hôpital's rule or Taylor expansion
+        # For small ε where M² = 1 + ε, (1 - 1/M²) ≈ ε/(1+ε) ≈ ε
+        epsilon = Mach_sq_wind - 1.0
+        if np.abs(epsilon) < 1e-10:
+            epsilon = 1e-10 * np.sign(epsilon) if epsilon != 0 else 1e-10
+        denominator = epsilon
+    else:
+        # Far from sonic - use standard formula
+        denominator = 1.0 - (1.0/Mach_sq_wind)
+    
+    # Apply denominator with regularization
+    dv_dr    = (v_wind/r)/denominator * ( 2.0/Mach_sq_wind - (vc/v_wind)**2
                 - 1/(rho_wind*v_wind/r) * (drhodt*(gamma+1)/2. - gamma * dpdt/v_wind + (gamma-1)*dedt/v_wind**2 - (gamma-1) * (Phir/v_wind**2)*drhodt))
-    drho_dr  = (rho_wind/r)/(1.0-(1.0/Mach_sq_wind)) * ( -2.0 + (vc/v_wind)**2
+    drho_dr  = (rho_wind/r)/denominator * ( -2.0 + (vc/v_wind)**2
                 + 1/(rho_wind*v_wind/r) * (drhodt*(gamma+3)/2. - gamma * dpdt/v_wind + (gamma-1)*dedt/v_wind**2 - drhodt/Mach_sq_wind + (gamma-1) * (Phir/v_wind**2)*drhodt))
-    drhoZ_dr = ((rhoZ_wind/r)/(1.0-(1.0/Mach_sq_wind)) * ( -2.0 + (vc/v_wind)**2
+    drhoZ_dr = ((rhoZ_wind/r)/denominator * ( -2.0 + (vc/v_wind)**2
                 + 1/(rho_wind*v_wind/r) * (drhodt*(gamma+3)/2. - gamma * dpdt/v_wind + (gamma-1)*dedt/v_wind**2 - drhodt/Mach_sq_wind + (gamma-1) * (Phir/v_wind**2)*drhodt))
                 + (rhoZ_wind/r)*(1/(rho_wind*v_wind/r))*((drhoZdt/Z_wind)-drhodt))
-    dP_dr    = (Pressure/r)*gamma/(1.0-(1.0/Mach_sq_wind)) * ( -2.0 + (vc/v_wind)**2
+    dP_dr    = (Pressure/r)*gamma/denominator * ( -2.0 + (vc/v_wind)**2
                 + 1/(rho_wind*v_wind/r) * (drhodt + drhodt * (gamma-1)/2.*Mach_sq_wind * (1 - 2.0 * Phir/v_wind**2) - dpdt/v_wind + (gamma-1)*Mach_sq_wind*(dedt-v_wind*dpdt)/v_wind**2))
 
     # Cloud gradients - set all to 0 for clouds below minimum mass

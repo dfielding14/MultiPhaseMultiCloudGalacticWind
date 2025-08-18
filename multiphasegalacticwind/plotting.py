@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import matplotlib
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from .constants import Msun, yr, kpc
+from .plotting_helpers import (get_cloud_colors, add_cloud_mass_colorbar, 
+                              mask_cloud_data)
 
 # Try to import cmasher for colormaps
 try:
@@ -59,8 +61,9 @@ def setup_plotting_style():
     try:
         plt.rc('text', usetex=True)
         plt.rc('text.latex', preamble=r'\usepackage{cmbright}  \usepackage[T1]{fontenc}')
-    except:
-        print("LaTeX not available. Using default fonts.")
+    except (RuntimeError, FileNotFoundError):
+        # LaTeX not installed or not configured
+        pass  # Use default fonts silently
 
 
 def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(4, 7)):
@@ -88,19 +91,16 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     ax3 = fig.add_subplot(gs[2], sharex=ax1)
 
     # Get cloud colors
-    if HAS_CMASHER and show_clouds:
-        cloud_colors = cmr.take_cmap_colors('cmr.guppy', solution.model.N_cloud_species,
-                                           cmap_range=(0.0, 1.0), return_fmt='hex')
-    else:
-        cloud_colors = plt.cm.viridis(np.linspace(0, 1, solution.model.N_cloud_species))
+    if show_clouds:
+        cloud_colors = get_cloud_colors(solution.model.N_cloud_species)
 
     # Panel 1: Velocity
     ax1.loglog(solution.r, solution.v, 'k-', lw=1.5, label=r'$v_{\rm wind}$')
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
             # Mask cloud velocities where cloud mass is below minimum
-            v_cl_masked = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min / Msun,
-                                            solution.v_cl[i])
+            v_cl_masked = mask_cloud_data(solution.v_cl[i], solution.M_clouds[i], 
+                                         solution.model.config.M_cloud_min)
             ax1.loglog(solution.r, v_cl_masked, color=cloud_colors[i], lw=1)
     if show_hot_only:
         ax1.loglog(solution.r_hot, solution.v_hot, '-', color='grey', lw=1,
@@ -144,8 +144,8 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
             Mdot_cl_i = Ndot_cloud_i * solution.M_clouds[i] * Msun / (Msun/yr) / solution.model.SFR
 
             # Mask where clouds don't exist
-            Mdot_cl_i_masked = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min / Msun,
-                                           Mdot_cl_i)
+            Mdot_cl_i_masked = mask_cloud_data(Mdot_cl_i, solution.M_clouds[i],
+                                              solution.model.config.M_cloud_min)
             ax2.loglog(solution.r, Mdot_cl_i_masked, '-', color=cloud_colors[i], lw=0.8)
             # Add to total (use filled values with 0 for masked regions)
             Mdot_cl_total += np.ma.filled(Mdot_cl_i_masked, 0)
@@ -172,48 +172,13 @@ def plot_wind_solution(solution, show_hot_only=True, show_clouds=True, figsize=(
     if show_clouds:
         for i in range(solution.model.N_cloud_species):
             # M_clouds is in Msun, display directly
-            M_cl_i = np.ma.masked_where(solution.M_clouds[i] < solution.model.config.M_cloud_min / Msun,
-                                       solution.M_clouds[i])
+            M_cl_i = mask_cloud_data(solution.M_clouds[i], solution.M_clouds[i],
+                                    solution.model.config.M_cloud_min)
             ax3.loglog(solution.r, M_cl_i, '-', color=cloud_colors[i], lw=0.8)
 
         # Add cloud mass colorbar
-        cax = inset_axes(ax3, width="50%", height="5%", loc='lower left',
-                        bbox_to_anchor=(0.05, 0.05, 1, 1), bbox_transform=ax3.transAxes)
-        for i in range(solution.model.N_cloud_species):
-            cax.axvspan(i, i+1, color=cloud_colors[i])
-        cax.set_xlim(0, solution.model.N_cloud_species)
-        cax.set_ylim(0, 1)
-        
-        # Calculate labels based on actual cloud masses (just the exponent)
         M_cloud0_log = np.log10(solution.model.M_cloud0 / Msun)
-        
-        # Place text labels in the middle of each color patch
-        # If more than 11 species, only show subset to avoid crowding
-        if solution.model.N_cloud_species <= 11:
-            label_indices = range(solution.model.N_cloud_species)
-        else:
-            # Show approximately 11 labels evenly spaced
-            step = solution.model.N_cloud_species / 11
-            label_indices = [int(i * step) for i in range(11)]
-            if solution.model.N_cloud_species - 1 not in label_indices:
-                label_indices[-1] = solution.model.N_cloud_species - 1  # Always show last
-        
-        for i in label_indices:
-            cax.text(i + 0.5, 0.5, f'{M_cloud0_log[i]:.1f}', 
-                    ha='center', va='center', color='white', fontsize=6, fontweight='bold',
-                    transform=cax.transData)
-        
-        # Remove all ticks
-        cax.set_xticks([])
-        cax.set_yticks([])
-        
-        # Add title above the colorbar
-        cax.text(solution.model.N_cloud_species/2, 1.5, r'$\log_{10}(M_{\rm cl,0}/M_\odot)$',
-                ha='center', va='bottom', transform=cax.transData, fontsize=7)
-        cax.spines['top'].set_visible(False)
-        cax.spines['bottom'].set_visible(False)
-        cax.spines['left'].set_visible(False)
-        cax.spines['right'].set_visible(False)
+        add_cloud_mass_colorbar(ax3, solution.model.N_cloud_species, M_cloud0_log)
 
     ax3.set_xlabel(r'$r$ [kpc]')
     ax3.set_ylabel(r'$M_{\rm cl}$ [$M_\odot$]')
@@ -249,7 +214,10 @@ def plot_profiles(solution, quantities=['velocity', 'density', 'temperature'],
 
         if quantity == 'velocity':
             ax.loglog(solution.r, solution.v, 'k-', lw=1.5, label='Wind')
-            ax.loglog(solution.r, solution.v_cl, 'k--', lw=1, label='Clouds')
+            # Plot mean cloud velocity (averaged over species)
+            if hasattr(solution, 'v_cl') and solution.v_cl.ndim > 1:
+                v_cl_mean = np.mean(solution.v_cl, axis=0)
+                ax.loglog(solution.r, v_cl_mean, 'k--', lw=1, label='Clouds (mean)')
             ax.set_ylabel(r'$v$ [km/s]')
 
         elif quantity == 'density':
@@ -270,8 +238,13 @@ def plot_profiles(solution, quantities=['velocity', 'density', 'temperature'],
             ax.set_ylabel(r'$\dot{M}/{\rm SFR}$')
 
         elif quantity == 'metallicity':
-            ax.semilogx(solution.r, solution.Z_cl, 'k-', lw=1.5)
-            ax.set_ylabel(r'$Z_{\rm cl}/Z_\odot$')
+            # Plot hot wind metallicity
+            ax.semilogx(solution.r, solution.Z, 'k-', lw=1.5, label='Hot wind')
+            # Plot mean cloud metallicity if available
+            if hasattr(solution, 'Z_cl') and solution.Z_cl.ndim > 1:
+                Z_cl_mean = np.mean(solution.Z_cl, axis=0)
+                ax.semilogx(solution.r, Z_cl_mean, 'k--', lw=1, label='Clouds (mean)')
+            ax.set_ylabel(r'$Z/Z_\odot$')
 
         ax.legend(frameon=False, fontsize=8, loc='best')
 
@@ -336,11 +309,7 @@ def plot_column_density_distribution(solution, cloud_index=None,
         fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
         # Get cloud colors
-        if HAS_CMASHER:
-            cloud_colors = cmr.take_cmap_colors('cmr.guppy', solution.model.N_cloud_species,
-                                               cmap_range=(0.0, 1.0), return_fmt='hex')
-        else:
-            cloud_colors = plt.cm.viridis(np.linspace(0, 1, solution.model.N_cloud_species))
+        cloud_colors = get_cloud_colors(solution.model.N_cloud_species)
 
         # Plot individual species
         for i, dN_dv_i in enumerate(dN_dv_dict['species']):
@@ -351,44 +320,9 @@ def plot_column_density_distribution(solution, cloud_index=None,
         ax.plot(v_cloud, dN_dv_dict['total'], 'k-', lw=1.5, label='Total')
 
         # Add cloud mass colorbar similar to plot_wind_solution
-        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-        cax = inset_axes(ax, width="40%", height="4%", loc='lower left',
-                        bbox_to_anchor=(0.05, 0.05, 1, 1), bbox_transform=ax.transAxes)
-        for i in range(solution.model.N_cloud_species):
-            cax.axvspan(i, i+1, color=cloud_colors[i])
-        cax.set_xlim(0, solution.model.N_cloud_species)
-        cax.set_ylim(0, 1)
-        
-        # Calculate labels based on actual cloud masses (just the exponent)
         M_cloud0_log = np.log10(dN_dv_dict['M_cloud0'])
-        
-        # Place text labels in the middle of each color patch
-        # If more than 11 species, only show subset to avoid crowding
-        if solution.model.N_cloud_species <= 11:
-            label_indices = range(solution.model.N_cloud_species)
-        else:
-            # Show approximately 11 labels evenly spaced
-            step = solution.model.N_cloud_species / 11
-            label_indices = [int(i * step) for i in range(11)]
-            if solution.model.N_cloud_species - 1 not in label_indices:
-                label_indices[-1] = solution.model.N_cloud_species - 1  # Always show last
-        
-        for i in label_indices:
-            cax.text(i + 0.5, 0.5, f'{M_cloud0_log[i]:.1f}', 
-                    ha='center', va='center', color='white', fontsize=5, fontweight='bold',
-                    transform=cax.transData)
-        
-        # Remove all ticks
-        cax.set_xticks([])
-        cax.set_yticks([])
-        
-        # Add title above the colorbar
-        cax.text(solution.model.N_cloud_species/2, 1.4, r'$\log_{10}(M_{\rm cl}/M_\odot)$',
-                ha='center', va='bottom', transform=cax.transData, fontsize=6)
-        cax.spines['top'].set_visible(False)
-        cax.spines['bottom'].set_visible(False)
-        cax.spines['left'].set_visible(False)
-        cax.spines['right'].set_visible(False)
+        add_cloud_mass_colorbar(ax, solution.model.N_cloud_species, M_cloud0_log,
+                               width="40%", height="4%", fontsize=5, title_fontsize=6)
         
         # Add small legend just for "Total" line
         ax.legend(frameon=False, fontsize=8, loc='upper right')

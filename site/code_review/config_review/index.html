@@ -1,0 +1,2329 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the multiphase galactic wind simulation package">
+      
+      
+        <meta name="author" content="Based on Fielding & Bryan (2024)">
+      
+      
+        <link rel="canonical" href="https://yourusername.github.io/GalacticWindsMultiphaseAnalytic/code_review/config_review/">
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.17">
+    
+    
+      
+        <title>Config Module - Comprehensive Code Review - Multiphase Galactic Wind Model</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.7e37652d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#config-module-comprehensive-code-review" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Multiphase Galactic Wind Model" class="md-header__button md-logo" aria-label="Multiphase Galactic Wind Model" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Multiphase Galactic Wind Model
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Config Module - Comprehensive Code Review
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/GalacticWindsMultiphaseAnalytic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GalacticWindsMultiphaseAnalytic
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting_started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../physics/overview/" class="md-tabs__link">
+          
+  
+  
+  Physics
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/wind_model/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/parameters/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/code_review.md" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../about/references.md" class="md-tabs__link">
+          
+  
+  
+  About
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Multiphase Galactic Wind Model" class="md-nav__button md-logo" aria-label="Multiphase Galactic Wind Model" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Multiphase Galactic Wind Model
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/GalacticWindsMultiphaseAnalytic" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GalacticWindsMultiphaseAnalytic
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Getting Started
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Getting Started
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Installation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Quick Start
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Physics
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Physics
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/equations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Equations
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/trml.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    TRML Physics
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../physics/cooling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Cooling
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            API Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/wind_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    WindModel
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    WindConfig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/core_physics.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Core Physics
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/observables.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Observables
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/plotting.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plotting
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/analysis_helpers.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Analysis
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    User Guide
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            User Guide
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Parameter Selection
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/workflows.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Common Workflows
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/troubleshooting.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/performance.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Performance Tips
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Development
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Development
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/code_review.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Code Review
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/fixes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Bug Fixes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/testing.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Testing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    About
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            About
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/references.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    References
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/license.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    License
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about/changelog.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Changelog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parameter Documentation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parameter Documentation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-gas-properties-lines-36-41" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Gas Properties (Lines 36-41)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Gas Properties (Lines 36-41)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mu-line-36" class="md-nav__link">
+    <span class="md-ellipsis">
+      mu (Line 36)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#z_hot_over_z_solar-metallicity-lines-38-39" class="md-nav__link">
+    <span class="md-ellipsis">
+      Z_hot_over_Z_solar / metallicity (Lines 38-39)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#redshift-line-40" class="md-nav__link">
+    <span class="md-ellipsis">
+      redshift (Line 40)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-wind-geometry-lines-43-44" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Wind Geometry (Lines 43-44)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Wind Geometry (Lines 43-44)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#half_opening_angle-line-43" class="md-nav__link">
+    <span class="md-ellipsis">
+      half_opening_angle (Line 43)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#omwind-line-44" class="md-nav__link">
+    <span class="md-ellipsis">
+      Omwind (Line 44)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-cloud-destruction-line-47" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Cloud Destruction (Line 47)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Cloud Destruction (Line 47)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#m_cloud_min-line-47" class="md-nav__link">
+    <span class="md-ellipsis">
+      M_cloud_min (Line 47)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-trml-parameters-lines-50-57" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. TRML Parameters (Lines 50-57)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. TRML Parameters (Lines 50-57)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coolingareachipower-line-50" class="md-nav__link">
+    <span class="md-ellipsis">
+      CoolingAreaChiPower (Line 50)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coldturbulencechipower-line-51" class="md-nav__link">
+    <span class="md-ellipsis">
+      ColdTurbulenceChiPower (Line 51)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#turbulentvelocitychipower-line-52" class="md-nav__link">
+    <span class="md-ellipsis">
+      TurbulentVelocityChiPower (Line 52)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#geometric_factor-line-53" class="md-nav__link">
+    <span class="md-ellipsis">
+      geometric_factor (Line 53)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mdot_coefficient-line-54" class="md-nav__link">
+    <span class="md-ellipsis">
+      Mdot_coefficient (Line 54)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cooling_factor-line-55" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cooling_Factor (Line 55)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#drag_coeff-line-56" class="md-nav__link">
+    <span class="md-ellipsis">
+      drag_coeff (Line 56)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#f_turb0-line-57" class="md-nav__link">
+    <span class="md-ellipsis">
+      f_turb0 (Line 57)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-cloud-injection-parameters-lines-60-66" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Cloud Injection Parameters (Lines 60-66)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Cloud Injection Parameters (Lines 60-66)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cold_cloud_injection_radial_power-line-60" class="md-nav__link">
+    <span class="md-ellipsis">
+      cold_cloud_injection_radial_power (Line 60)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cold_cloud_injection_radial_extent_frac-line-61" class="md-nav__link">
+    <span class="md-ellipsis">
+      cold_cloud_injection_radial_extent_frac (Line 61)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v_cloud_init-line-62" class="md-nav__link">
+    <span class="md-ellipsis">
+      v_cloud_init (Line 62)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v_cloud_min-line-63" class="md-nav__link">
+    <span class="md-ellipsis">
+      v_cloud_min (Line 63)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloud_radial_offset-line-64" class="md-nav__link">
+    <span class="md-ellipsis">
+      cloud_radial_offset (Line 64)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#z_cloud_over_z_solar-line-65" class="md-nav__link">
+    <span class="md-ellipsis">
+      Z_cloud_over_Z_solar (Line 65)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t_cl-line-66" class="md-nav__link">
+    <span class="md-ellipsis">
+      T_cl (Line 66)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-supernova-feedback-lines-69-70" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Supernova Feedback (Lines 69-70)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Supernova Feedback (Lines 69-70)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#e_sn-line-69" class="md-nav__link">
+    <span class="md-ellipsis">
+      E_SN (Line 69)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mstar-line-70" class="md-nav__link">
+    <span class="md-ellipsis">
+      mstar (Line 70)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-numerical-parameters-lines-73-74" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Numerical Parameters (Lines 73-74)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Numerical Parameters (Lines 73-74)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sonic_point_offset-line-73" class="md-nav__link">
+    <span class="md-ellipsis">
+      sonic_point_offset (Line 73)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sonic_transition_tolerance-line-74" class="md-nav__link">
+    <span class="md-ellipsis">
+      sonic_transition_tolerance (Line 74)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#class-methods-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      Class Methods Analysis
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Class Methods Analysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#__init__-lines-24-75" class="md-nav__link">
+    <span class="md-ellipsis">
+      __init__ (Lines 24-75)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#to_dict-lines-76-105" class="md-nav__link">
+    <span class="md-ellipsis">
+      to_dict() (Lines 76-105)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_defaults-lines-107-124" class="md-nav__link">
+    <span class="md-ellipsis">
+      set_defaults() (Lines 107-124)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#issues-identified" class="md-nav__link">
+    <span class="md-ellipsis">
+      Issues Identified
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Issues Identified">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-critical-bug-in-set_defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Critical Bug in set_defaults()
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-no-parameter-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. No Parameter Validation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-unit-inconsistencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Unit Inconsistencies
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-documentation-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Documentation Gaps
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-backward-compatibility-complexity" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Backward Compatibility Complexity
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-improvements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Recommended Improvements
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Improvements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immediate-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Immediate Fixes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-enhancements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Future Enhancements
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#physical-parameter-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      Physical Parameter Relationships
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Physical Parameter Relationships">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Dependencies
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sensitive-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sensitive Parameters
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      Testing Requirements
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing Requirements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit-tests-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unit Tests Needed
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Integration Tests
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="config-module-comprehensive-code-review">Config Module - Comprehensive Code Review</h1>
+<h2 id="module-overview">Module Overview</h2>
+<p><strong>File</strong>: <code>multiphasegalacticwind/config.py</code><br />
+<strong>Lines</strong>: 133<br />
+<strong>Purpose</strong>: Central configuration for all physics parameters used in the multiphase wind model</p>
+<h2 id="parameter-documentation">Parameter Documentation</h2>
+<h3 id="1-gas-properties-lines-36-41">1. Gas Properties (Lines 36-41)</h3>
+<h4 id="mu-line-36"><code>mu</code> (Line 36)</h4>
+<ul>
+<li><strong>Default</strong>: 0.62</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Mean molecular weight of gas</li>
+<li><strong>Usage</strong>: Converting between mass density and number density: n = ρ/(μ·mp)</li>
+<li><strong>Typical Range</strong>: 0.59-0.62 for solar metallicity gas</li>
+</ul>
+<h4 id="z_hot_over_z_solar-metallicity-lines-38-39"><code>Z_hot_over_Z_solar</code> / <code>metallicity</code> (Lines 38-39)</h4>
+<ul>
+<li><strong>Default</strong>: 10^(-0.5) ≈ 0.316</li>
+<li><strong>Units</strong>: dimensionless (relative to solar)</li>
+<li><strong>Physics</strong>: Hot gas metallicity for cooling function</li>
+<li><strong>Usage</strong>: Cooling rate calculation Λ(T, Z)</li>
+<li><strong>Note</strong>: Dual naming for backward compatibility</li>
+</ul>
+<h4 id="redshift-line-40"><code>redshift</code> (Line 40)</h4>
+<ul>
+<li><strong>Default</strong>: 0.0</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Cosmological redshift</li>
+<li><strong>Usage</strong>: Cooling function interpolation for different epochs</li>
+</ul>
+<h3 id="2-wind-geometry-lines-43-44">2. Wind Geometry (Lines 43-44)</h3>
+<h4 id="half_opening_angle-line-43"><code>half_opening_angle</code> (Line 43)</h4>
+<ul>
+<li><strong>Default</strong>: π/2 radians (90°)</li>
+<li><strong>Units</strong>: radians</li>
+<li><strong>Physics</strong>: Half-angle of bi-conical wind</li>
+<li><strong>Usage</strong>: Determines solid angle Ω = 4π(1 - cos(θ))</li>
+</ul>
+<h4 id="omwind-line-44"><code>Omwind</code> (Line 44)</h4>
+<ul>
+<li><strong>Default</strong>: 4π (full sphere for θ=π/2)</li>
+<li><strong>Units</strong>: steradians</li>
+<li><strong>Physics</strong>: Solid angle of wind</li>
+<li><strong>Derived</strong>: Calculated from half_opening_angle</li>
+<li><strong>Note</strong>: Used in mass flux calculations</li>
+</ul>
+<h3 id="3-cloud-destruction-line-47">3. Cloud Destruction (Line 47)</h3>
+<h4 id="m_cloud_min-line-47"><code>M_cloud_min</code> (Line 47)</h4>
+<ul>
+<li><strong>Default</strong>: 0.01 M⊙ (≈ 2×10^28 g)</li>
+<li><strong>Units</strong>: grams</li>
+<li><strong>Physics</strong>: Minimum cloud mass before destruction</li>
+<li><strong>Usage</strong>: Event trigger for cloud removal</li>
+<li><strong>Physical Meaning</strong>: Clouds below this mass are assumed destroyed</li>
+</ul>
+<h3 id="4-trml-parameters-lines-50-57">4. TRML Parameters (Lines 50-57)</h3>
+<h4 id="coolingareachipower-line-50"><code>CoolingAreaChiPower</code> (Line 50)</h4>
+<ul>
+<li><strong>Default</strong>: 0.5</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Exponent β_cool in A_boost = g_geom · χ^β_cool</li>
+<li><strong>Usage</strong>: Scales effective cooling area with density contrast</li>
+<li><strong>Physical Meaning</strong>: How mixing layer area scales with χ</li>
+</ul>
+<h4 id="coldturbulencechipower-line-51"><code>ColdTurbulenceChiPower</code> (Line 51)</h4>
+<ul>
+<li><strong>Default</strong>: -0.5</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Exponent β_cold in v_turb,cold = v_turb · χ^β_cold</li>
+<li><strong>Usage</strong>: Scales cold cloud ablation velocity</li>
+<li><strong>Physical Meaning</strong>: Reduced turbulence in denser medium</li>
+</ul>
+<h4 id="turbulentvelocitychipower-line-52"><code>TurbulentVelocityChiPower</code> (Line 52)</h4>
+<ul>
+<li><strong>Default</strong>: 0.0</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Exponent β_turb in v_turb = f_turb · v_rel · χ^β_turb</li>
+<li><strong>Usage</strong>: Scales turbulent velocity with density contrast</li>
+<li><strong>Physical Meaning</strong>: No χ-dependence by default</li>
+</ul>
+<h4 id="geometric_factor-line-53"><code>geometric_factor</code> (Line 53)</h4>
+<ul>
+<li><strong>Default</strong>: 1.0</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Factor g_geom in cooling area boost</li>
+<li><strong>Usage</strong>: A_boost = g_geom · χ^β_cool</li>
+<li><strong>Physical Meaning</strong>: Geometry correction for non-spherical clouds</li>
+</ul>
+<h4 id="mdot_coefficient-line-54"><code>Mdot_coefficient</code> (Line 54)</h4>
+<ul>
+<li><strong>Default</strong>: 1/3</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Coefficient C_dot in mass transfer equations</li>
+<li><strong>Usage</strong>: Scales all TRML mass exchange rates</li>
+<li><strong>Physical Meaning</strong>: Efficiency of turbulent mixing</li>
+</ul>
+<h4 id="cooling_factor-line-55"><code>Cooling_Factor</code> (Line 55)</h4>
+<ul>
+<li><strong>Default</strong>: 1.0</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Global cooling rate multiplier</li>
+<li><strong>Usage</strong>: Scales Λ(T, Z) cooling function</li>
+<li><strong>Note</strong>: For testing cooling strength effects</li>
+</ul>
+<h4 id="drag_coeff-line-56"><code>drag_coeff</code> (Line 56)</h4>
+<ul>
+<li><strong>Default</strong>: 0.5</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Drag coefficient C_drag</li>
+<li><strong>Usage</strong>: Ram pressure F_drag = 0.5·C_drag·ρ·π·r²·v_rel²</li>
+<li><strong>Typical Range</strong>: 0.3-1.0</li>
+</ul>
+<h4 id="f_turb0-line-57"><code>f_turb0</code> (Line 57)</h4>
+<ul>
+<li><strong>Default</strong>: 0.1</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Turbulent velocity fraction</li>
+<li><strong>Usage</strong>: v_turb = f_turb0 · v_rel</li>
+<li><strong>Typical Range</strong>: 0.05-0.2</li>
+<li><strong>Physical Meaning</strong>: Fraction of relative velocity in turbulent motions</li>
+</ul>
+<h3 id="5-cloud-injection-parameters-lines-60-66">5. Cloud Injection Parameters (Lines 60-66)</h3>
+<h4 id="cold_cloud_injection_radial_power-line-60"><code>cold_cloud_injection_radial_power</code> (Line 60)</h4>
+<ul>
+<li><strong>Default</strong>: 6</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Power law exponent p for injection profile</li>
+<li><strong>Usage</strong>: dN/dr ∝ (r/r_inj)^p for r &lt; r_inj</li>
+<li><strong>Physical Meaning</strong>: Steep increase in cloud density near galaxy</li>
+</ul>
+<h4 id="cold_cloud_injection_radial_extent_frac-line-61"><code>cold_cloud_injection_radial_extent_frac</code> (Line 61)</h4>
+<ul>
+<li><strong>Default</strong>: 1.33</li>
+<li><strong>Units</strong>: dimensionless (fraction of r0)</li>
+<li><strong>Physics</strong>: Injection radius as fraction of sonic radius</li>
+<li><strong>Usage</strong>: r_inj = cold_cloud_injection_radial_extent_frac × r0</li>
+<li><strong>Note</strong>: Recently changed from absolute distance</li>
+</ul>
+<h4 id="v_cloud_init-line-62"><code>v_cloud_init</code> (Line 62)</h4>
+<ul>
+<li><strong>Default</strong>: 100.0 km/s</li>
+<li><strong>Units</strong>: km/s</li>
+<li><strong>Physics</strong>: Initial cloud velocity</li>
+<li><strong>Usage</strong>: Starting velocity for all cloud species</li>
+<li><strong>Typical Range</strong>: 3-200 km/s</li>
+</ul>
+<h4 id="v_cloud_min-line-63"><code>v_cloud_min</code> (Line 63)</h4>
+<ul>
+<li><strong>Default</strong>: 1.0 km/s</li>
+<li><strong>Units</strong>: km/s</li>
+<li><strong>Physics</strong>: Minimum cloud velocity threshold</li>
+<li><strong>Usage</strong>: Event trigger - terminates if v_cloud &lt; v_cloud_min</li>
+<li><strong>Physical Meaning</strong>: Clouds essentially stopped</li>
+</ul>
+<h4 id="cloud_radial_offset-line-64"><code>cloud_radial_offset</code> (Line 64)</h4>
+<ul>
+<li><strong>Default</strong>: 0.01</li>
+<li><strong>Units</strong>: dimensionless (fraction of r0)</li>
+<li><strong>Physics</strong>: Starting radius offset from sonic point</li>
+<li><strong>Usage</strong>: r_start = r0 × (1 + cloud_radial_offset)</li>
+<li><strong>Physical Meaning</strong>: Allows hot-only evolution before cloud injection</li>
+</ul>
+<h4 id="z_cloud_over_z_solar-line-65"><code>Z_cloud_over_Z_solar</code> (Line 65)</h4>
+<ul>
+<li><strong>Default</strong>: 0.3</li>
+<li><strong>Units</strong>: dimensionless (relative to solar)</li>
+<li><strong>Physics</strong>: Initial cloud metallicity</li>
+<li><strong>Usage</strong>: Sets Z_cloud for all species initially</li>
+<li><strong>Physical Meaning</strong>: Sub-solar metallicity typical of star-forming gas</li>
+</ul>
+<h4 id="t_cl-line-66"><code>T_cl</code> (Line 66)</h4>
+<ul>
+<li><strong>Default</strong>: 10^4 K</li>
+<li><strong>Units</strong>: Kelvin</li>
+<li><strong>Physics</strong>: Cloud temperature</li>
+<li><strong>Usage</strong>: Sets density contrast χ = T_hot/T_cloud</li>
+<li><strong>Physical Meaning</strong>: Cool photoionized gas temperature</li>
+</ul>
+<h3 id="6-supernova-feedback-lines-69-70">6. Supernova Feedback (Lines 69-70)</h3>
+<h4 id="e_sn-line-69"><code>E_SN</code> (Line 69)</h4>
+<ul>
+<li><strong>Default</strong>: 10^51 erg</li>
+<li><strong>Units</strong>: erg</li>
+<li><strong>Physics</strong>: Energy per supernova</li>
+<li><strong>Usage</strong>: Energy injection Ė = η_E × (E_SN/m_*) × SFR</li>
+<li><strong>Physical Meaning</strong>: Canonical SN explosion energy</li>
+</ul>
+<h4 id="mstar-line-70"><code>mstar</code> (Line 70)</h4>
+<ul>
+<li><strong>Default</strong>: 100 M⊙</li>
+<li><strong>Units</strong>: solar masses</li>
+<li><strong>Physics</strong>: Stellar mass per supernova</li>
+<li><strong>Usage</strong>: SN rate = SFR/m_*</li>
+<li><strong>Physical Meaning</strong>: IMF-averaged mass per SN</li>
+</ul>
+<h3 id="7-numerical-parameters-lines-73-74">7. Numerical Parameters (Lines 73-74)</h3>
+<h4 id="sonic_point_offset-line-73"><code>sonic_point_offset</code> (Line 73)</h4>
+<ul>
+<li><strong>Default</strong>: 10^(-6)</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Offset from exact Mach = 1</li>
+<li><strong>Usage</strong>: Initial conditions at Mach = 1 + ε</li>
+<li><strong>Note</strong>: Avoids singularity at sonic point</li>
+<li><strong>Critical</strong>: Must be small but non-zero</li>
+</ul>
+<h4 id="sonic_transition_tolerance-line-74"><code>sonic_transition_tolerance</code> (Line 74)</h4>
+<ul>
+<li><strong>Default</strong>: 0.01</li>
+<li><strong>Units</strong>: dimensionless</li>
+<li><strong>Physics</strong>: Tolerance for sonic transition events</li>
+<li><strong>Usage</strong>: Triggers event when |Mach - 1| &lt; tolerance</li>
+<li><strong>Note</strong>: Different purpose than sonic_point_offset</li>
+</ul>
+<h2 id="class-methods-analysis">Class Methods Analysis</h2>
+<h3 id="__init__-lines-24-75"><code>__init__</code> (Lines 24-75)</h3>
+<ul>
+<li>Uses <code>kwargs.get()</code> with defaults for all parameters</li>
+<li>Handles backward compatibility (metallicity → Z_hot_over_Z_solar)</li>
+<li>Calculates derived quantity Omwind from half_opening_angle</li>
+<li><strong>Issue</strong>: No parameter validation</li>
+</ul>
+<h3 id="to_dict-lines-76-105"><code>to_dict()</code> (Lines 76-105)</h3>
+<ul>
+<li>Returns all parameters as dictionary</li>
+<li>Maintains backward compatibility keys</li>
+<li>Used to pass config to physics functions</li>
+<li><strong>Good</strong>: Clean interface for parameter passing</li>
+</ul>
+<h3 id="set_defaults-lines-107-124"><code>set_defaults()</code> (Lines 107-124)</h3>
+<ul>
+<li>Class method to change defaults globally</li>
+<li><strong>Issue</strong>: Implementation incomplete - references non-existent <code>_default_*</code> attributes</li>
+<li><strong>Bug</strong>: Will always raise ValueError since no <code>_default_*</code> attributes exist</li>
+</ul>
+<h2 id="issues-identified">Issues Identified</h2>
+<h3 id="1-critical-bug-in-set_defaults">1. <strong>Critical Bug in set_defaults()</strong></h3>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Line 121-122: References non-existent attributes</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;_default_</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">):</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="nb">setattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;_default_</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+</code></pre></div>
+This will never work as no <code>_default_*</code> attributes are defined.</p>
+<h3 id="2-no-parameter-validation">2. <strong>No Parameter Validation</strong></h3>
+<ul>
+<li>No range checking (e.g., 0 &lt; f_turb0 &lt; 1)</li>
+<li>No type checking</li>
+<li>No physical consistency checks</li>
+</ul>
+<h3 id="3-unit-inconsistencies">3. <strong>Unit Inconsistencies</strong></h3>
+<ul>
+<li>M_cloud_min uses Msun constant but stores in grams</li>
+<li>Mix of CGS and convenient units</li>
+</ul>
+<h3 id="4-documentation-gaps">4. <strong>Documentation Gaps</strong></h3>
+<ul>
+<li>Missing units in docstrings</li>
+<li>No typical ranges documented</li>
+<li>Physical meaning not always clear</li>
+</ul>
+<h3 id="5-backward-compatibility-complexity">5. <strong>Backward Compatibility Complexity</strong></h3>
+<ul>
+<li>Multiple names for same parameter (metallicity/Z_hot_over_Z_solar)</li>
+<li>Increases maintenance burden</li>
+</ul>
+<h2 id="recommended-improvements">Recommended Improvements</h2>
+<h3 id="immediate-fixes">Immediate Fixes</h3>
+<ol>
+<li>
+<p><strong>Fix set_defaults() method</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">_defaults</span> <span class="o">=</span> <span class="p">{</span><span class="o">...</span><span class="p">}</span>  <span class="c1"># Dictionary of defaults</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nd">@classmethod</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">set_defaults</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="p">:</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_defaults</span><span class="p">:</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>            <span class="bp">cls</span><span class="o">.</span><span class="n">_defaults</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown parameter: </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Add parameter validation</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="mi">0</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">f_turb0</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;f_turb0 must be between 0 and 1&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mu</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;mu must be positive&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="c1"># etc.</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Add comprehensive docstrings</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="sd">&quot;&quot;&quot;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="sd">mu : float, default=0.62</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="sd">    Mean molecular weight of gas (dimensionless).</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="sd">    Used to convert between mass and number density.</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="sd">    Typical range: 0.59-0.62 for solar metallicity.</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd">&quot;&quot;&quot;</span>
+</code></pre></div></p>
+</li>
+</ol>
+<h3 id="future-enhancements">Future Enhancements</h3>
+<ol>
+<li>
+<p><strong>Parameter Groups</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">TRMLParameters</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">f_turb0</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">drag_coeff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="c1"># etc.</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Unit Management</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">astropy</span><span class="w"> </span><span class="kn">import</span> <span class="n">units</span> <span class="k">as</span> <span class="n">u</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">mu</span> <span class="o">=</span> <span class="mf">0.62</span> <span class="o">*</span> <span class="n">u</span><span class="o">.</span><span class="n">dimensionless</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">T_cl</span> <span class="o">=</span> <span class="mf">1e4</span> <span class="o">*</span> <span class="n">u</span><span class="o">.</span><span class="n">K</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Presets</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nd">@classmethod</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">milky_way_preset</span><span class="p">(</span><span class="bp">cls</span><span class="p">):</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">f_turb0</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">drag_coeff</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="nd">@classmethod</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">starburst_preset</span><span class="p">(</span><span class="bp">cls</span><span class="p">):</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">f_turb0</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">drag_coeff</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div></p>
+</li>
+</ol>
+<h2 id="physical-parameter-relationships">Physical Parameter Relationships</h2>
+<h3 id="key-dependencies">Key Dependencies</h3>
+<ol>
+<li><strong>χ = T_hot/T_cl</strong>: Density contrast drives all TRML physics</li>
+<li><strong>Ė/Ṁ</strong>: Determines sonic point velocity</li>
+<li><strong>f_turb0 × v_rel</strong>: Sets turbulent mixing efficiency</li>
+<li><strong>E_SN/m_star</strong>: Energy per unit SFR</li>
+</ol>
+<h3 id="sensitive-parameters">Sensitive Parameters</h3>
+<ol>
+<li><strong>f_turb0</strong>: Directly controls cloud growth/loss rates</li>
+<li><strong>sonic_point_offset</strong>: Must be tiny to avoid errors</li>
+<li><strong>drag_coeff</strong>: Controls momentum transfer</li>
+<li><strong>T_cl</strong>: Sets density contrast χ</li>
+</ol>
+<h2 id="testing-requirements">Testing Requirements</h2>
+<h3 id="unit-tests-needed">Unit Tests Needed</h3>
+<ol>
+<li><code>test_init_with_defaults</code>: Verify default values</li>
+<li><code>test_init_with_overrides</code>: Check parameter overriding</li>
+<li><code>test_to_dict</code>: Verify dictionary conversion</li>
+<li><code>test_validation</code>: Check parameter ranges</li>
+<li><code>test_backward_compatibility</code>: Verify old parameter names work</li>
+</ol>
+<h3 id="integration-tests">Integration Tests</h3>
+<ol>
+<li>Test with wind_model.py</li>
+<li>Verify parameters flow to core_physics.py</li>
+<li>Check derived quantities (Omwind)</li>
+</ol>
+<h2 id="summary">Summary</h2>
+<p>The config module provides centralized parameter management but needs:
+1. <strong>Bug fix</strong>: set_defaults() implementation
+2. <strong>Validation</strong>: Add parameter range checking
+3. <strong>Documentation</strong>: Complete units and ranges
+4. <strong>Simplification</strong>: Remove backward compatibility complexity
+5. <strong>Organization</strong>: Consider parameter grouping</p>
+<p>Total of 24 physics parameters controlling:
+- Gas properties (3)
+- Geometry (2)
+- TRML physics (8)
+- Cloud injection (7)
+- Supernova feedback (2)
+- Numerical controls (2)</p>
+<p>The module successfully centralizes configuration but lacks validation and has a critical bug in set_defaults().</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.92b07e13.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

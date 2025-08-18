@@ -1,0 +1,9 @@
+epsilon,model_type,success,max_r_kpc,error
+0.0,error,False,0.0,'WindModel' object has no attribute 'rho0'
+1e-10,error,False,0.0,'WindModel' object has no attribute 'rho0'
+1e-08,error,False,0.0,'WindModel' object has no attribute 'rho0'
+1e-06,error,False,0.0,'WindModel' object has no attribute 'rho0'
+0.0001,error,False,0.0,'WindModel' object has no attribute 'rho0'
+0.01,error,False,0.0,'WindModel' object has no attribute 'rho0'
+0.1,error,False,0.0,'WindModel' object has no attribute 'rho0'
+0.3,error,False,0.0,'WindModel' object has no attribute 'rho0'

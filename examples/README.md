@@ -44,6 +44,11 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
   - Interactive parameter exploration
   - Best starting point for new users
 
+- **`m82_multiphase_user_notebook.ipynb`** - M82-like user-ready setup
+  - Top-level editable controls for `eta_M`, `eta_M_cold_tot`, and `eta_E`
+  - Fixed M82-like baseline: SFR=20, v_circ=150, 6 cloud bins from 1-1e6 Msun
+  - Uses built-in plotting flow to generate standard wind/observable plots
+
 - **`observational_comparison_notebook.ipynb`** - Observatory-focused analysis
   - Mock absorption line profiles
   - M82-like starburst galaxy example

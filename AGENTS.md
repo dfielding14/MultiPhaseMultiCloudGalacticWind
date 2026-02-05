@@ -206,6 +206,8 @@ Hydrogen number density:
 
 Core mapping to column-density velocity profile:
 - `dN/dv ≈ n_H / (dv/dr)`
+- mapping is done per cloud species and then interpolated onto a common velocity grid before summation.
+- only active-cloud segments (`M_cloud >= M_cloud_min`) contribute to the transform.
 - with fallback rebinned treatment for non-monotonic velocity gradients.
 
 Velocity moments are computed from integrals over `dN/dv`.
@@ -239,6 +241,9 @@ Current tests live in `tests/`:
   - drag-force sign and finite derivative behavior
 - `tests/test_cooling.py`
   - cooling interpolation contracts and edge cases
+- `tests/test_observables.py`
+  - consistency of total `dN/dv` vs sum of species contributions
+  - finiteness/ordering contracts for species-level distributions
 - `tests/test_config.py`, `tests/test_cooling_simple.py`
   - legacy/simple regression-style tests
 

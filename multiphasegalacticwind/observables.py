@@ -13,6 +13,120 @@ from .config import get_default_config
 mu_cool = 1.4  # Mean atomic mass per proton for ionized gas
 
 
+def _interpolate_distribution(v_source, y_source, v_target):
+    """
+    Linearly interpolate a distribution onto a target velocity grid.
+
+    Inputs may be unsorted and can contain duplicate velocities.
+    """
+    v_source = np.asarray(v_source, dtype=float)
+    y_source = np.asarray(y_source, dtype=float)
+    v_target = np.asarray(v_target, dtype=float)
+
+    valid = np.isfinite(v_source) & np.isfinite(y_source)
+    if np.count_nonzero(valid) < 2:
+        return np.zeros_like(v_target, dtype=float)
+
+    v_sorted = np.sort(v_source[valid])
+    order = np.argsort(v_source[valid])
+    y_sorted = y_source[valid][order]
+
+    v_unique, inv = np.unique(v_sorted, return_inverse=True)
+    if v_unique.size < 2:
+        return np.zeros_like(v_target, dtype=float)
+
+    y_accum = np.zeros_like(v_unique, dtype=float)
+    counts = np.zeros_like(v_unique, dtype=float)
+    np.add.at(y_accum, inv, y_sorted)
+    np.add.at(counts, inv, 1.0)
+    y_unique = y_accum / np.maximum(counts, 1.0)
+
+    from scipy.interpolate import interp1d
+    interp = interp1d(
+        v_unique, y_unique,
+        kind='linear',
+        fill_value=0.0,
+        bounds_error=False,
+        assume_sorted=True,
+    )
+    y_target = interp(v_target)
+    return np.where(np.isfinite(y_target), y_target, 0.0)
+
+
+def _calculate_species_column_density_distribution(
+    solution, cloud_index, mask, r_use, injection_function, Omwind
+):
+    """
+    Compute dN/dv for one cloud species on its native velocity grid.
+    """
+    v_cloud_cms = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask]
+    M_cloud = solution.sol.y[4 + cloud_index, mask]  # grams
+    Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]  # number / s
+
+    # Exclude extinct-cloud tail points from the mapping.
+    alive = M_cloud >= solution.model.config.M_cloud_min
+    if np.count_nonzero(alive) < 2:
+        return np.array([0.0]), np.array([0.0])
+
+    v_cloud_cms = v_cloud_cms[alive]
+    M_cloud = M_cloud[alive]
+    r_alive = r_use[alive]
+    injection_alive = injection_function[alive]
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cloud_density = (
+            Ndot_cloud * M_cloud * injection_alive /
+            (Omwind * r_alive**2 * v_cloud_cms)
+        )
+    n_H = np.where(np.isfinite(cloud_density), cloud_density / (mu_cool * mp), 0.0)
+
+    grad_v = np.gradient(v_cloud_cms, r_alive)  # (cm/s) per cm
+    finite_grad = grad_v[np.isfinite(grad_v)]
+    if finite_grad.size < 2:
+        return np.array([0.0]), np.array([0.0])
+
+    # Treat tiny negative gradients as numerical noise.
+    grad_scale = np.max(np.abs(finite_grad))
+    grad_tol = max(1e-30, 1e-10 * grad_scale)
+
+    if np.min(finite_grad) >= -grad_tol:
+        grad_safe = np.where(grad_v > grad_tol, grad_v, grad_tol)
+        dN_dv_cgs = np.divide(
+            n_H, grad_safe,
+            out=np.zeros_like(n_H),
+            where=grad_safe > 0,
+        )
+    else:
+        # Robust fallback for non-monotonic velocity histories.
+        dr = np.gradient(r_alive)
+        dN = np.where(np.isfinite(n_H * dr), n_H * dr, 0.0)
+
+        sort_idx = np.argsort(v_cloud_cms)
+        v_sorted = v_cloud_cms[sort_idx]
+        dN_sorted = dN[sort_idx]
+        if np.allclose(v_sorted, v_sorted[0]):
+            return np.array([0.0]), np.array([0.0])
+
+        n_bins = max(10, len(v_sorted) // 8)
+        v_bins = np.linspace(v_sorted.min(), v_sorted.max(), n_bins)
+        dv_bins = np.diff(v_bins)
+        if np.count_nonzero(dv_bins > 0) == 0:
+            return np.array([0.0]), np.array([0.0])
+
+        dN_binned, _ = np.histogram(v_sorted, bins=v_bins, weights=dN_sorted)
+        dN_dv_binned = np.divide(
+            dN_binned, dv_bins,
+            out=np.zeros_like(dN_binned, dtype=float),
+            where=dv_bins > 0,
+        )
+        v_centers = 0.5 * (v_bins[:-1] + v_bins[1:])
+        dN_dv_cgs = _interpolate_distribution(v_centers, dN_dv_binned, v_cloud_cms)
+
+    v_cloud_kms = v_cloud_cms / 1e5
+    dN_dv_kms = np.abs(np.where(np.isfinite(dN_dv_cgs), dN_dv_cgs, 0.0) * 1e5)
+    return v_cloud_kms, dN_dv_kms
+
+
 def calculate_cloud_density(solution, cloud_index=None, 
                            injection_radius_kpc=None, 
                            injection_power=None):
@@ -188,144 +302,36 @@ def calculate_column_density_distribution(solution, cloud_index=None,
                                  (r_kpc_use / injection_radius_kpc)**injection_power,
                                  1.0)
     
-    # Get wind parameters
     Omwind = solution.model.config.Omwind
-    
+
     if cloud_index is not None:
-        # Single cloud species
-        v_cloud_cms = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index, mask]  # cm/s
-        M_cloud = solution.sol.y[4 + cloud_index, mask]  # grams
-        Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]  # number/s
-        
-        # Skip if cloud is destroyed
-        if np.max(M_cloud) < solution.model.config.M_cloud_min:
-            return np.array([0.0]), np.array([0.0])
-        
-        # Calculate cloud mass density (following Xinfeng_data line 453)
-        # rho = Ndot * M * injection / (Omega * r^2 * v)
-        cloud_density = (Ndot_cloud * M_cloud * injection_function / 
-                        (Omwind * r_use**2 * v_cloud_cms))
-        
-        # Convert to hydrogen number density using mu_cool
-        n_H = cloud_density / (mu_cool * mp)
-        
-        # Calculate velocity gradient
-        grad_v = np.gradient(v_cloud_cms, r_use)  # (cm/s) per cm
-        
-        # Calculate dN/dv (following Xinfeng_data line 470)
-        dN_dv_column = np.zeros_like(v_cloud_cms)
-        
-        # Check for positive gradient (normal case)
-        if np.min(grad_v) > 0:
-            # Avoid exact zeros
-            grad_v = np.where(grad_v == 0, 1e-30, grad_v)
-            dN_dv_column = n_H / grad_v  # cm^-2 per (cm/s)
-            
-        else:
-            # Fallback method when gradient becomes negative (Xinfeng_data line 487)
-            # This rebins the data - we'll use a simpler interpolation approach
-            dr = np.gradient(r_use)
-            dN = n_H * dr  # column density increment
-            
-            # Sort by velocity and accumulate
-            sort_idx = np.argsort(v_cloud_cms)
-            v_sorted = v_cloud_cms[sort_idx]
-            dN_sorted = dN[sort_idx]
-            
-            # Create velocity bins
-            n_bins = max(10, len(v_cloud_cms) // 8)
-            v_bins = np.linspace(v_sorted.min(), v_sorted.max(), n_bins)
-            v_centers = 0.5 * (v_bins[:-1] + v_bins[1:])
-            
-            # Bin the column density
-            dN_binned, _ = np.histogram(v_sorted, bins=v_bins, weights=dN_sorted)
-            dv_bins = np.diff(v_bins)
-            dN_dv_binned = dN_binned / dv_bins
-            
-            # Interpolate back to original velocity grid
-            from scipy.interpolate import interp1d
-            f_interp = interp1d(v_centers, dN_dv_binned, 
-                              kind='linear', fill_value=0, bounds_error=False)
-            dN_dv_column = f_interp(v_cloud_cms)
-        
-        # Convert velocity to km/s
-        v_cloud_kms = v_cloud_cms / 1e5
-        # Convert dN/dv from per (cm/s) to per (km/s)
-        dN_dv_column = dN_dv_column * 1e5
-        
-    else:
-        # Sum contributions from all cloud species
-        # Each species has its own velocity evolution, so we need to handle them separately
-        # and then combine onto a common velocity grid
-        
-        # Find velocity range across all species
-        v_min, v_max = np.inf, -np.inf
-        for i in range(solution.model.N_cloud_species):
-            v_cl_i_cms = solution.sol.y[4 + solution.model.N_cloud_species + i, mask]
-            v_min = min(v_min, np.min(v_cl_i_cms))
-            v_max = max(v_max, np.max(v_cl_i_cms))
-        
-        # Create common velocity grid for output
-        n_v_points = np.count_nonzero(mask)
-        v_cloud_cms = np.linspace(v_min, v_max, n_v_points)
-        v_cloud_kms = v_cloud_cms / 1e5
-        dN_dv_column = np.zeros_like(v_cloud_cms)
-        
-        # Calculate dN/dv for each species and interpolate to common grid
-        for i in range(solution.model.N_cloud_species):
-            M_cl_i = solution.sol.y[4 + i, mask]  # grams
-            
-            # Skip if cloud is destroyed
-            if np.max(M_cl_i) < solution.model.config.M_cloud_min:
-                continue
-                
-            v_cl_i_cms = solution.sol.y[4 + solution.model.N_cloud_species + i, mask]  # cm/s
-            Ndot_i = solution.model.Ndot_cloud0[i]
-            
-            # Calculate mass density for this species
-            cloud_density_i = (Ndot_i * M_cl_i * injection_function /
-                             (Omwind * r_use**2 * v_cl_i_cms))
-            
-            # Convert to hydrogen number density
-            n_H_i = cloud_density_i / (mu_cool * mp)
-            
-            # Calculate gradient
-            grad_v_i = np.gradient(v_cl_i_cms, r_use)
-            
-            # Calculate dN/dv for this species
-            if np.min(grad_v_i) > 0:
-                grad_v_i = np.where(grad_v_i == 0, 1e-30, grad_v_i)
-                dN_dv_i = n_H_i / grad_v_i * 1e5  # Convert to per (km/s)
-                
-                # Interpolate to common velocity grid
-                from scipy.interpolate import interp1d
-                if len(np.unique(v_cl_i_cms)) > 1:  # Need at least 2 unique points
-                    f_interp = interp1d(v_cl_i_cms, dN_dv_i, 
-                                      kind='linear', fill_value=0, bounds_error=False)
-                    dN_dv_i_interp = f_interp(v_cloud_cms)
-                else:
-                    dN_dv_i_interp = np.zeros_like(v_cloud_cms)
-            else:
-                # Fallback for negative gradients
-                dr = np.gradient(r_use)
-                dN_i = n_H_i * dr
-                # Distribute uniformly across velocity range of this species
-                total_column = np.sum(dN_i)
-                v_range = v_cl_i_cms.max() - v_cl_i_cms.min()
-                if v_range > 0:
-                    # Create uniform distribution for this species
-                    in_range = (v_cloud_cms >= v_cl_i_cms.min()) & (v_cloud_cms <= v_cl_i_cms.max())
-                    dN_dv_i_interp = np.zeros_like(v_cloud_cms)
-                    dN_dv_i_interp[in_range] = total_column / v_range * 1e5
-                else:
-                    dN_dv_i_interp = np.zeros_like(v_cloud_cms)
-            
-            dN_dv_column += dN_dv_i_interp
-    
-    # Take absolute value (physical column density is positive)
-    dN_dv_column = np.abs(dN_dv_column)
-    
-    return v_cloud_kms, dN_dv_column
+        return _calculate_species_column_density_distribution(
+            solution, cloud_index, mask, r_use, injection_function, Omwind
+        )
+
+    species_distributions = []
+    v_min = np.inf
+    v_max = -np.inf
+    for i in range(solution.model.N_cloud_species):
+        v_i, dN_dv_i = _calculate_species_column_density_distribution(
+            solution, i, mask, r_use, injection_function, Omwind
+        )
+        if v_i.size < 2 or np.max(dN_dv_i) <= 0:
+            continue
+        species_distributions.append((v_i, dN_dv_i))
+        v_min = min(v_min, np.min(v_i))
+        v_max = max(v_max, np.max(v_i))
+
+    if not species_distributions:
+        return np.array([0.0]), np.array([0.0])
+
+    n_v_points = np.count_nonzero(mask)
+    v_cloud_kms = np.linspace(v_min, v_max, n_v_points)
+    dN_dv_total = np.zeros_like(v_cloud_kms)
+    for v_i, dN_dv_i in species_distributions:
+        dN_dv_total += _interpolate_distribution(v_i, dN_dv_i, v_cloud_kms)
+
+    return v_cloud_kms, np.abs(dN_dv_total)
 
 
 def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.0,
@@ -370,16 +376,16 @@ def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.
         injection_power=injection_power
     )
     
-    # Calculate for each species
+    # Calculate for each species on the common velocity grid.
     dN_dv_list = []
     for i in range(solution.model.N_cloud_species):
-        _, dN_dv_i = calculate_column_density_distribution(
+        v_i, dN_dv_i = calculate_column_density_distribution(
             solution, cloud_index=i,
             r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
             injection_radius_kpc=injection_radius_kpc,
             injection_power=injection_power
         )
-        dN_dv_list.append(dN_dv_i)
+        dN_dv_list.append(_interpolate_distribution(v_i, dN_dv_i, v_cloud))
     
     return v_cloud, {
         'total': dN_dv_total,

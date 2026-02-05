@@ -313,11 +313,13 @@ def plot_column_density_distribution(solution, cloud_index=None,
 
         # Plot individual species
         for i, dN_dv_i in enumerate(dN_dv_dict['species']):
-            ax.plot(v_cloud, dN_dv_i, '-', color=cloud_colors[i],
-                   alpha=species_alpha, lw=1)
+            dN_dv_i_plot = np.ma.masked_less_equal(dN_dv_i, 0.0)
+            ax.plot(v_cloud, dN_dv_i_plot, '-', color=cloud_colors[i],
+                    alpha=species_alpha, lw=1)
 
         # Plot total
-        ax.plot(v_cloud, dN_dv_dict['total'], 'k-', lw=1.5, label='Total')
+        dN_dv_total_plot = np.ma.masked_less_equal(dN_dv_dict['total'], 0.0)
+        ax.plot(v_cloud, dN_dv_total_plot, 'k-', lw=1.5, label='Total')
 
         # Add cloud mass colorbar similar to plot_wind_solution
         M_cloud0_log = np.log10(dN_dv_dict['M_cloud0'])
@@ -338,7 +340,8 @@ def plot_column_density_distribution(solution, cloud_index=None,
         fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
 
         # Plot distribution
-        ax.plot(v_cloud, dN_dv_column, 'k-', lw=1.5)
+        dN_dv_plot = np.ma.masked_less_equal(dN_dv_column, 0.0)
+        ax.plot(v_cloud, dN_dv_plot, 'k-', lw=1.5)
 
     # Calculate and show moments if requested
     if show_moments:

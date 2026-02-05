@@ -173,7 +173,12 @@ def Wind_Evo(r, state, params):
     if chi <= 0:
         return np.zeros(4 + 3*N_cloud_species)
 
-    r_cloud = (M_cloud / (4*np.pi/3. * rho_cloud))**(1/3.)
+    # Compute radii only for physically valid cloud masses to avoid
+    # invalid fractional powers during transient integration states.
+    r_cloud = np.zeros_like(M_cloud, dtype=float)
+    valid_radius = M_cloud > 0
+    r_cloud[valid_radius] = (M_cloud[valid_radius] / (4*np.pi/3. * rho_cloud))**(1/3.)
+    r_cloud_safe = np.where(r_cloud > 0, r_cloud, np.inf)
     v_rel = v_wind - v_cloud
     v_turb = f_turb0 * v_rel * chi**TurbulentVelocityChiPower
     T_wind = Pressure/kb * (mu*mp/rho_wind)
@@ -194,16 +199,29 @@ def Wind_Evo(r, state, params):
     # Mass transfer rates (Mdot_loss is negative!)
     # Only calculate for clouds above minimum mass
     cloud_active = M_cloud > M_cloud_min
-    Mdot_grow = np.where(cloud_active,
-                        Mdot_coefficient * 3.0 * M_cloud * v_turb * AreaBoost / (r_cloud * chi) * np.where(ksi < 1, ksi**0.5, ksi**0.25),
-                        0)
-    Mdot_loss = np.where(cloud_active,
-                        Mdot_coefficient * 3.0 * -M_cloud * v_turb_cold / r_cloud,
-                        0)
+    Mdot_grow = np.where(
+        cloud_active,
+        Mdot_coefficient * 3.0 * M_cloud * v_turb * AreaBoost / (r_cloud_safe * chi) *
+        np.where(ksi < 1, ksi**0.5, ksi**0.25),
+        0
+    )
+    Mdot_loss = np.where(
+        cloud_active,
+        Mdot_coefficient * 3.0 * -M_cloud * v_turb_cold / r_cloud_safe,
+        0
+    )
     Mdot_cloud = Mdot_grow + Mdot_loss
 
-    # Density source
-    drhodt = -1.0 * np.sum(number_density_cloud * Mdot_cloud)
+    # Galaxy source terms (SN feedback)
+    if r < r0:
+        Mdot_SN = Mdot_per_Vol
+        Edot_SN = Edot_per_Vol
+    else:
+        Mdot_SN = 0.0
+        Edot_SN = 0.0
+
+    # Density source (galaxy + clouds)
+    drhodt = Mdot_SN - 1.0 * np.sum(number_density_cloud * Mdot_cloud)
 
     # Momentum source
     # Fix: Use v_rel * |v_rel| to preserve sign (drag opposes relative motion)
@@ -211,10 +229,10 @@ def Wind_Evo(r, state, params):
     p_dot_transfer = v_wind*Mdot_grow + v_cloud*Mdot_loss
     dpdt = -1.0 * np.sum(number_density_cloud * (p_dot_transfer + p_dot_ram))
 
-    # Energy source
+    # Energy source (galaxy + clouds + cooling)
     e_dot_cool = 0.0 if (Cooling_Factor == 0) else -(rho_wind/(muH*mp))**2 * Lambda_P_rho((Pressure, rho_wind))
     e_dot_transfer = vBsq_wind*Mdot_grow + vBsq_cl*Mdot_loss
-    dedt = -1.0 * np.sum(number_density_cloud * (e_dot_transfer + p_dot_ram*v_wind)) + e_dot_cool
+    dedt = Edot_SN - 1.0 * np.sum(number_density_cloud * (e_dot_transfer + p_dot_ram*v_wind)) + e_dot_cool
 
     # Metallicity source
     drhoZdt = -1.0 * np.sum(number_density_cloud * (Z_wind*Mdot_grow + Z_cloud*Mdot_loss))
@@ -337,9 +355,9 @@ def Hot_Wind_Evo(r, state, params):
     if abs(sonic_denom) < epsilon:
         sonic_denom = np.sign(sonic_denom) * epsilon
 
-    dv_dr    = (v_wind/r)/sonic_denom * ( 2.0/Mach_sq_wind - 1/(rho_wind*v_wind/r) * (drhodt*(gamma+1)/2. + (gamma-1)*dedt/v_wind**2))
-    drho_dr  = (rho_wind/r)/sonic_denom * ( -2.0 + 1/(rho_wind*v_wind/r) * (drhodt*(gamma+3)/2. + (gamma-1)*dedt/v_wind**2 - drhodt/Mach_sq_wind))
-    dP_dr    = (Pressure/r)*gamma/sonic_denom * ( -2.0 + 1/(rho_wind*v_wind/r) * (drhodt + drhodt * (gamma-1)/2.*Mach_sq_wind + (gamma-1)*Mach_sq_wind*dedt/v_wind**2))
+    dv_dr    = (v_wind/r)/sonic_denom * ( 2.0/Mach_sq_wind - (vc/v_wind)**2 - 1/(rho_wind*v_wind/r) * (drhodt*(gamma+1)/2. + (gamma-1)*dedt/v_wind**2))
+    drho_dr  = (rho_wind/r)/sonic_denom * ( -2.0 + (vc/v_wind)**2 + 1/(rho_wind*v_wind/r) * (drhodt*(gamma+3)/2. + (gamma-1)*dedt/v_wind**2 - drhodt/Mach_sq_wind))
+    dP_dr    = (Pressure/r)*gamma/sonic_denom * ( -2.0 + (vc/v_wind)**2 + 1/(rho_wind*v_wind/r) * (drhodt + drhodt * (gamma-1)/2.*Mach_sq_wind + (gamma-1)*Mach_sq_wind*dedt/v_wind**2))
 
     return np.r_[dv_dr, drho_dr, dP_dr]
 
@@ -814,4 +832,3 @@ def create_progress_event(params, r_start, r_interval, progress_callback, r_max)
     progress_event.terminal = False
     progress_event.direction = 0  # No direction checking
     return progress_event
-

@@ -175,7 +175,7 @@ def tcool_P(T: Union[float, np.ndarray], P: Union[float, np.ndarray], metallicit
     T : float or array
         Temperature [K]
     P : float or array
-        Pressure [dyne/cm^2]
+        Thermal pressure divided by Boltzmann constant, P/k_B [K cm^-3]
     metallicity : float
         Metallicity relative to solar
     redshift : float
@@ -190,8 +190,14 @@ def tcool_P(T: Union[float, np.ndarray], P: Union[float, np.ndarray], metallicit
     """
     global _tcool_cache, _tcool_cache_size, _MAX_CACHE_SIZE
     
-    # For caching, we need scalar values
-    is_scalar = np.isscalar(T) and np.isscalar(P)
+    # For caching, we need all inputs to be scalar-like.
+    is_scalar = (
+        np.isscalar(T) and
+        np.isscalar(P) and
+        np.ndim(metallicity) == 0 and
+        np.ndim(redshift) == 0 and
+        np.ndim(mu) == 0
+    )
     cache_key = None
     
     if is_scalar:
@@ -223,7 +229,16 @@ def tcool_P(T: Union[float, np.ndarray], P: Union[float, np.ndarray], metallicit
     
     # Use Lambda interpolator with redshift
     lambda_val = Lambda((np.log10(nH), np.log10(T), metallicity, redshift))
-    result = 1.5 * (muH/mu) * kb * T / (nH_actual * lambda_val)
+    denominator = nH_actual * lambda_val
+    with np.errstate(divide='ignore', invalid='ignore'):
+        result = 1.5 * (muH/mu) * kb * T / denominator
+
+    # Return +inf for exactly zero denominator without raising warnings.
+    if np.isscalar(result):
+        if denominator == 0:
+            result = np.inf
+    else:
+        result = np.where(denominator == 0, np.inf, result)
     
     # Cache the result if scalar and we have a valid cache key
     if is_scalar and cache_key is not None:
@@ -247,7 +262,7 @@ def Lambda_P(T: float, P: float, metallicity: float, redshift: float, mu: float)
     T : float
         Temperature [K]
     P : float
-        Pressure [dyne/cm^2]
+        Thermal pressure divided by Boltzmann constant, P/k_B [K cm^-3]
     metallicity : float
         Metallicity relative to solar
     redshift : float

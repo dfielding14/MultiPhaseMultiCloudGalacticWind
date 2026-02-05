@@ -6,7 +6,7 @@ moments, which are useful for comparing model predictions with observations.
 """
 
 import numpy as np
-from .constants import mp, kb, kpc, Msun, km
+from .constants import mp, kb, kpc, Msun, yr, km
 from .config import get_default_config
 
 # Mean molecular weight for ionized cold gas (following Xinfeng_data)
@@ -173,6 +173,8 @@ def calculate_column_density_distribution(solution, cloud_index=None,
     mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
     r_use = r[mask]
     r_kpc_use = r_kpc[mask]
+    if r_use.size < 2:
+        return np.array([0.0]), np.array([0.0])
     
     # Get injection parameters from model if not provided
     if injection_radius_kpc is None:
@@ -264,7 +266,7 @@ def calculate_column_density_distribution(solution, cloud_index=None,
             v_max = max(v_max, np.max(v_cl_i_cms))
         
         # Create common velocity grid for output
-        n_v_points = len(mask[mask])
+        n_v_points = np.count_nonzero(mask)
         v_cloud_cms = np.linspace(v_min, v_max, n_v_points)
         v_cloud_kms = v_cloud_cms / 1e5
         dN_dv_column = np.zeros_like(v_cloud_cms)
@@ -404,25 +406,43 @@ def calculate_mass_weighted_velocity(solution, r_eval_kpc=10.0):
     v_mass_weighted : float or array
         Mass-weighted velocity [km/s]
     """
-    r_eval_kpc = np.atleast_1d(r_eval_kpc)
-    v_mass_weighted = np.zeros_like(r_eval_kpc)
+    r_eval_kpc = np.atleast_1d(r_eval_kpc).astype(float)
+    v_mass_weighted = np.full_like(r_eval_kpc, np.nan)
+    v_cloud_species = np.atleast_2d(solution.v_cl)
+    M_cloud_species = np.atleast_2d(solution.M_clouds)
+    Ndot_cloud0 = np.atleast_1d(solution.model.Ndot_cloud0)
+
+    injection_radius_kpc = solution.model.config.cold_cloud_injection_radial_extent_frac * solution.model.r_star_kpc
+    injection_power = solution.model.config.cold_cloud_injection_radial_power
     
     for i, r_kpc in enumerate(r_eval_kpc):
         if r_kpc <= solution.r[-1]:
             # Hot phase contribution
             v_hot = np.interp(r_kpc, solution.r, solution.v)
-            rho_hot = np.interp(r_kpc, solution.r, solution.rho)
-            
-            # Cold phase contribution
-            v_cold = np.interp(r_kpc, solution.r, solution.v_cl)
-            M_cloud_tot = np.interp(r_kpc, solution.r, solution.M_cloud_tot)
-            
-            # Mass flux contributions
-            Mdot_hot = 4 * np.pi * (r_kpc * kpc)**2 * rho_hot * v_hot * 1e5
-            Mdot_cold = 4 * np.pi * (r_kpc * kpc)**2 * rho_hot * v_cold * 1e5 * \
-                       M_cloud_tot / np.sum(solution.model.M_cloud0)
-            
-            # Mass-weighted average
-            v_mass_weighted[i] = (Mdot_hot * v_hot + Mdot_cold * v_cold) / (Mdot_hot + Mdot_cold)
+            Mdot_hot = np.interp(r_kpc, solution.r, solution.Mdot)  # Msun/yr
+
+            if r_kpc < injection_radius_kpc:
+                injection_factor = (r_kpc / injection_radius_kpc)**injection_power
+            else:
+                injection_factor = 1.0
+
+            Mdot_cold = 0.0
+            v_cold_numerator = 0.0
+            for j in range(solution.model.N_cloud_species):
+                if j >= v_cloud_species.shape[0] or j >= M_cloud_species.shape[0] or j >= Ndot_cloud0.size:
+                    continue
+
+                v_cl_j = np.interp(r_kpc, solution.r, v_cloud_species[j])  # km/s
+                M_cl_j = np.interp(r_kpc, solution.r, M_cloud_species[j]) * Msun  # g
+                Mdot_cl_j = Ndot_cloud0[j] * injection_factor * M_cl_j / (Msun/yr)  # Msun/yr
+
+                if np.isfinite(Mdot_cl_j) and Mdot_cl_j > 0:
+                    Mdot_cold += Mdot_cl_j
+                    v_cold_numerator += Mdot_cl_j * v_cl_j
+
+            v_cold = v_cold_numerator / Mdot_cold if Mdot_cold > 0 else 0.0
+            Mdot_total = Mdot_hot + Mdot_cold
+            if Mdot_total > 0:
+                v_mass_weighted[i] = (Mdot_hot * v_hot + Mdot_cold * v_cold) / Mdot_total
     
     return v_mass_weighted[0] if len(r_eval_kpc) == 1 else v_mass_weighted

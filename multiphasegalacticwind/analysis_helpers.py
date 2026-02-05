@@ -92,8 +92,8 @@ def Field_Length_mix(state: np.ndarray, config: Optional[WindConfig] = None) -> 
     f_spitzer = 1.0
     kappa = 5.0e-7 * T_mix**2.5
     
-    # Cooling at mixed conditions
-    edot_cool = 1.5 * Pressure / tcool_P(T_mix, Pressure, Z_mix/Z_solar, 0.0, config.mu)
+    # tcool_P expects pressure in P/k_B [K cm^-3]
+    edot_cool = 1.5 * Pressure / tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, config.mu)
     
     return np.sqrt(f_spitzer * kappa * T_mix / np.abs(edot_cool))
 
@@ -141,11 +141,14 @@ def cloud_radius(r: float, state: np.ndarray, config: Optional[WindConfig] = Non
     T_cloud = config.T_cl  # K
     rho_cloud = (config.mu * mp) * Pressure / (kb * T_cloud)  # g/cm^3
     
-    # Cloud radius from mass and density
-    r_cloud = (M_cloud / (4*np.pi/3. * rho_cloud))**(1/3.)
-    
-    # Handle negative or zero masses
-    r_cloud = np.where(M_cloud > 0, r_cloud, 0.0)
+    # Guard against unphysical pressure/temperature states.
+    if rho_cloud <= 0:
+        return np.zeros_like(M_cloud)
+
+    # Cloud radius from mass and density (only for positive masses).
+    r_cloud = np.zeros_like(M_cloud, dtype=float)
+    valid = M_cloud > 0
+    r_cloud[valid] = (M_cloud[valid] / (4*np.pi/3. * rho_cloud))**(1/3.)
     
     return r_cloud
 
@@ -212,8 +215,8 @@ def cloud_ksi(r: float, state: np.ndarray, config: Optional[WindConfig] = None,
     T_mix = np.sqrt(T_wind * T_cl)
     Z_mix = np.sqrt(Z_wind * Z_cloud)
     
-    # Cooling time in mixed layer
-    t_cool_layer = tcool_P(T_mix, Pressure, Z_mix/Z_solar, 0.0, config.mu)
+    # tcool_P expects pressure in P/k_B [K cm^-3]
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, config.mu)
     if np.isscalar(t_cool_layer):
         t_cool_layer = np.full_like(M_cloud, t_cool_layer)
     
@@ -269,7 +272,8 @@ def Cooling_and_Acceleration(r: float, state: np.ndarray,
     M_sonic = v_wind / np.sqrt(cs_sq)
     
     # Cooling rate and time
-    t_cool = tcool_P(T_wind, Pressure, Z_wind/Z_solar, 0.0, config.mu)
+    # tcool_P expects pressure in P/k_B [K cm^-3]
+    t_cool = tcool_P(T_wind, Pressure/kb, Z_wind/Z_solar, 0.0, config.mu)
     edot_cool = 1.5 * Pressure / t_cool if t_cool > 0 else 0.0
     
     # Acceleration terms (simplified - assuming isothermal potential)

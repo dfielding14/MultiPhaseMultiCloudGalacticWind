@@ -20,23 +20,26 @@ Model-level assumptions and scaling arguments should remain consistent with that
 
 ---
 
-## Minimal Repository Contract
-Keep this repository intentionally small.
+## Repository Contract
+Keep this repository lean and purpose-built for model development.
 
-Root should contain only:
+Expected top-level project content:
 - `multiphasegalacticwind/` (production package)
-- `tests/` (tests)
+- `tests/` (regression and physics tests)
+- `docs/` (developer/user documentation)
+- `examples/` (usage scripts and optional notebooks)
+- `README.md` (project overview)
 - `AGENTS.md` (this document)
-- `.git/` (version control metadata)
 
 Do **not** add:
-- notebooks,
-- generated figures,
-- fitting outputs,
-- ad-hoc diagnostic scripts,
-- built docs,
+- generated figures or fitting outputs,
+- ad-hoc one-off diagnostics in the project root,
 - temporary reports,
 - cache directories.
+
+Notebook guidance:
+- Notebooks are allowed only under `examples/` when they provide durable instructional value.
+- Keep exploratory scratch notebooks out of version control.
 
 ---
 
@@ -66,9 +69,6 @@ Do **not** add:
 ### Data files
 - `multiphasegalacticwind/data/Lambda_tab_redshifts.npz`
   - Cooling lookup table consumed by `cooling.py`.
-
-### Legacy/internal files
-- `multiphasegalacticwind/observables_backup.py` and `multiphasegalacticwind/test_first_step.ipynb` exist but are not part of the core API path.
 
 ---
 
@@ -318,4 +318,3 @@ If an output is generated during analysis, keep it out of versioned tree unless 
 - core package code,
 - tests,
 - or this AGENTS document.
-

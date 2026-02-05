@@ -254,7 +254,7 @@ class WindModel:
         # Cloud mass range checks
         if self.M_cloud0[0] <= 0:
             raise ValueError(f"Minimum cloud mass must be positive")
-        if self.M_cloud0[-1] <= self.M_cloud0[0]:
+        if self.N_cloud_species > 1 and self.M_cloud0[-1] <= self.M_cloud0[0]:
             raise ValueError(f"Maximum cloud mass must be greater than minimum")
         
         # Numerical tolerances

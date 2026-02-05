@@ -56,7 +56,7 @@ import matplotlib.pyplot as plt
 **New:**
 ```python
 from multiphasegalacticwind import WindModel, WindConfig
-from multiphasegalacticwind import plot_wind_solution, plot_velocity_distribution
+from multiphasegalacticwind import plot_wind_solution, plot_column_density_distribution
 import numpy as np
 ```
 
@@ -81,7 +81,6 @@ metallicity = 10**-0.5
 ```python
 config = WindConfig(
     mu=0.62,
-    gamma=5/3,
     f_turb0=0.1,
     drag_coeff=0.5,
     metallicity=10**-0.5
@@ -169,7 +168,7 @@ axes[0,0].set_ylabel('v [km/s]')
 **New:** Built-in plotting functions
 ```python
 fig, axes = plot_wind_solution(solution)
-fig, ax = plot_velocity_distribution(solution)
+fig, ax = plot_column_density_distribution(solution)
 ```
 
 ## Common Migration Issues
@@ -243,6 +242,7 @@ plt.show()
 ### New Package
 ```python
 # New approach
+import matplotlib.pyplot as plt
 from multiphasegalacticwind import WindModel, WindConfig, plot_wind_solution
 
 # Configure and run
@@ -275,9 +275,6 @@ config = WindConfig(
 
 ### Observables
 ```python
-# Calculate velocity distribution
-v_cloud, dN_dv = solution.calculate_velocity_distribution()
-
 # Column density distribution
 v_cloud, dN_dv_col = solution.calculate_column_density_distribution()
 
@@ -291,7 +288,7 @@ moments = solution.calculate_velocity_moments()
 2. **Check Units**: The new API handles conversions, don't convert twice
 3. **Use Config**: Put all physics parameters in WindConfig
 4. **Leverage Built-ins**: Use provided plotting and analysis functions
-5. **No Backward Compatibility**: The package uses clean design patterns
+5. **Prefer Canonical Names**: Some legacy aliases exist (for example `eta_M_cold_tot`), but use the canonical API names in new code
 
 ## Need Help?
 

@@ -2,7 +2,7 @@
 MultiPhase MultiCloud Galactic Wind Model
 
 A Python package for simulating multiphase galactic winds with embedded clouds.
-Based on Fielding & Bryan (2024).
+Based on Fielding et al. (2022, ApJ 924, 82).
 """
 
 from .wind_model import WindModel

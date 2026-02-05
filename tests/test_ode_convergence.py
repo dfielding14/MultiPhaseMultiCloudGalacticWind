@@ -169,6 +169,29 @@ def test_known_parameter_outcomes():
     assert solution_good.v[-1] > 500.0, f"Final velocity too low: {solution_good.v[-1]:.0f} km/s"
 
 
+def test_single_cloud_species_supported():
+    """Test that N_cloud_species=1 is a valid configuration."""
+
+    from multiphasegalacticwind import WindModel
+
+    model = WindModel(
+        SFR=8.0,
+        v_circ=120.0,
+        eta_M=0.2,
+        eta_M_cold=0.1,
+        eta_E=1.0,
+        N_cloud_species=1,
+        cloud_mass_range=(100.0, 1e5),
+        r_max_kpc=5.0,
+        rtol=1e-6,
+        atol=1e-8,
+    )
+
+    solution = model.run()
+    assert solution.r[-1] > 3.0, "Single-species run should integrate to at least 3 kpc"
+    assert solution.M_clouds.shape[0] == 1, "Solution should contain exactly one cloud species"
+
+
 if __name__ == "__main__":
     test_ode_convergence()
     print("✓ ODE convergence test passed")
@@ -178,5 +201,8 @@ if __name__ == "__main__":
     
     test_known_parameter_outcomes()
     print("✓ Known parameter outcomes test passed")
+
+    test_single_cloud_species_supported()
+    print("✓ Single cloud species test passed")
     
     print("\nAll validation tests passed!")

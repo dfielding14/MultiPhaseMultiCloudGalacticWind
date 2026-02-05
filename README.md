@@ -9,9 +9,11 @@ Primary paper:
 - [Fielding et al. 2022, ApJ, 924, 82](https://ui.adsabs.harvard.edu/abs/2022ApJ...924...82F/abstract)
 
 ## Repository Layout
-This repository is intentionally minimal:
+Repository structure:
 - `multiphasegalacticwind/` - production code
 - `tests/` - regression/physics tests
+- `docs/` - parameter and migration documentation
+- `examples/` - runnable scripts and notebooks
 - `AGENTS.md` - engineering + physics implementation guide
 - `README.md` - project overview and quick usage
 
@@ -92,9 +94,19 @@ From repository root:
 PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider
 ```
 
+## Running Examples
+From repository root:
+
+```bash
+python examples/simple_example.py
+python examples/column_density_example.py
+python examples/comprehensive_example.py
+python examples/config_customization_example.py
+python examples/event_diagnostics_example.py
+```
+
 ## Development Priorities
 - Keep implementations concise and explicit.
 - Document assumptions and units at API boundaries.
 - Prefer physically correct equations over numerically convenient shortcuts.
 - Add/adjust tests whenever changing model behavior.
-

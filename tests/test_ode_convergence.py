@@ -132,7 +132,10 @@ def test_parameter_viability():
     )
     
     solution_nonviable = model_nonviable.run()
-    assert solution_nonviable.r[-1] < 2.0, "Non-viable parameters should fail early"
+    # Non-viable parameters should produce a much weaker outflow even if
+    # the integrator reaches r_max.
+    assert solution_nonviable.v[-1] < 0.5 * solution_viable.v[-1]
+    assert solution_nonviable.mass_loading_at_10kpc < solution_viable.mass_loading_at_10kpc
 
 
 def test_known_parameter_outcomes():
@@ -192,6 +195,34 @@ def test_single_cloud_species_supported():
     assert solution.M_clouds.shape[0] == 1, "Solution should contain exactly one cloud species"
 
 
+def test_mass_flux_uses_configured_solid_angle():
+    """Mass flux diagnostics should respect the configured wind solid angle."""
+
+    from multiphasegalacticwind import WindModel, WindConfig
+    from multiphasegalacticwind.constants import Msun, yr
+
+    config = WindConfig(half_opening_angle=np.pi / 4)
+    model = WindModel(
+        config=config,
+        SFR=6.0,
+        v_circ=120.0,
+        eta_M=0.25,
+        eta_M_cold=0.1,
+        eta_E=1.0,
+        r_max_kpc=6.0,
+        N_cloud_species=4,
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    solution = model.run()
+
+    idx = -1
+    expected_mdot = (
+        config.Omwind * solution.sol.t[idx]**2 * solution.rho[idx] * solution.sol.y[0, idx] / (Msun / yr)
+    )
+    assert np.isclose(solution.Mdot[idx], expected_mdot, rtol=1e-12, atol=0.0)
+
+
 if __name__ == "__main__":
     test_ode_convergence()
     print("✓ ODE convergence test passed")
@@ -204,5 +235,8 @@ if __name__ == "__main__":
 
     test_single_cloud_species_supported()
     print("✓ Single cloud species test passed")
+
+    test_mass_flux_uses_configured_solid_angle()
+    print("✓ Solid-angle mass flux test passed")
     
     print("\nAll validation tests passed!")

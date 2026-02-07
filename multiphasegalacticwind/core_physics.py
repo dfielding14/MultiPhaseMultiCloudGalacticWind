@@ -119,7 +119,6 @@ def Wind_Evo(r, state, params):
     f_turb0 = config_dict['f_turb0']
     Omwind = config_dict['Omwind']
     mu = config_dict['mu']
-    metallicity = config_dict.get('metallicity', 1.0)
     redshift = config_dict.get('redshift', 0.0)
 
     # Use pre-calculated cooling interpolator from params
@@ -161,7 +160,11 @@ def Wind_Evo(r, state, params):
                                         (r/injection_radius)**injection_power,
                                         1.0)
 
-    number_density_cloud = Ndot_cloud / (Omwind * v_cloud * r**2)
+    # Use a physical floor tied to the configured minimum cloud speed to
+    # avoid singular cloud-flux terms near stalled clouds.
+    v_cloud_floor = max(config_dict.get('v_cloud_min', 0.0) * 1e5, 1e-10)
+    v_cloud_safe = np.where(v_cloud > v_cloud_floor, v_cloud, v_cloud_floor)
+    number_density_cloud = Ndot_cloud / (Omwind * v_cloud_safe * r**2)
     cs_cl_sq = gamma * kb * T_cloud / (mu * mp)
     vBsq_cl = 0.5 * v_cloud**2 + (gamma/(gamma-1)) * cs_cl_sq + Phir
 
@@ -180,13 +183,14 @@ def Wind_Evo(r, state, params):
     r_cloud[valid_radius] = (M_cloud[valid_radius] / (4*np.pi/3. * rho_cloud))**(1/3.)
     r_cloud_safe = np.where(r_cloud > 0, r_cloud, np.inf)
     v_rel = v_wind - v_cloud
-    v_turb = f_turb0 * v_rel * chi**TurbulentVelocityChiPower
+    # Turbulent mixing speed should depend on relative-speed magnitude.
+    v_turb = f_turb0 * np.abs(v_rel) * chi**TurbulentVelocityChiPower
     T_wind = Pressure/kb * (mu*mp/rho_wind)
     T_mix = np.sqrt(T_wind * T_cloud)
     Z_mix = np.sqrt(Z_wind * Z_cloud)
 
     # Cooling time with proper handling
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, mu)
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, redshift, mu)
     if np.isscalar(t_cool_layer):
         t_cool_layer = np.full_like(M_cloud, t_cool_layer)
     t_cool_layer = np.where(t_cool_layer < 0, 1e10*Myr, t_cool_layer)
@@ -266,14 +270,14 @@ def Wind_Evo(r, state, params):
                 + 1/(rho_wind*v_wind/r) * (drhodt + drhodt * (gamma-1)/2.*Mach_sq_wind * (1 - 2.0 * Phir/v_wind**2) - dpdt/v_wind + (gamma-1)*Mach_sq_wind*(dedt-v_wind*dpdt)/v_wind**2))
 
     # Cloud gradients - set all to 0 for clouds below minimum mass
-    dM_cloud_dr = np.where(cloud_active, Mdot_cloud / v_cloud, 0)
+    dM_cloud_dr = np.where(cloud_active, Mdot_cloud / v_cloud_safe, 0)
 
     dv_cloud_dr = np.where(cloud_active,
-                          (p_dot_ram + v_rel*Mdot_grow - M_cloud * vc**2/r) / (M_cloud * v_cloud),
+                          (p_dot_ram + v_rel*Mdot_grow - M_cloud * vc**2/r) / (M_cloud * v_cloud_safe),
                           0)
 
     dZ_cloud_dr = np.where(cloud_active,
-                          (Z_wind - Z_cloud) * Mdot_grow / (M_cloud * v_cloud),
+                          (Z_wind - Z_cloud) * Mdot_grow / (M_cloud * v_cloud_safe),
                           0)
 
     # Return derivatives
@@ -544,7 +548,8 @@ def create_cloud_density_low_event(params, density_threshold=1e-50):
         Ndot_cloud = Ndot_cloud0_arr * np.where(r < injection_radius,
                                                (r/injection_radius)**injection_power,
                                                1.0)
-        number_density_cloud = Ndot_cloud / (Omwind * v_cloud * r**2)
+        v_cloud_safe = np.where(v_cloud > 1e-10, v_cloud, 1e-10)
+        number_density_cloud = Ndot_cloud / (Omwind * v_cloud_safe * r**2)
 
         # Only check active clouds
         active_clouds = M_cloud > M_cloud_min
@@ -604,16 +609,25 @@ def create_cloud_velocity_low_event(params):
     """
     config_dict = params[5]
     v_cloud_min_cgs = config_dict['v_cloud_min'] * 1e5  # Convert km/s to cm/s
+    M_cloud_min = config_dict['M_cloud_min']
 
     def cloud_velocity_low(r, state):
         # Determine N_cloud_species from state vector
         N_cloud_species = (len(state) - 4) // 3
+        M_cloud = state[4:4+N_cloud_species]
         v_cloud = state[4+N_cloud_species:4+2*N_cloud_species]
         if N_cloud_species == 1:
+            M_cloud = np.atleast_1d(M_cloud)
             v_cloud = np.atleast_1d(v_cloud)
-        # Return the difference between minimum cloud velocity and the threshold
-        # Negative when any cloud is below threshold
-        return np.min(v_cloud) - v_cloud_min_cgs
+
+        # Only enforce this for physically active clouds.
+        active_clouds = M_cloud > M_cloud_min
+        if not np.any(active_clouds):
+            return 1.0
+
+        # Return the difference between minimum active-cloud velocity and threshold.
+        # Negative when any active cloud is below threshold.
+        return np.min(v_cloud[active_clouds]) - v_cloud_min_cgs
 
     cloud_velocity_low.terminal = True
     cloud_velocity_low.direction = -1
@@ -740,41 +754,35 @@ def create_step_size_event(params, min_relative_step=1e-8, n_small_steps=100):
     step_size_event : function
         Event function that triggers when integration is stuck
     """
-    import time
-    from .constants import kpc
-
-    # Use a class to properly encapsulate state for each instance
+    # Use a class to properly encapsulate state for each instance.
+    # This implementation is deterministic and uses radial progress only
+    # (no wall-clock dependence).
     class StepSizeMonitor:
         def __init__(self):
             self.last_r = None
             self.small_step_count = 0
-            self.total_steps = 0
-            self.start_time = None
-            self.last_check_r = None
 
         def __call__(self, r, y):
             """Check if integration is making progress."""
-            self.total_steps += 1
+            if self.last_r is None:
+                self.last_r = r
+                return 1.0
 
-            # Initialize timer on first call
-            if self.start_time is None:
-                self.start_time = time.time()
-                self.last_check_r = r
-                return 1.0  # OK on first call
+            dr = abs(r - self.last_r)
+            scale = max(abs(r), abs(self.last_r), 1.0)
+            rel_step = dr / scale
 
-            # Check progress every 5 seconds
-            elapsed = time.time() - self.start_time
-            if elapsed > 5.0:
-                # Check how far we've progressed
-                progress = abs(r - self.last_check_r) / kpc
-                if progress < 0.001:  # Less than 1 pc progress in 5 seconds
-                    # We're stuck
-                    return 0.0  # Trigger termination
-                # Reset for next check
-                self.start_time = time.time()
-                self.last_check_r = r
+            # Ignore repeated calls at effectively identical radii.
+            if dr > np.finfo(float).eps * scale:
+                if rel_step < min_relative_step:
+                    self.small_step_count += 1
+                else:
+                    self.small_step_count = 0
+                self.last_r = r
 
-            # Always return positive (no termination) unless stuck
+            if self.small_step_count >= n_small_steps:
+                return 0.0
+
             return 1.0
 
     # Create a new instance for this event

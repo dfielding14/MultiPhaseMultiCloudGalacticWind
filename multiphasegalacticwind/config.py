@@ -51,7 +51,8 @@ class WindConfig:
 
         # Wind geometry
         self.half_opening_angle = get_param('half_opening_angle', np.pi/2)
-        self.Omwind = 4*np.pi*(1.0 - np.cos(self.half_opening_angle))
+        # Biconical solid angle saturates at full sphere (4π) for wide cones.
+        self.Omwind = min(4*np.pi*(1.0 - np.cos(self.half_opening_angle)), 4*np.pi)
 
         # Cloud destruction threshold
         self.M_cloud_min = get_param('M_cloud_min', 1e-2*Msun)

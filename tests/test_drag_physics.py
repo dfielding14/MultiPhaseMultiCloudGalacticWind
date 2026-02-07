@@ -214,6 +214,65 @@ def test_drag_zero_relative_velocity():
     assert np.all(np.isfinite(dydt)), "All derivatives should be finite"
 
 
+def test_mass_exchange_depends_on_relative_speed_magnitude():
+    """Cloud mass exchange should depend on |v_rel|, not the sign of v_rel."""
+
+    r = 0.3 * kpc
+    v_circ = 150.0 * 1e5
+    rho_wind = 1e-24
+    P = 1e-10
+    metallicity = 0.3
+
+    M_cloud = 1e33
+    Z_cloud = metallicity
+    T_cloud = 1e4
+
+    # Disable drag to isolate the cloud mass-exchange contribution.
+    config_dict = {
+        'N_cloud_species': 1,
+        'metallicity': metallicity,
+        'redshift': 0.0,
+        'cooling_factor': 0.0,
+        'Cooling_Factor': 0.0,
+        'f_turb0': 0.1,
+        'drag_coeff': 0.0,
+        'M_cloud_min': 0.1 * Msun,
+        'CoolingAreaChiPower': 0.5,
+        'ColdTurbulenceChiPower': -0.5,
+        'TurbulentVelocityChiPower': 0.0,
+        'geometric_factor': 1.0,
+        'Mdot_coefficient': 1.0 / 3.0,
+        'Omwind': 4 * np.pi,
+        'mu': 0.61,
+        'v_cloud_min': 1.0,
+        'sonic_transition_tolerance': 0.01,
+    }
+
+    params = (
+        v_circ, np.array([1e-8]), T_cloud, r, 1.0,
+        config_dict, r, 0.0, 0.0, None
+    )
+
+    # Same |v_rel|, opposite signs.
+    y_wind_faster = np.array([
+        50e5, rho_wind, P, rho_wind * metallicity,
+        M_cloud, 30e5, Z_cloud
+    ])
+    y_cloud_faster = np.array([
+        30e5, rho_wind, P, rho_wind * metallicity,
+        M_cloud, 50e5, Z_cloud
+    ])
+
+    d1 = Wind_Evo(r, y_wind_faster, params)
+    d2 = Wind_Evo(r, y_cloud_faster, params)
+
+    # dM_cloud/dr = Mdot_cloud / v_cloud, so compare recovered Mdot_cloud.
+    assert np.isfinite(d1[4]) and np.isfinite(d2[4])
+    mdot_cloud_1 = d1[4] * y_wind_faster[5]
+    mdot_cloud_2 = d2[4] * y_cloud_faster[5]
+    assert np.isclose(mdot_cloud_1, mdot_cloud_2, rtol=1e-10, atol=0.0)
+
+
 if __name__ == "__main__":
     test_drag_force_sign()
     print("✓ Drag force sign test passed")

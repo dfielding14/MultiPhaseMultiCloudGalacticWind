@@ -6,8 +6,7 @@ moments, which are useful for comparing model predictions with observations.
 """
 
 import numpy as np
-from .constants import mp, kb, kpc, Msun, yr, km
-from .config import get_default_config
+from .constants import mp, kpc, Msun, yr
 
 # Mean molecular weight for ionized cold gas (following Xinfeng_data)
 mu_cool = 1.4  # Mean atomic mass per proton for ionized gas
@@ -27,9 +26,11 @@ def _interpolate_distribution(v_source, y_source, v_target):
     if np.count_nonzero(valid) < 2:
         return np.zeros_like(v_target, dtype=float)
 
-    v_sorted = np.sort(v_source[valid])
-    order = np.argsort(v_source[valid])
-    y_sorted = y_source[valid][order]
+    v_valid = v_source[valid]
+    y_valid = y_source[valid]
+    order = np.argsort(v_valid)
+    v_sorted = v_valid[order]
+    y_sorted = y_valid[order]
 
     v_unique, inv = np.unique(v_sorted, return_inverse=True)
     if v_unique.size < 2:
@@ -41,15 +42,7 @@ def _interpolate_distribution(v_source, y_source, v_target):
     np.add.at(counts, inv, 1.0)
     y_unique = y_accum / np.maximum(counts, 1.0)
 
-    from scipy.interpolate import interp1d
-    interp = interp1d(
-        v_unique, y_unique,
-        kind='linear',
-        fill_value=0.0,
-        bounds_error=False,
-        assume_sorted=True,
-    )
-    y_target = interp(v_target)
+    y_target = np.interp(v_target, v_unique, y_unique, left=0.0, right=0.0)
     return np.where(np.isfinite(y_target), y_target, 0.0)
 
 
@@ -64,7 +57,7 @@ def _calculate_species_column_density_distribution(
     Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]  # number / s
 
     # Exclude extinct-cloud tail points from the mapping.
-    alive = M_cloud >= solution.model.config.M_cloud_min
+    alive = (M_cloud >= solution.model.config.M_cloud_min) & (v_cloud_cms > 0.0)
     if np.count_nonzero(alive) < 2:
         return np.array([0.0]), np.array([0.0])
 
@@ -73,11 +66,13 @@ def _calculate_species_column_density_distribution(
     r_alive = r_use[alive]
     injection_alive = injection_function[alive]
 
-    with np.errstate(divide='ignore', invalid='ignore'):
-        cloud_density = (
-            Ndot_cloud * M_cloud * injection_alive /
-            (Omwind * r_alive**2 * v_cloud_cms)
-        )
+    denom = Omwind * r_alive**2 * v_cloud_cms
+    cloud_density = np.divide(
+        Ndot_cloud * M_cloud * injection_alive,
+        denom,
+        out=np.zeros_like(M_cloud, dtype=float),
+        where=denom > 0.0,
+    )
     n_H = np.where(np.isfinite(cloud_density), cloud_density / (mu_cool * mp), 0.0)
 
     grad_v = np.gradient(v_cloud_cms, r_alive)  # (cm/s) per cm
@@ -163,7 +158,6 @@ def calculate_cloud_density(solution, cloud_index=None,
     
     # Get cloud masses and velocities
     if cloud_index is not None:
-        M_cloud = solution.M_clouds[cloud_index]
         Ndot_cloud = solution.model.Ndot_cloud0[cloud_index]
         v_cloud = solution.sol.y[4 + solution.model.N_cloud_species + cloud_index]  # cm/s
     else:
@@ -182,14 +176,25 @@ def calculate_cloud_density(solution, cloud_index=None,
     
     if cloud_index is not None:
         # Single species
-        cloud_density = (Ndot_cloud * injection_profile / 
-                        (Omwind * r**2 * v_cloud))
+        denom = Omwind * r**2 * v_cloud
+        cloud_density = np.divide(
+            Ndot_cloud * injection_profile,
+            denom,
+            out=np.zeros_like(r, dtype=float),
+            where=denom > 0.0,
+        )
     else:
-        # Sum over all species
-        cloud_density = np.zeros_like(r)
-        for i in range(solution.model.N_cloud_species):
-            cloud_density += (Ndot_cloud[i] * injection_profile / 
-                            (Omwind * r**2 * v_cloud[i]))
+        # Sum over all species using vectorized broadcasting.
+        denom = Omwind * r[np.newaxis, :]**2 * v_cloud
+        cloud_density = np.sum(
+            np.divide(
+                Ndot_cloud[:, np.newaxis] * injection_profile[np.newaxis, :],
+                denom,
+                out=np.zeros_like(denom, dtype=float),
+                where=denom > 0.0,
+            ),
+            axis=0,
+        )
     
     return cloud_density
 
@@ -220,7 +225,7 @@ def calculate_velocity_moments(v_cloud, dN_dv, max_order=3):
     # Calculate raw moments
     raw_moments = []
     for n in range(max_order + 1):
-        moment = np.trapz(dN_dv * v_cloud**n, v_cloud)
+        moment = np.trapezoid(dN_dv * v_cloud**n, v_cloud)
         raw_moments.append(moment)
     
     # Calculate central moments
@@ -324,6 +329,8 @@ def calculate_column_density_distribution(solution, cloud_index=None,
 
     if not species_distributions:
         return np.array([0.0]), np.array([0.0])
+    if v_max <= v_min:
+        return np.array([0.0]), np.array([0.0])
 
     n_v_points = np.count_nonzero(mask)
     v_cloud_kms = np.linspace(v_min, v_max, n_v_points)
@@ -368,28 +375,73 @@ def calculate_column_density_by_species(solution, r_min_kpc=0.05, r_max_kpc=100.
         - 'species': List of dN/dv for each species [cm^-2 / (km/s)]
         - 'M_cloud0': Initial cloud masses for each species [Msun]
     """
-    # Calculate total
-    v_cloud, dN_dv_total = calculate_column_density_distribution(
-        solution, cloud_index=None,
-        r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
-        injection_radius_kpc=injection_radius_kpc,
-        injection_power=injection_power
+    # Get radius array in cm
+    r = solution.sol.t
+    r_kpc = r / kpc
+
+    # Find indices for radius range
+    mask = (r_kpc >= r_min_kpc) & (r_kpc <= r_max_kpc)
+    r_use = r[mask]
+    r_kpc_use = r_kpc[mask]
+    if r_use.size < 2:
+        zeros = np.array([0.0])
+        return zeros, {
+            'total': zeros.copy(),
+            'species': [zeros.copy() for _ in range(solution.model.N_cloud_species)],
+            'M_cloud0': solution.model.M_cloud0 / Msun,
+        }
+
+    # Get injection parameters from model if not provided
+    if injection_radius_kpc is None:
+        r0_kpc = solution.model.r_star_kpc
+        injection_radius_kpc = solution.model.config.cold_cloud_injection_radial_extent_frac * r0_kpc
+    if injection_power is None:
+        injection_power = solution.model.config.cold_cloud_injection_radial_power
+
+    injection_function = np.where(
+        r_kpc_use < injection_radius_kpc,
+        (r_kpc_use / injection_radius_kpc)**injection_power,
+        1.0,
     )
-    
-    # Calculate for each species on the common velocity grid.
-    dN_dv_list = []
+    Omwind = solution.model.config.Omwind
+
+    species_native = []
+    v_min = np.inf
+    v_max = -np.inf
     for i in range(solution.model.N_cloud_species):
-        v_i, dN_dv_i = calculate_column_density_distribution(
-            solution, cloud_index=i,
-            r_min_kpc=r_min_kpc, r_max_kpc=r_max_kpc,
-            injection_radius_kpc=injection_radius_kpc,
-            injection_power=injection_power
+        v_i, dN_dv_i = _calculate_species_column_density_distribution(
+            solution, i, mask, r_use, injection_function, Omwind
         )
+        species_native.append((v_i, dN_dv_i))
+        if v_i.size >= 2 and np.max(dN_dv_i) > 0:
+            v_min = min(v_min, np.min(v_i))
+            v_max = max(v_max, np.max(v_i))
+
+    if not np.isfinite(v_min) or not np.isfinite(v_max):
+        zeros = np.array([0.0])
+        return zeros, {
+            'total': zeros.copy(),
+            'species': [zeros.copy() for _ in range(solution.model.N_cloud_species)],
+            'M_cloud0': solution.model.M_cloud0 / Msun,
+        }
+    if v_max <= v_min:
+        zeros = np.array([0.0])
+        return zeros, {
+            'total': zeros.copy(),
+            'species': [zeros.copy() for _ in range(solution.model.N_cloud_species)],
+            'M_cloud0': solution.model.M_cloud0 / Msun,
+        }
+
+    n_v_points = np.count_nonzero(mask)
+    v_cloud = np.linspace(v_min, v_max, n_v_points)
+    dN_dv_list = []
+    for v_i, dN_dv_i in species_native:
         dN_dv_list.append(_interpolate_distribution(v_i, dN_dv_i, v_cloud))
-    
+
+    dN_dv_total = np.sum(np.vstack(dN_dv_list), axis=0)
     return v_cloud, {
-        'total': dN_dv_total,
-        'species': dN_dv_list,
+        'total': np.abs(dN_dv_total),
+        'species': [np.abs(arr) for arr in dN_dv_list],
         'M_cloud0': solution.model.M_cloud0 / Msun
     }
 

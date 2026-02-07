@@ -9,11 +9,8 @@ This module handles all cooling-related calculations including:
 
 import numpy as np
 import os
-import time
 from scipy import interpolate
-import h5py
-import glob
-from typing import Optional, Tuple, Union, Dict, Any
+from typing import Tuple, Union
 from .constants import *
 
 # Global cooling table data (initialized on first use)
@@ -133,29 +130,26 @@ def get_cooling_interpolator(mu: float, metallicity: float, redshift: float, ver
         # Get the main cooling interpolator
         Lambda = get_lambda_interpolator()
             
-        Ps = np.logspace(-8, 10, 100)
-        rhos = np.logspace(-10, 5, 101) * mu * mp
-        Lambda_P_rho_tab = np.zeros((len(Ps), len(rhos)))
-        
-        for i in range(len(Ps)):
-            for j in range(len(rhos)):
-                rho = rhos[j]
-                T = Ps[i] * (mu * mp / rho)
-                if rho > 1 * muH * mp:
-                    rho = 1. * muH * mp
-                elif rho < 1e-8 * muH * mp:
-                    rho = 1e-8 * muH * mp
-                if T > 10**8.98:
-                    T = 10**8.98
-                elif T < 1e2:
-                    T = 1e2
-                try:
-                    Lambda_P_rho_tab[i,j] = Lambda((np.log10(rho/(muH*mp)), np.log10(T), metallicity, redshift))
-                except (ValueError, IndexError) as e:
-                    # Interpolation can fail at boundaries
-                    Lambda_P_rho_tab[i,j] = 1e-30
-            if verbose and i % 10 == 0:
-                print(f"  Progress: {i}/{len(Ps)}")
+        Ps = np.logspace(-8, 10, 100)  # P/k_B [K cm^-3]
+        rhos = np.logspace(-10, 5, 101) * mu * mp  # [g cm^-3]
+
+        # Build a full (P, rho) grid and evaluate Lambda in one interpolator call.
+        # This avoids Python-loop overhead when building cooling tables.
+        P_grid, rho_grid = np.meshgrid(Ps, rhos, indexing='ij')
+        T_grid = P_grid * (mu * mp / rho_grid)
+        rho_clip = np.clip(rho_grid, 1e-8 * muH * mp, 1.0 * muH * mp)
+        T_clip = np.clip(T_grid, 1e2, 10**8.98)
+
+        interp_points = np.stack(
+            (
+                np.log10(rho_clip / (muH * mp)),
+                np.log10(T_clip),
+                np.full_like(T_clip, metallicity),
+                np.full_like(T_clip, redshift),
+            ),
+            axis=-1,
+        )
+        Lambda_P_rho_tab = np.asarray(Lambda(interp_points), dtype=float)
                 
         _Lambda_P_rho = interpolate.RegularGridInterpolator(
             (Ps * kb, rhos), Lambda_P_rho_tab, 

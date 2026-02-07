@@ -93,7 +93,7 @@ def Field_Length_mix(state: np.ndarray, config: Optional[WindConfig] = None) -> 
     kappa = 5.0e-7 * T_mix**2.5
     
     # tcool_P expects pressure in P/k_B [K cm^-3]
-    edot_cool = 1.5 * Pressure / tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, config.mu)
+    edot_cool = 1.5 * Pressure / tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, config.redshift, config.mu)
     
     return np.sqrt(f_spitzer * kappa * T_mix / np.abs(edot_cool))
 
@@ -209,14 +209,14 @@ def cloud_ksi(r: float, state: np.ndarray, config: Optional[WindConfig] = None,
     v_rel = v_wind - v_cloud
     
     # Turbulent velocity
-    v_turb = config.f_turb0 * v_rel * chi**config.TurbulentVelocityChiPower
+    v_turb = config.f_turb0 * np.abs(v_rel) * chi**config.TurbulentVelocityChiPower
     
     # Mixed layer properties
     T_mix = np.sqrt(T_wind * T_cl)
     Z_mix = np.sqrt(Z_wind * Z_cloud)
     
     # tcool_P expects pressure in P/k_B [K cm^-3]
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, 0.0, config.mu)
+    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, config.redshift, config.mu)
     if np.isscalar(t_cool_layer):
         t_cool_layer = np.full_like(M_cloud, t_cool_layer)
     
@@ -273,7 +273,7 @@ def Cooling_and_Acceleration(r: float, state: np.ndarray,
     
     # Cooling rate and time
     # tcool_P expects pressure in P/k_B [K cm^-3]
-    t_cool = tcool_P(T_wind, Pressure/kb, Z_wind/Z_solar, 0.0, config.mu)
+    t_cool = tcool_P(T_wind, Pressure/kb, Z_wind/Z_solar, config.redshift, config.mu)
     edot_cool = 1.5 * Pressure / t_cool if t_cool > 0 else 0.0
     
     # Acceleration terms (simplified - assuming isothermal potential)
@@ -314,31 +314,11 @@ def Gradient_Components(r: float, state: np.ndarray,
     components : dict
         Dictionary containing gradient components for each variable
     """
-    if config is None:
-        config = WindConfig()
-        
-    # This is a diagnostic function - implementation would require
-    # access to the full Wind_Evo function components
-    # For now, return a placeholder
-    return {
-        'dv_dr_components': {
-            'gravity': 0.0,
-            'pressure': 0.0,
-            'drag': 0.0,
-            'mass_loading': 0.0
-        },
-        'drho_dr_components': {
-            'expansion': 0.0,
-            'mass_loading': 0.0,
-            'cooling': 0.0
-        },
-        'dP_dr_components': {
-            'adiabatic': 0.0,
-            'cooling': 0.0,
-            'drag_heating': 0.0,
-            'mixing': 0.0
-        }
-    }
+    raise NotImplementedError(
+        "Gradient_Components is not implemented yet. "
+        "Returning placeholder zeros is intentionally disabled to avoid "
+        "physically misleading diagnostics."
+    )
 
 
 def calculate_cloud_moments(r: float, state: np.ndarray, 
@@ -420,7 +400,7 @@ def calculate_cloud_moments(r: float, state: np.ndarray,
         number_density_cloud = np.where(cloud_exists, typical_density, 0.0)
     
     # Mass flux
-    Mdot_cloud = 4 * np.pi * r**2 * number_density_cloud * M_cloud * v_cloud
+    Mdot_cloud = config.Omwind * r**2 * number_density_cloud * M_cloud * v_cloud
     
     # Calculate moments
     moments = {}

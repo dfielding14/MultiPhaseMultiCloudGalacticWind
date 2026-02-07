@@ -143,7 +143,7 @@ Cloud number density from flux conservation:
 - `rho_cloud = P * (mu * m_p) / (k_B * T_cloud)`
 - `chi = rho_cloud / rho_wind`
 - `v_rel = v_wind - v_cloud`
-- `v_turb = f_turb0 * v_rel * chi^{TurbulentVelocityChiPower}`
+- `v_turb = f_turb0 * |v_rel| * chi^{TurbulentVelocityChiPower}`
 - `T_wind = (P/k_B) * (mu*m_p/rho_wind)`
 - `T_mix = sqrt(T_wind * T_cloud)`
 - `Z_mix = sqrt(Z_wind * Z_cloud)`

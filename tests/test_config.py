@@ -113,6 +113,7 @@ def test_parameter_ranges_and_validation():
         {"sonic_point_offset": 0.0},
         {"solver_max_step_kpc": 0.0},
         {"solver_first_step_kpc": 0.0},
+        {"cooling_backend": "legacy"},
         {"cooling_backend": "invalid"},
     ],
 )

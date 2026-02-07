@@ -48,7 +48,7 @@ class WindConfig:
                                                                         custom_defaults.get('metallicity', 10**-0.5))))
         self.metallicity = self.Z_hot_over_Z_solar  # Keep for backward compatibility
         self.redshift = get_param('redshift', 0.0)  # Redshift for cooling function
-        self.cooling_backend = get_param('cooling_backend', 'topaz')  # {'legacy', 'topaz'}
+        self.cooling_backend = get_param('cooling_backend', 'topaz')  # JAX path currently supports 'topaz'
         self.topaz_cooling_table_path = get_param('topaz_cooling_table_path', None)  # optional CSV override
 
         # Wind geometry
@@ -141,9 +141,9 @@ class WindConfig:
             raise ValueError(f"Z_hot_over_Z_solar must be non-negative, got {self.Z_hot_over_Z_solar}")
         if self.redshift < 0:
             raise ValueError(f"redshift must be non-negative, got {self.redshift}")
-        if self.cooling_backend not in {'legacy', 'topaz'}:
+        if self.cooling_backend not in {'topaz'}:
             raise ValueError(
-                f"cooling_backend must be 'legacy' or 'topaz', got {self.cooling_backend}"
+                f"cooling_backend must be 'topaz' for the JAX solver, got {self.cooling_backend}"
             )
         if self.topaz_cooling_table_path is not None and not isinstance(self.topaz_cooling_table_path, str):
             raise ValueError("topaz_cooling_table_path must be a string path or None")

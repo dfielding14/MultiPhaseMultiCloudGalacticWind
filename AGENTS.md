@@ -215,20 +215,16 @@ Velocity moments are computed from integrals over `dN/dv`.
 ---
 
 ## Numerical Strategy and Termination
-Integration uses `scipy.integrate.solve_ivp` with event-based termination:
-- sonic transitions,
-- wind velocity sign flips,
-- cold-wind transition,
-- cloud density floor,
-- cloud velocity floor,
-- NaN state,
-- negative pressure/density,
-- stuck-step detection.
+Integration uses a JAX-jitted fixed-grid RK4 integrator on a configured radial output grid:
+- multiphase RHS and hot-only RHS are both JAX-native,
+- the active cooling path is Topaz-table interpolation in JAX,
+- trajectory truncation is applied when states become non-finite or unphysical
+  (`v_wind <= 0`, `rho_wind <= 0`, `P <= 0`).
 
 Any new stiff term must include:
 - a physically meaningful limit,
 - a numerical guard,
-- and at least one event or explicit failure condition if it can go singular.
+- and an explicit truncation/validity condition if it can go singular.
 
 ---
 
@@ -245,7 +241,9 @@ Current tests live in `tests/`:
   - consistency of total `dN/dv` vs sum of species contributions
   - finiteness/ordering contracts for species-level distributions
 - `tests/test_config.py`, `tests/test_cooling_simple.py`
-  - legacy/simple regression-style tests
+  - configuration and cooling regression checks
+- `tests/test_jax_solver.py`
+  - JAX solver/Jacobian shape and finiteness checks
 
 Run tests:
 - `PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider`
@@ -286,7 +284,7 @@ Run tests:
 2. Implement with explicit CGS units.
 3. Verify sign for both `v_rel > 0` and `v_rel < 0` if term is directional.
 4. Add near-singular safeguards (but keep correct limiting trend).
-5. Add/adjust event triggers if term can produce unphysical states.
+5. Add/adjust JAX-validity truncation checks if term can produce unphysical states.
 
 ## Adding observables
 1. Define the physical mapping equation (e.g., `dN/dv` transform).
@@ -303,8 +301,8 @@ Run tests:
   - `get_cooling_interpolator` returns interpolator on `(Pressure [dyne/cm^2], rho [g/cm^3])`.
 - Introducing hidden unit conversions in one-line expressions.
 - Adding magic constants without context.
-- Swallowing NaNs silently without a corresponding event or diagnostic.
-- Using backup/legacy modules as canonical code paths.
+- Swallowing NaNs silently without a corresponding truncation condition or diagnostic.
+- Using non-JAX compatibility paths as canonical inference code.
 
 ---
 

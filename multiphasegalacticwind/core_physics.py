@@ -14,7 +14,7 @@ from .constants import *
 # Import cooling functions
 from .cooling import tcool_P
 from .topaz_cooling import (
-    lambda_p_rho_topaz_scalar_numba,
+    lambda_p_rho_topaz_scalar_jax,
     load_cooling_table,
     tcool_P_topaz_vector,
 )
@@ -378,7 +378,7 @@ def Wind_Evo(r, state, params):
     if Cooling_Factor == 0:
         e_dot_cool = 0.0
     elif cooling_backend == 'topaz':
-        lambda_hot = lambda_p_rho_topaz_scalar_numba(
+        lambda_hot = lambda_p_rho_topaz_scalar_jax(
             Pressure,
             rho_wind,
             mu,

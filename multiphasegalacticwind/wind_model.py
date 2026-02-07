@@ -4,21 +4,57 @@ Simple API wrapper for the multiphase galactic wind model.
 This provides a clean interface while preserving all the original physics and units.
 """
 
-import numpy as np
-from scipy.integrate import solve_ivp
 import os
 from typing import Optional, Tuple, Callable, Union, Any, Dict
 
-# Import necessary items from core physics
-from .core_physics import (
-    setup_cloud_powerlaw_distribution, Wind_Evo, Hot_Wind_Evo,
-    create_supersonic_event, create_subsonic_event, create_wind_negative_event,
-    create_cold_wind_event, create_all_clouds_frozen_event,
-    create_cloud_density_low_event, create_cloud_velocity_low_event,
-    create_progress_event, create_step_size_event
+import jax
+import numpy as np
+
+# Enable physically important 64-bit precision for stable ODE integration.
+jax.config.update("jax_enable_x64", True)
+
+from .core_physics import setup_cloud_powerlaw_distribution
+from .jax_physics import (
+    build_jax_wind_params,
+    integrate_hot_wind_rk4_scan,
+    integrate_wind_rk4_scan,
+    jacobian_wind_rhs_state,
 )
 from .constants import *
 from .config import WindConfig
+from .topaz_cooling import load_cooling_table
+
+
+class _LinearDenseOutput:
+    """Lightweight linear dense-output replacement for post-integration queries."""
+
+    def __init__(self, t: np.ndarray, y: np.ndarray) -> None:
+        self.t = np.asarray(t, dtype=float)
+        self.y = np.asarray(y, dtype=float)
+
+    def __call__(self, t_eval: Union[float, np.ndarray]) -> np.ndarray:
+        t_query = np.atleast_1d(np.asarray(t_eval, dtype=float))
+        out = np.vstack([np.interp(t_query, self.t, self.y[i]) for i in range(self.y.shape[0])])
+        if np.ndim(t_eval) == 0:
+            return out[:, 0]
+        return out
+
+
+class _OdeResult:
+    """Minimal solution container mirroring scipy's OdeResult attributes used downstream."""
+
+    def __init__(self, t: np.ndarray, y: np.ndarray, success: bool = True, message: str = "") -> None:
+        self.t = np.asarray(t, dtype=float)
+        self.y = np.asarray(y, dtype=float)
+        self.status = 0 if success else -1
+        self.message = message
+        self.success = success
+        self.t_events = []
+        self.y_events = []
+        self.nfev = 0
+        self.njev = 0
+        self.nlu = 0
+        self.sol = _LinearDenseOutput(self.t, self.y)
 
 
 class WindModel:
@@ -309,242 +345,181 @@ class WindModel:
         """
         Run the wind model and return a Solution object.
         """
-        # Convert units to CGS as expected by the core physics
-        r_star = self.r_star_kpc * kpc
-        v_star_cgs = self.v_star * 1e5  # km/s to cm/s
-        v_circ_cgs = self.v_circ * 1e5
+        if self.config.cooling_backend != "topaz":
+            raise ValueError(
+                "JAX migration currently supports only cooling_backend='topaz'. "
+                f"Got {self.config.cooling_backend!r}."
+            )
 
-        # Use pre-calculated sonic point values
+        r_star = self.r_star_kpc * kpc
+        v_star_cgs = self.v_star * 1e5
+        v_circ_cgs = self.v_circ * 1e5
         rho_star = self.rho_star
         P_star = self.P_star
 
-        # Handle cloud_radial_offset if specified
+        # Energy and mass injection rates.
+        Edot = self.eta_E * (self.config.E_SN / (self.config.mstar * Msun)) * (self.SFR * Msun / yr)
+        Mdot = self.eta_M * (self.SFR * Msun / yr)
+        r0 = r_star
+        source_volume = 4.0 / 3.0 * np.pi * r0**3
+        Edot_per_Vol = Edot / source_volume
+        Mdot_per_Vol = Mdot / source_volume
+
+        # Initial hot state.
+        y0_hot = np.array([v_star_cgs, rho_star, P_star], dtype=float)
+
+        # Use a conservative fixed RK4 cap to maintain moment-level agreement.
+        # solver_max_step_kpc remains an upper bound, and solver_first_step_kpc
+        # seeds a geometric launch ramp for sonic-point stability.
+        effective_step_kpc = min(self.config.solver_max_step_kpc or 0.3, 0.02)
+        first_step_kpc = min(self.config.solver_first_step_kpc or effective_step_kpc, effective_step_kpc)
+
+        def build_r_grid(r_start_val: float, r_end_val: float) -> np.ndarray:
+            points = [float(r_start_val)]
+            h = max(first_step_kpc * kpc, 1e-12 * kpc)
+            h_cap = max(effective_step_kpc * kpc, h)
+
+            # Geometric warm-up near the launch radius to avoid sonic-point blowups.
+            while h < h_cap and points[-1] + h < r_end_val:
+                points.append(points[-1] + h)
+                h = min(h * 2.0, h_cap)
+
+            current = points[-1]
+            if current >= r_end_val:
+                return np.asarray(points, dtype=float)
+
+            n_uniform = max(1, int(np.ceil((r_end_val - current) / h_cap)))
+            tail = np.linspace(current, r_end_val, n_uniform + 1, dtype=float)[1:]
+            return np.concatenate([np.asarray(points, dtype=float), tail])
+
+        # Handle cloud radial offset by integrating hot-only to the offset radius.
         if self.config.cloud_radial_offset > 0:
-            # First run hot-only solution to get conditions at offset radius
             r_start_offset = r_star * (1.0 + self.config.cloud_radial_offset)
-
-            # Hot-only initial conditions
-            y0_hot = np.array([v_star_cgs, rho_star, P_star])
-
-            # Source term parameters for hot wind
-            Edot = self.eta_E * (self.config.E_SN / (self.config.mstar * Msun)) * (self.SFR * Msun/yr)  # erg/s
-            Mdot = self.eta_M * (self.SFR * Msun/yr)  # g/s
-            r0 = r_star
-            source_volume = 4./3. * np.pi * r0**3
-            Edot_per_Vol = Edot / source_volume
-            Mdot_per_Vol = Mdot / source_volume
-            params_hot = (v_circ_cgs, True, r0, Edot_per_Vol, Mdot_per_Vol)
-
-            # Integrate hot-only solution to offset radius
-            sol_hot_offset = solve_ivp(
-                lambda r, y: Hot_Wind_Evo(r, y, params_hot),
-                [r_star, r_start_offset], y0_hot,
-                rtol=self.rtol, atol=self.atol,
-                dense_output=True
+            r_offset_grid = build_r_grid(r_star, r_start_offset)
+            hot_offset_track = np.asarray(
+                integrate_hot_wind_rk4_scan(
+                    r_offset_grid,
+                    y0_hot,
+                    v_circ_cgs,
+                    True,
+                    r0,
+                    Edot_per_Vol,
+                    Mdot_per_Vol,
+                )
             )
-
-            # Extract hot gas conditions at offset radius
-            v_offset = sol_hot_offset.y[0, -1]
-            rho_offset = sol_hot_offset.y[1, -1]
-            P_offset = sol_hot_offset.y[2, -1]
-
-            # Set up initial conditions at offset radius
-            y0 = np.zeros(4 + 3*self.N_cloud_species)
-            y0[0] = v_offset
-            y0[1] = rho_offset
-            y0[2] = P_offset
-            y0[3] = rho_offset * self.config.Z_hot_over_Z_solar * Z_solar  # rhoZ_wind
-            y0[4:4+self.N_cloud_species] = self.M_cloud0  # Already in grams
-            y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
-            y0[4+2*self.N_cloud_species:] = self.config.Z_cloud_over_Z_solar * Z_solar  # Z_cloud array (absolute)
-
-            # Integration span from offset radius
-            r_span = [r_start_offset, self.r_max_kpc * kpc]
-
+            v_offset, rho_offset, P_offset = hot_offset_track[-1]
+            r_start = r_start_offset
         else:
-            # Standard initial conditions at sonic point
-            y0 = np.zeros(4 + 3*self.N_cloud_species)
-            y0[0] = v_star_cgs
-            y0[1] = rho_star
-            y0[2] = P_star
-            y0[3] = rho_star * self.config.Z_hot_over_Z_solar * Z_solar  # rhoZ_wind
-            y0[4:4+self.N_cloud_species] = self.M_cloud0  # Already in grams
-            y0[4+self.N_cloud_species:4+2*self.N_cloud_species] = self.config.v_cloud_init * 1e5  # v_cloud array in cm/s
-            y0[4+2*self.N_cloud_species:] = self.config.Z_cloud_over_Z_solar * Z_solar  # Z_cloud array (absolute)
+            v_offset, rho_offset, P_offset = y0_hot
+            r_start = r_star
 
-            # Integration span from sonic point
-            r_span = [r_star, self.r_max_kpc * kpc]
+        # Build full initial state.
+        y0 = np.zeros(4 + 3 * self.N_cloud_species, dtype=float)
+        y0[0] = v_offset
+        y0[1] = rho_offset
+        y0[2] = P_offset
+        y0[3] = rho_offset * self.config.Z_hot_over_Z_solar * Z_solar
+        y0[4 : 4 + self.N_cloud_species] = self.M_cloud0
+        y0[4 + self.N_cloud_species : 4 + 2 * self.N_cloud_species] = self.config.v_cloud_init * 1e5
+        y0[4 + 2 * self.N_cloud_species :] = self.config.Z_cloud_over_Z_solar * Z_solar
 
-        # Calculate source term parameters
-        # Energy and mass injection rates
-        Edot = self.eta_E * (self.config.E_SN / (self.config.mstar * Msun)) * (self.SFR * Msun/yr)  # erg/s
-        Mdot = self.eta_M * (self.SFR * Msun/yr)  # g/s
+        r_end = self.r_max_kpc * kpc
+        r_grid = build_r_grid(r_start, r_end)
 
-        # Source volume (sphere of radius r_star)
-        r0 = r_star  # injection radius same as sonic radius
-        source_volume = 4./3. * np.pi * r0**3
+        config_dict = self.config.to_dict()
+        topaz_table = load_cooling_table(self.config.topaz_cooling_table_path)
+        config_dict["_topaz_table"] = topaz_table
 
-        # Volume-averaged source terms
-        Edot_per_Vol = Edot / source_volume  # erg/s/cm^3
-        Mdot_per_Vol = Mdot / source_volume  # g/s/cm^3
-
-        # Parameters for Wind_Evo
-        # Calculate injection radius as fraction of r0
         injection_radius = self.config.cold_cloud_injection_radial_extent_frac * r0
         injection_power = self.config.cold_cloud_injection_radial_power
-        config_dict = self.config.to_dict()
 
-        # Pre-calculate cooling callable for efficiency (backend-selectable).
-        if self.config.cooling_backend == 'topaz':
-            from .topaz_cooling import get_lambda_p_rho_callable_topaz, load_cooling_table
-            topaz_table = load_cooling_table(self.config.topaz_cooling_table_path)
-            cooling_interpolator = get_lambda_p_rho_callable_topaz(
-                self.config.mu,
-                self.config.Z_hot_over_Z_solar,
-                table_path=self.config.topaz_cooling_table_path,
-            )
-            # Reuse already-loaded table in Wind_Evo for mixed-layer tcool calls.
-            config_dict['_topaz_table'] = topaz_table
-        elif self.config.cooling_backend == 'legacy':
-            from .cooling import get_cooling_interpolator
-            cooling_interpolator = get_cooling_interpolator(
-                self.config.mu, self.config.Z_hot_over_Z_solar, self.config.redshift
-            )
-        else:
-            raise ValueError(
-                f"Unknown cooling backend: {self.config.cooling_backend}. "
-                "Expected 'legacy' or 'topaz'."
-            )
-
-        # Extended params tuple including source terms and cooling interpolator
-        params = (v_circ_cgs, self.Ndot_cloud0, self.config.T_cl,
-                  injection_radius, injection_power, config_dict,
-                  r0, Edot_per_Vol, Mdot_per_Vol, cooling_interpolator)
-
-        # Check initial Mach number to determine which events to include
-        # Calculate initial Mach number
-        cs_sq_initial = gamma * y0[2] / y0[1]  # gamma * P / rho
-        mach_initial = y0[0] / np.sqrt(cs_sq_initial)
-
-        # Create event functions with params
-        from .core_physics import (create_negative_pressure_event,
-                                   create_negative_density_event,
-                                   create_nan_state_event)
-
-        wind_negative = create_wind_negative_event(params)
-        cold_wind = create_cold_wind_event(params)
-        all_clouds_frozen = create_all_clouds_frozen_event(params)
-        cloud_density_low = create_cloud_density_low_event(params)
-        cloud_velocity_low = create_cloud_velocity_low_event(params)
-        negative_pressure = create_negative_pressure_event(params)
-        negative_density = create_negative_density_event(params)
-        nan_state = create_nan_state_event(params)
-        step_size = create_step_size_event(params, min_relative_step=1e-7, n_small_steps=20)
-
-        # Create list of events - always include these
-        events = [wind_negative,
-                  cold_wind,
-                  all_clouds_frozen,
-                  cloud_density_low,
-                  cloud_velocity_low,
-                  negative_pressure,
-                  negative_density,
-                  nan_state,
-                  step_size]
-
-        # Only add supersonic event if starting subsonic
-        # (Don't need it if already supersonic)
-        if mach_initial < 1.0:
-            supersonic = create_supersonic_event(params)
-            events.insert(0, supersonic)  # Add at beginning for consistency
-
-        # Add subsonic event for all runs starting supersonic
-        if mach_initial > 1.0:
-            subsonic = create_subsonic_event(params)
-            events.insert(0, subsonic)  # Add at beginning for consistency
-
-        # Add progress event if callback provided
-        if self.progress_callback is not None:
-            # Handle special case for 'print' callback
-            if self.progress_callback == 'print':
-                import sys
-                def print_progress(r_current, r_max, n_steps):
-                    percent = 100 * r_current / r_max
-                    print(f"\rProgress: {percent:5.1f}% (r = {r_current/kpc:6.1f} kpc, steps = {n_steps})",
-                          end='', flush=True)
-                    if r_current >= r_max * 0.99:  # Near completion
-                        print()  # New line at end
-                progress_cb = print_progress
-            else:
-                progress_cb = self.progress_callback
-
-            progress_event = create_progress_event(
-                params, r_span[0], self.progress_interval * kpc, progress_cb, r_span[1]
-            )
-            events.append(progress_event)
-
-        # Run the integration with maximum evaluations to prevent hanging
-        try:
-            solve_kwargs = {
-                'rtol': self.rtol,
-                'atol': self.atol,
-                'dense_output': True,
-                'events': events,
-            }
-            if self.config.solver_max_step_kpc is not None:
-                solve_kwargs['max_step'] = self.config.solver_max_step_kpc * kpc
-            if self.config.solver_first_step_kpc is not None:
-                solve_kwargs['first_step'] = self.config.solver_first_step_kpc * kpc
-
-            sol = solve_ivp(
-                lambda r, y: Wind_Evo(r, y, params),
-                r_span, y0,
-                **solve_kwargs,
-            )
-        except ValueError as e:
-            if "`ts` must be strictly increasing or decreasing" in str(e):
-                # Integration got stuck - return a terminated solution
-                print(f"\nWarning: Integration terminated early due to numerical issues at r ≈ {r_span[0]/kpc:.2f} kpc")
-                print(f"  This typically happens with eta_M={self.eta_M:.2f} and eta_M_cold={self.eta_M_cold:.2f}")
-                print(f"  The solution becomes unphysical and cannot continue.")
-
-                # Create a minimal failed solution
-                # Use a simple object that has the required attributes
-                class FailedSolution:
-                    def __init__(self, r0, y0, eta_M, eta_M_cold):
-                        self.t = np.array([r0])
-                        self.y = y0.reshape(-1, 1)
-                        self.status = -1
-                        self.message = f"Integration failed: eta_M={eta_M}, eta_M_cold={eta_M_cold} causes numerical stiffness"
-                        self.success = False
-                        self.t_events = []
-                        self.y_events = []
-                        self.nfev = 0
-                        self.njev = 0
-                        self.nlu = 0
-
-                    def __call__(self, t):
-                        # Return initial conditions for any query
-                        return self.y[:, 0]
-
-                sol = FailedSolution(r_span[0], y0, self.eta_M, self.eta_M_cold)
-            else:
-                raise  # Re-raise if it's a different error
-
-        # Also run hot-only solution for comparison
-        y0_hot = y0[:3].copy()
-        # Include source terms for hot wind
-        params_hot = (v_circ_cgs, True, r0, Edot_per_Vol, Mdot_per_Vol)
-
-        sol_hot = solve_ivp(
-            lambda r, y: Hot_Wind_Evo(r, y, params_hot),
-            r_span, y0_hot,
-            rtol=self.rtol, atol=self.atol,
-            dense_output=True,
-            events=[create_wind_negative_event(params_hot)]
+        jax_params = build_jax_wind_params(
+            v_circ=v_circ_cgs,
+            Ndot_cloud0=self.Ndot_cloud0,
+            T_cloud=self.config.T_cl,
+            injection_radius=injection_radius,
+            injection_power=injection_power,
+            config_dict=config_dict,
+            r0=r0,
+            Edot_per_Vol=Edot_per_Vol,
+            Mdot_per_Vol=Mdot_per_Vol,
+            table_path=self.config.topaz_cooling_table_path,
         )
+        self._last_jax_params = jax_params
+        self._last_r_grid = r_grid.copy()
+        self._last_y0 = y0.copy()
+
+        y_track = np.asarray(integrate_wind_rk4_scan(r_grid, y0, jax_params))
+        finite = np.all(np.isfinite(y_track), axis=1)
+        physical = (y_track[:, 0] > 0.0) & (y_track[:, 1] > 0.0) & (y_track[:, 2] > 0.0)
+        valid = finite & physical
+        invalid_idx = np.where(~valid)[0]
+        if invalid_idx.size > 0:
+            stop = max(2, int(invalid_idx[0]))
+            success = False
+            message = f"JAX integration terminated at r={r_grid[stop-1]/kpc:.2f} kpc due to unphysical state."
+        else:
+            stop = len(r_grid)
+            success = True
+            message = ""
+
+        t_used = r_grid[:stop]
+        y_used = y_track[:stop].T
+        sol = _OdeResult(t_used, y_used, success=success, message=message)
+
+        y0_hot_local = y0[:3].copy()
+        hot_track = np.asarray(
+            integrate_hot_wind_rk4_scan(
+                t_used,
+                y0_hot_local,
+                v_circ_cgs,
+                True,
+                r0,
+                Edot_per_Vol,
+                Mdot_per_Vol,
+            )
+        )
+        sol_hot = _OdeResult(t_used, hot_track.T, success=True, message="")
+
+        if self.progress_callback == "print":
+            print(
+                f"Progress: 100.0% (r = {t_used[-1]/kpc:6.1f} kpc, steps = {len(t_used):d})"
+            )
+        elif callable(self.progress_callback):
+            self.progress_callback(float(t_used[-1]), float(r_end), int(len(t_used)))
 
         return Solution(sol, sol_hot, self)
+
+    def jacobian_rhs(self, r_kpc: float, state: np.ndarray) -> np.ndarray:
+        """
+        Return the Jacobian ∂(dstate/dr)/∂state evaluated at a radius/state.
+
+        Parameters
+        ----------
+        r_kpc : float
+            Radius in kpc.
+        state : array
+            Full multiphase state vector in internal CGS units.
+        """
+        if not hasattr(self, "_last_jax_params"):
+            raise RuntimeError("Run the model once before requesting Jacobians.")
+        jac = jacobian_wind_rhs_state(r_kpc * kpc, np.asarray(state, dtype=float), self._last_jax_params)
+        return np.asarray(jac)
+
+    def run_differentiable(self):
+        """
+        Return the last-run trajectory as a JAX array for autodiff workflows.
+
+        The returned array has shape ``(N_r, N_state)`` and is generated by the
+        JAX RK4 integrator directly.
+        """
+        if not hasattr(self, "_last_jax_params") or not hasattr(self, "_last_r_grid") or not hasattr(self, "_last_y0"):
+            raise RuntimeError("Run the model once before requesting differentiable trajectories.")
+        return integrate_wind_rk4_scan(
+            self._last_r_grid,
+            self._last_y0,
+            self._last_jax_params,
+        )
 
 
 class Solution:

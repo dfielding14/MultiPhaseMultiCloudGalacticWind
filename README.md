@@ -20,12 +20,15 @@ Repository structure:
 ## Core Modules
 - `multiphasegalacticwind/wind_model.py`
   - User API: `WindModel`, `Solution`
-  - Handles setup, ODE integration, event wiring, and output packaging.
+  - Handles setup, JAX ODE integration, Jacobian access, and output packaging.
+- `multiphasegalacticwind/jax_physics.py`
+  - JAX-native multiphase/hot-only RHS functions.
+  - JAX-jitted RK4 integrators and state-Jacobian helper for physical diagnostics/inference.
 - `multiphasegalacticwind/core_physics.py`
   - ODE right-hand sides:
     - `Wind_Evo` (multiphase)
     - `Hot_Wind_Evo` (hot-only baseline)
-  - Cloud mass-bin initialization and event factory functions.
+  - Cloud mass-bin initialization and compatibility/event helper functions.
 - `multiphasegalacticwind/cooling.py`
   - Cooling-table loading and interpolation.
   - Cooling-time utilities (`tcool_P`, `Lambda_P`).
@@ -47,7 +50,7 @@ Key ingredients:
 - Pressure-equilibrium cloud closure (`rho_cloud ~ P/(k_B T_cloud)`).
 - Turbulent mixing-layer coupling and drag-based momentum exchange.
 - Tabulated radiative cooling with pressure/temperature dependent cooling times.
-- Event-driven termination for unphysical states (negative pressure/density, NaNs, stalled integration, etc.).
+- Runtime validity guards for unphysical states (negative pressure/density, NaNs).
 
 For implementation equations and units, see `AGENTS.md`.
 
@@ -78,6 +81,10 @@ solution = model.run()
 
 print(solution.v_at_10kpc)
 print(solution.mass_loading_at_10kpc)
+
+# Local Jacobian of RHS wrt state at launch radius (for physical intuition)
+jac = model.jacobian_rhs(solution.r[0], solution.sol.y[:, 0])
+print(jac.shape)
 ```
 
 Example post-processing:

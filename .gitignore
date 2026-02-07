@@ -1,0 +1,9 @@
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+
+# macOS metadata
+.DS_Store
+
+# Generated example outputs (plots/data artifacts)
+examples/outputs/

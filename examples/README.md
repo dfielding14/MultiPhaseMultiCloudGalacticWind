@@ -6,7 +6,7 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
 - **`simple_example.py`** - Minimal working example
   - Quick test to verify installation
   - Basic model creation and execution
-  - Simple plots saved as PDFs
+  - Simple plots saved to files
 
 ## Research Applications
 - **`comprehensive_example.py`** - Production-style research workflow
@@ -36,8 +36,19 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
   - Adds CLI controls, timing summary, and optional cProfile mode
   - Supports fast profiling via solver-step knobs
 
-- **`cooling_backend_comparison.py`** - Cooling backend + table-reduction study
-  - Compares legacy vs Topaz cooling backends on representative cases
+- **`parameter_dependence_sweep.py`** - Key-parameter dependence maps
+  - Sweeps `eta_M`, `eta_M_cold`, and `eta_E`
+  - Produces 1D trend summaries and 2D slice heatmaps for core observables
+  - Saves raw sweep arrays to `parameter_dependence_data.npz`
+
+- **`autodiff_sensitivity_analysis.py`** - Local JAX-autodiff sensitivity analysis
+  - Uses Jacobians with respect to (`eta_M`, `eta_M_cold`, `eta_E`) at a fiducial model
+  - Produces summary elasticity matrix for `dN/dv` moments (`M0`, `M1`, `M2`), radial sensitivity profiles, and linearization check plots
+  - Writes outputs by default to `examples/outputs/autodiff_sensitivity/`
+  - Saves Jacobian/profile arrays to `autodiff_sensitivity_data.npz`
+
+- **`cooling_backend_comparison.py`** - Topaz table-reduction study
+  - Runs with the JAX+Topaz backend used by the package
   - Explores Topaz table truncation below 3000 K and uniform downsampling
   - Prints runtime and observable deltas for each variant
 
@@ -76,10 +87,12 @@ python examples/config_customization_example.py
 python examples/event_diagnostics_example.py
 python examples/cloud_species_comparison.py
 python examples/m82_multiphase_user_script.py --skip-plots --profile
+python examples/parameter_dependence_sweep.py --quick
+python examples/autodiff_sensitivity_analysis.py
 python examples/cooling_backend_comparison.py
 
 # Jupyter notebooks
 jupyter notebook examples/tutorial_comprehensive.ipynb
 ```
 
-All examples save plots as PDF files rather than displaying them interactively to avoid hanging.
+Examples save plots to files rather than displaying them interactively to avoid hanging.

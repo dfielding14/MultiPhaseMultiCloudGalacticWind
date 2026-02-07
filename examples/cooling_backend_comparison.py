@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Compare legacy vs Topaz cooling backends and explore Topaz table reduction.
-"""
+"""Compare Topaz cooling-table variants under the JAX solver backend."""
 
 from __future__ import annotations
 
@@ -22,12 +20,12 @@ DEFAULT_TOPAZ_TABLE = (
 )
 
 
-def run_case(params: dict, backend: str, table_path: str | None = None) -> dict[str, float]:
+def run_case(params: dict, table_path: str | None = None) -> dict[str, float]:
     model = WindModel(
         **params,
         rtol=1e-6,
         atol=1e-8,
-        cooling_backend=backend,
+        cooling_backend="topaz",
         topaz_cooling_table_path=table_path,
     )
     start = time.perf_counter()
@@ -108,23 +106,7 @@ def main() -> None:
         ),
     ]
 
-    print("Legacy vs Topaz backend comparison")
-    for name, params in cases:
-        legacy = run_case(params, backend="legacy")
-        topaz = run_case(params, backend="topaz")
-        print(f"\nCASE {name}")
-        print(f"  legacy: {legacy}")
-        print(f"  topaz : {topaz}")
-        print(
-            "  delta% topaz-vs-legacy:"
-            f" time={pct_delta(legacy['time_s'], topaz['time_s']):.3f},"
-            f" v10={pct_delta(legacy['v_10kpc_kms'], topaz['v_10kpc_kms']):.3f},"
-            f" eta10={pct_delta(legacy['eta_10kpc'], topaz['eta_10kpc']):.3f},"
-            f" mean={pct_delta(legacy['v_mean_kms'], topaz['v_mean_kms']):.3f},"
-            f" disp={pct_delta(legacy['v_disp_kms'], topaz['v_disp_kms']):.3f}"
-        )
-
-    print("\nTopaz table-reduction exploration")
+    print("Topaz table-reduction exploration (JAX backend)")
     log_t, prim, metal = load_topaz_arrays(DEFAULT_TOPAZ_TABLE)
     log_t_min = np.log10(3000.0)
     trunc_mask = log_t >= log_t_min
@@ -158,7 +140,7 @@ def main() -> None:
         print(f"\nCASE {name}")
         outputs: dict[str, dict[str, float]] = {}
         for variant_name, variant_path in variants:
-            outputs[variant_name] = run_case(params, backend="topaz", table_path=variant_path)
+            outputs[variant_name] = run_case(params, table_path=variant_path)
             print(f"  {variant_name}: {outputs[variant_name]}")
 
         ref = outputs["topaz_full"]

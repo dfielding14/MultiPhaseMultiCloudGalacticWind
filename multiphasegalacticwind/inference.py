@@ -870,12 +870,13 @@ def plot_corner(
     truths: Sequence[float] | None = None,
     map_theta: Sequence[float] | None = None,
 ) -> None:
-    """Create a lightweight corner plot for 3 parameters."""
+    """Create a corner plot with dense 2D occupancy shading for 3 parameters."""
     x = np.asarray(samples_theta, dtype=float)
     if x.ndim != 2 or x.shape[1] != len(labels):
         raise ValueError("samples_theta must have shape (N, D) matching labels")
 
     d = x.shape[1]
+    n_points = x.shape[0]
     fig, axes = plt.subplots(d, d, figsize=(3.1 * d, 3.1 * d), constrained_layout=True)
 
     truths_arr = None if truths is None else np.asarray(truths, dtype=float)
@@ -889,13 +890,40 @@ def plot_corner(
                 continue
 
             if i == j:
-                ax.hist(x[:, j], bins=35, color="tab:blue", alpha=0.8, density=True)
+                ax.hist(x[:, j], bins=45, color="tab:blue", alpha=0.85, density=True)
                 if truths_arr is not None:
                     ax.axvline(truths_arr[j], color="tab:green", lw=1.5, ls="--")
                 if map_arr is not None:
                     ax.axvline(map_arr[j], color="tab:red", lw=1.5)
             else:
-                ax.scatter(x[:, j], x[:, i], s=6, alpha=0.22, color="tab:blue", edgecolors="none")
+                counts, xedges, yedges, _ = ax.hist2d(
+                    x[:, j],
+                    x[:, i],
+                    bins=45,
+                    cmap="Blues",
+                    cmin=1,
+                )
+                if np.any(np.isfinite(counts)) and np.nanmax(counts) > 0.0:
+                    xmid = 0.5 * (xedges[:-1] + xedges[1:])
+                    ymid = 0.5 * (yedges[:-1] + yedges[1:])
+                    level_hi = 0.6 * np.nanmax(counts)
+                    level_mid = 0.3 * np.nanmax(counts)
+                    levels = [lvl for lvl in (level_mid, level_hi) if lvl > 0.0]
+                    if levels:
+                        ax.contour(
+                            xmid,
+                            ymid,
+                            counts.T,
+                            levels=levels,
+                            colors="tab:blue",
+                            linewidths=1.0,
+                        )
+                if n_points > 1200:
+                    idx = np.linspace(0, n_points - 1, 1200, dtype=int)
+                    overlay = x[idx]
+                else:
+                    overlay = x
+                ax.scatter(overlay[:, j], overlay[:, i], s=4, alpha=0.10, color="black", edgecolors="none")
                 if truths_arr is not None:
                     ax.plot(truths_arr[j], truths_arr[i], marker="x", color="tab:green", ms=7, mew=1.5)
                 if map_arr is not None:

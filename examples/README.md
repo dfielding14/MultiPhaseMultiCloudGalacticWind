@@ -47,6 +47,16 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
   - Writes outputs by default to `examples/outputs/autodiff_sensitivity/`
   - Saves Jacobian/profile arrays to `autodiff_sensitivity_data.npz`
 
+- **`fit_observational_moments.py`** - Inference from observed moments
+  - Fits (`eta_M`, `eta_M_cold`, `eta_E`) using MAP + Hessian + multi-chain NUTS in log-parameter space
+  - Accepts observed (`M0`, `M1`, `M2`) plus full error/correlation specification
+  - Saves dense posterior corner plot, moment-fit plot, and posterior sample arrays
+
+- **`inference_case_study.py`** - SFR/size case-study inference sweep
+  - Runs multiple far-ranging galaxy scenarios (dwarf to high-SFR extended systems)
+  - Generates per-case corner plots and degeneracy summaries
+  - Exports aggregate moment-scaling and correlation heatmap diagnostics
+
 - **`cooling_backend_comparison.py`** - Topaz table-reduction study
   - Runs with the JAX+Topaz backend used by the package
   - Explores Topaz table truncation below 3000 K and uniform downsampling
@@ -89,6 +99,8 @@ python examples/cloud_species_comparison.py
 python examples/m82_multiphase_user_script.py --skip-plots --profile
 python examples/parameter_dependence_sweep.py --quick
 python examples/autodiff_sensitivity_analysis.py
+python examples/fit_observational_moments.py --help
+python examples/inference_case_study.py --quick
 python examples/cooling_backend_comparison.py
 
 # Jupyter notebooks

@@ -34,6 +34,9 @@ Repository structure:
   - Cooling-time utilities (`tcool_P`, `Lambda_P`).
 - `multiphasegalacticwind/observables.py`
   - Observable mappings such as `dN/dv` and velocity moments.
+- `multiphasegalacticwind/inference.py`
+  - MAP + Hessian + HMC inference utilities for fitting (`eta_M`, `eta_M_cold`, `eta_E`) to observed (`M0`, `M1`, `M2`).
+  - Corner-plot and moment-fit visualization helpers.
 - `multiphasegalacticwind/config.py`
   - Configurable physics/numerical controls via `WindConfig`.
 - `multiphasegalacticwind/constants.py`
@@ -94,6 +97,28 @@ v, dN_dv = solution.calculate_column_density_distribution()
 moments = solution.calculate_velocity_moments()
 ```
 
+Inference quick-start (fit to observed `M0, M1, M2`):
+
+```python
+import numpy as np
+from multiphasegalacticwind.inference import MomentInferenceModel, build_covariance
+
+model = MomentInferenceModel(sfr=20.0, r_star_kpc=0.3, v_circ=150.0)
+observed = np.array([6.5e19, 2.9e22, 1.5e25])
+cov = build_covariance([0.8e19, 0.4e22, 0.2e25])
+
+fit = model.fit_posterior(
+    observed_moments=observed,
+    covariance_moments=cov,
+    initial_theta=(0.2, 0.2, 1.0),
+    sampler="nuts",
+    num_chains=4,
+    hmc_num_warmup=1000,
+    hmc_num_samples=1500,
+)
+print(fit.map.theta_map)
+```
+
 ## Running Tests
 From repository root:
 
@@ -110,6 +135,8 @@ python examples/column_density_example.py
 python examples/comprehensive_example.py
 python examples/config_customization_example.py
 python examples/event_diagnostics_example.py
+python examples/fit_observational_moments.py --help
+python examples/inference_case_study.py --quick
 ```
 
 ## Development Priorities

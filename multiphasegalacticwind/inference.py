@@ -12,7 +12,14 @@ import numpy as np
 
 from .config import WindConfig
 from .constants import Msun, Z_solar, gamma, kb, kpc, mp, yr
-from .jax_physics import JaxWindParams, integrate_wind_rk4_scan
+from .jax_physics import (
+    JaxWindParams,
+    has_diffrax,
+    integrate_wind_rk2_scan,
+    integrate_wind_rk3_scan,
+    integrate_wind_rk4_scan,
+    integrate_wind_tsit5,
+)
 from .topaz_cooling import get_jax_table_arrays, load_cooling_table
 
 jax.config.update("jax_enable_x64", True)
@@ -94,6 +101,9 @@ class MAPFitResult:
     success: bool
     message: str
     n_iter: int
+    start_index: int
+    num_starts: int
+    unconstrained_theta_map: np.ndarray
     log_theta_map: np.ndarray
     theta_map: np.ndarray
     predicted_moments: np.ndarray
@@ -105,10 +115,13 @@ class MAPFitResult:
     covariance_log: np.ndarray
     covariance_theta: np.ndarray
     correlation_theta: np.ndarray
+    hessian_unconstrained: np.ndarray
+    covariance_unconstrained: np.ndarray
 
 
 @dataclass
 class HMCResult:
+    samples_unconstrained: np.ndarray
     samples_log: np.ndarray
     samples_theta: np.ndarray
     sampler: str
@@ -118,12 +131,21 @@ class HMCResult:
     final_step_size: float
     num_divergent: int
     num_steps_mean: float
+    num_steps_max: float
+    tree_depth_mean: float
     mean_log_posterior: float
+    energy_mean: float
+    energy_var: float
+    potential_energy_mean: float
+    bfmi: float | None
     r_hat: np.ndarray | None
     ess_bulk: np.ndarray | None
     covariance_log: np.ndarray
     covariance_theta: np.ndarray
     correlation_theta: np.ndarray
+    nuts_chain_method: str | None = None
+    num_divergent_per_chain: np.ndarray | None = None
+    bfmi_per_chain: np.ndarray | None = None
 
 
 @dataclass
@@ -146,10 +168,29 @@ def summarize_parameter_degeneracies(correlation_theta: np.ndarray, names: Seque
     return [line for _, line in lines]
 
 
+def resolve_nuts_chain_method(num_chains: int, chain_method: str) -> str:
+    """Resolve NumPyro chain method with a robust auto mode."""
+    method = chain_method.strip().lower()
+    allowed = {"auto", "sequential", "parallel", "vectorized"}
+    if method not in allowed:
+        raise ValueError(f"Unsupported nuts_chain_method '{chain_method}'. Expected one of {sorted(allowed)}.")
+
+    n_chains = max(1, int(num_chains))
+    if method != "auto":
+        return method
+    if n_chains == 1:
+        return "sequential"
+    if jax.local_device_count() >= n_chains:
+        return "parallel"
+    return "vectorized"
+
+
 class MomentInferenceModel:
     """Autodiff-enabled inference model for [M0, M1, M2] observables."""
 
     PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
+    _THETA_FLOOR = 1e-12
+    _ETA_E_MAX = 0.999
 
     def __init__(
         self,
@@ -163,6 +204,10 @@ class MomentInferenceModel:
         n_cloud_species: int = 13,
         cloud_mass_range: tuple[float, float] = (1.0, 1e6),
         cloud_alpha: float = 2.0,
+        integrator_mode: str = "rk4",
+        integrator_rtol: float = 1e-5,
+        integrator_atol: float = 1e-8,
+        integrator_max_steps: int = 131072,
         config: WindConfig | None = None,
         topaz_cooling_table_path: str | None = None,
     ) -> None:
@@ -174,12 +219,27 @@ class MomentInferenceModel:
             raise ValueError("r_max_kpc must exceed r_star_kpc")
         if n_cloud_species < 1:
             raise ValueError("n_cloud_species must be >= 1")
+        if integrator_rtol <= 0.0 or integrator_atol <= 0.0:
+            raise ValueError("integrator_rtol and integrator_atol must be positive")
+        if integrator_max_steps < 8:
+            raise ValueError("integrator_max_steps must be >= 8")
 
         self.sfr = float(sfr)
         self.r_star_kpc = float(r_star_kpc)
         self.v_circ = float(v_circ)
         self.r_max_kpc = float(r_max_kpc)
         self.r_obs_min_kpc = float(r_obs_min_kpc)
+        self.integrator_mode = integrator_mode.strip().lower()
+        self.integrator_rtol = float(integrator_rtol)
+        self.integrator_atol = float(integrator_atol)
+        self.integrator_max_steps = int(integrator_max_steps)
+
+        if self.integrator_mode not in {"rk2", "rk3", "rk4", "tsit5"}:
+            raise ValueError("integrator_mode must be one of {'rk2', 'rk3', 'rk4', 'tsit5'}")
+        if self.integrator_mode == "tsit5" and not has_diffrax():
+            raise ModuleNotFoundError(
+                "integrator_mode='tsit5' requires Diffrax. Install with `python -m pip install diffrax`."
+            )
 
         self.config = WindConfig() if config is None else config
         self.config.validate()
@@ -214,8 +274,75 @@ class MomentInferenceModel:
         self._topaz_arrays = get_jax_table_arrays(table=table)
 
         self._predict_theta_with_valid_fn = self._build_predictor()
-        self._predict_theta_fn = jax.jit(lambda theta: self._predict_theta_with_valid_fn(theta)[0])
-        self._predict_log_theta_fn = jax.jit(lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta)))
+        if self.integrator_mode in {"rk2", "rk3", "rk4"}:
+            self._predict_theta_fn = jax.jit(lambda theta: self._predict_theta_with_valid_fn(theta)[0])
+            self._predict_log_theta_fn = jax.jit(lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta)))
+        else:
+            self._predict_theta_fn = lambda theta: self._predict_theta_with_valid_fn(theta)[0]
+            self._predict_log_theta_fn = lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta))
+
+    @classmethod
+    def _theta_from_unconstrained_jax(cls, unconstrained_theta):
+        """Map unconstrained variables to physical theta with eta_E < 1."""
+        u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
+        eta_m = jax.nn.softplus(u[0]) + cls._THETA_FLOOR
+        eta_m_cold = jax.nn.softplus(u[1]) + cls._THETA_FLOOR
+        eta_e = cls._ETA_E_MAX * jax.nn.sigmoid(u[2]) + cls._THETA_FLOOR
+        return jnp.asarray([eta_m, eta_m_cold, eta_e], dtype=jnp.float64)
+
+    @classmethod
+    def _theta_log_and_dlog_du_jax(cls, unconstrained_theta):
+        """
+        Return theta, log(theta), and dlog(theta)/du on the unconstrained manifold.
+
+        The Jacobian term is used so sampling in unconstrained variables preserves
+        the original prior defined in log(theta) space.
+        """
+        u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
+        sig = jax.nn.sigmoid(u)
+        theta = cls._theta_from_unconstrained_jax(u)
+
+        dtheta_du = jnp.asarray(
+            [
+                sig[0],
+                sig[1],
+                cls._ETA_E_MAX * sig[2] * (1.0 - sig[2]),
+            ],
+            dtype=jnp.float64,
+        )
+        log_theta = jnp.log(theta)
+        dlog_du = dtheta_du / jnp.maximum(theta, cls._THETA_FLOOR)
+        return theta, log_theta, dlog_du
+
+    @classmethod
+    def _unconstrained_from_theta_numpy(cls, theta):
+        """Inverse map for initializing unconstrained optimization/sampling state."""
+        theta_arr = np.asarray(theta, dtype=float)
+        if theta_arr.shape != (3,):
+            raise ValueError("theta must be length-3")
+
+        # Guard against nonphysical values in user-provided initial points.
+        eta_m = np.clip(theta_arr[0], cls._THETA_FLOOR * 10.0, None)
+        eta_m_cold = np.clip(theta_arr[1], cls._THETA_FLOOR * 10.0, None)
+        eta_e = np.clip(theta_arr[2], cls._THETA_FLOOR * 10.0, cls._ETA_E_MAX - 1e-9)
+
+        u = np.zeros(3, dtype=float)
+        u[0] = np.log(np.expm1(max(eta_m - cls._THETA_FLOOR, 1e-12)))
+        u[1] = np.log(np.expm1(max(eta_m_cold - cls._THETA_FLOOR, 1e-12)))
+
+        frac = np.clip((eta_e - cls._THETA_FLOOR) / cls._ETA_E_MAX, 1e-10, 1.0 - 1e-10)
+        u[2] = np.log(frac / (1.0 - frac))
+        return u
+
+    @classmethod
+    def _theta_from_unconstrained_numpy(cls, unconstrained_theta):
+        """NumPy helper for reporting and posterior sample conversion."""
+        u = np.asarray(unconstrained_theta, dtype=float)
+        sig = 1.0 / (1.0 + np.exp(-u))
+        eta_m = np.log1p(np.exp(-np.abs(u[..., 0]))) + np.maximum(u[..., 0], 0.0) + cls._THETA_FLOOR
+        eta_m_cold = np.log1p(np.exp(-np.abs(u[..., 1]))) + np.maximum(u[..., 1], 0.0) + cls._THETA_FLOOR
+        eta_e = cls._ETA_E_MAX * sig[..., 2] + cls._THETA_FLOOR
+        return np.stack([eta_m, eta_m_cold, eta_e], axis=-1)
 
     def _build_predictor(self):
         r_grid = self.r_grid
@@ -234,15 +361,28 @@ class MomentInferenceModel:
         mach0 = 1.0 + float(config.sonic_point_offset)
         injection_radius = float(config.cold_cloud_injection_radial_extent_frac) * r_star
         injection_power = float(config.cold_cloud_injection_radial_power)
+        eta_e_max = self._ETA_E_MAX
 
         r_obs_min_kpc = self.r_obs_min_kpc
         r_obs_max_kpc = self.r_max_kpc
+        r_kpc = r_grid / kpc
+        radial_window_col = ((r_kpc >= r_obs_min_kpc) & (r_kpc <= r_obs_max_kpc))[:, None]
+        injection_profile_col = jnp.where(
+            r_grid < injection_radius,
+            (r_grid / jnp.maximum(injection_radius, 1e-30)) ** injection_power,
+            1.0,
+        )[:, None]
+        solid_angle_r2_col = (config.Omwind * r_grid * r_grid)[:, None]
+        integrator_mode = self.integrator_mode
+        integrator_rtol = self.integrator_rtol
+        integrator_atol = self.integrator_atol
+        integrator_max_steps = self.integrator_max_steps
 
         @jax.jit
         def build_state_and_params(theta):
             eta_m = jnp.maximum(theta[0], 1e-12)
             eta_m_cold = jnp.maximum(theta[1], 1e-12)
-            eta_e = jnp.maximum(theta[2], 1e-12)
+            eta_e = jnp.clip(theta[2], 1e-12, eta_e_max)
 
             mdot_hot = eta_m * sfr_cgs
             edot_hot = eta_e * (config.E_SN / (config.mstar * Msun)) * sfr_cgs
@@ -293,33 +433,63 @@ class MomentInferenceModel:
             )
             return y0, params
 
-        @jax.jit
+        if integrator_mode == "rk2":
+
+            @jax.jit
+            def integrate_state(y0, params):
+                return integrate_wind_rk2_scan(r_grid, y0, params)
+
+        elif integrator_mode == "rk3":
+
+            @jax.jit
+            def integrate_state(y0, params):
+                return integrate_wind_rk3_scan(r_grid, y0, params)
+
+        elif integrator_mode == "rk4":
+
+            @jax.jit
+            def integrate_state(y0, params):
+                return integrate_wind_rk4_scan(r_grid, y0, params)
+
+        else:
+
+            def integrate_state(y0, params):
+                return integrate_wind_tsit5(
+                    r_grid,
+                    y0,
+                    params,
+                    rtol=integrator_rtol,
+                    atol=integrator_atol,
+                    max_steps=integrator_max_steps,
+                )
+
         def predict_theta_with_valid(theta):
             y0, params = build_state_and_params(theta)
-            y = integrate_wind_rk4_scan(r_grid, y0, params)
+            y = integrate_state(y0, params)
 
-            finite = jnp.all(jnp.isfinite(y), axis=1)
-            physical = (y[:, 0] > 0.0) & (y[:, 1] > 0.0) & (y[:, 2] > 0.0)
+            finite_matrix = jnp.isfinite(y)
+            finite = jnp.all(finite_matrix, axis=1)
+            v_wind = y[:, 0]
+            rho_wind = y[:, 1]
+            pressure = y[:, 2]
+            physical = (v_wind > 0.0) & (rho_wind > 0.0) & (pressure > 0.0)
             valid_state = jnp.all(finite & physical)
+            invalid_row = ~(finite & physical)
+            has_invalid = jnp.any(invalid_row)
+            first_invalid_idx = jnp.where(has_invalid, jnp.argmax(invalid_row), y.shape[0] - 1)
+            first_invalid_r = r_grid[first_invalid_idx]
 
             m_cloud = y[:, 4 : 4 + n_species]
             v_cloud = y[:, 4 + n_species : 4 + 2 * n_species]
 
-            injection = jnp.where(
-                r_grid < params.injection_radius,
-                (r_grid / jnp.maximum(params.injection_radius, 1e-30)) ** params.injection_power,
-                1.0,
-            )
-            ndot = params.Ndot_cloud0[None, :] * injection[:, None]
+            ndot = params.Ndot_cloud0[None, :] * injection_profile_col
             v_cloud_safe = jnp.maximum(v_cloud, params.v_cloud_min * 1e5)
-            denom = params.Omwind * (r_grid[:, None] ** 2) * v_cloud_safe
+            denom = solid_angle_r2_col * v_cloud_safe
             rho_cloud = ndot * m_cloud / jnp.maximum(denom, 1e-60)
             n_h = rho_cloud / (1.4 * mp)
 
             active = m_cloud >= params.M_cloud_min
-            r_kpc = r_grid / kpc
-            radial_window = ((r_kpc >= r_obs_min_kpc) & (r_kpc <= r_obs_max_kpc))[:, None]
-            weight = (active & radial_window).astype(jnp.float64)
+            weight = (active & radial_window_col).astype(jnp.float64)
 
             v_kms = v_cloud / 1e5
             n_h_eff = n_h * weight
@@ -332,10 +502,28 @@ class MomentInferenceModel:
             valid_moments = jnp.all(jnp.isfinite(moments)) & jnp.all(moments > 0.0)
             valid = valid_state & valid_moments
 
+            v_scale = jnp.maximum(jnp.abs(y0[0]), 1.0)
+            rho_scale = jnp.maximum(jnp.abs(y0[1]), 1e-30)
+            p_scale = jnp.maximum(jnp.abs(y0[2]), 1e-30)
+            soft_neg_v = jax.nn.softplus(-v_wind / v_scale)
+            soft_neg_rho = jax.nn.softplus(-rho_wind / rho_scale)
+            soft_neg_p = jax.nn.softplus(-pressure / p_scale)
+            finite_violation = jnp.mean(jnp.where(finite_matrix, 0.0, 1.0))
+
+            moments_finite = jnp.nan_to_num(moments, nan=0.0, posinf=1e100, neginf=-1e100)
+            moment_floor = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
+            moment_barrier = jnp.sum(jax.nn.softplus((moment_floor - moments_finite) / moment_floor))
+
+            barrier_value = (
+                jnp.mean(soft_neg_v + soft_neg_rho + soft_neg_p) + 10.0 * finite_violation + moment_barrier
+            )
+
             fallback = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
             moments_safe = jnp.where(valid, moments, fallback)
-            return moments_safe, jnp.where(valid, 1.0, 0.0)
+            return moments_safe, jnp.where(valid, 1.0, 0.0), barrier_value, first_invalid_r
 
+        if integrator_mode in {"rk2", "rk3", "rk4"}:
+            return jax.jit(predict_theta_with_valid)
         return predict_theta_with_valid
 
     def predict_moments(self, theta: Sequence[float]) -> np.ndarray:
@@ -353,10 +541,15 @@ class MomentInferenceModel:
         observed_moments: Sequence[float],
         covariance_moments: np.ndarray,
         prior_mean_log: Sequence[float] | None = None,
-        prior_sigma_log: Sequence[float] = (1.5, 1.5, 1.0),
+        prior_sigma_log: Sequence[float] = (1.5, 1.5, 0.8),
         invalid_penalty: float = 1e6,
     ):
-        """Create JAX-jitted negative log posterior over log-parameters."""
+        """
+        Create JAX-jitted negative log posterior over unconstrained parameters.
+
+        The prior is defined in log(theta) space and transformed to the
+        unconstrained manifold using an explicit Jacobian correction term.
+        """
         y_obs = jnp.asarray(observed_moments, dtype=jnp.float64)
         if y_obs.shape != (3,):
             raise ValueError("observed_moments must be length-3 [M0, M1, M2]")
@@ -365,7 +558,7 @@ class MomentInferenceModel:
         cov_inv = jnp.asarray(np.linalg.inv(cov), dtype=jnp.float64)
 
         if prior_mean_log is None:
-            prior_mean_log_arr = np.log(np.asarray([0.2, 0.2, 1.0], dtype=float))
+            prior_mean_log_arr = np.log(np.asarray([0.2, 0.2, 0.8], dtype=float))
         else:
             prior_mean_log_arr = np.asarray(prior_mean_log, dtype=float)
         prior_sigma_log_arr = np.asarray(prior_sigma_log, dtype=float)
@@ -377,45 +570,75 @@ class MomentInferenceModel:
 
         prior_mean_log_jax = jnp.asarray(prior_mean_log_arr, dtype=jnp.float64)
         prior_sigma_log_jax = jnp.asarray(prior_sigma_log_arr, dtype=jnp.float64)
+        r_max_cgs = float(self.r_max_kpc * kpc)
 
         predict_theta_with_valid = self._predict_theta_with_valid_fn
 
         @jax.jit
-        def nlp(log_theta):
-            theta = jnp.exp(log_theta)
-            moments, valid = predict_theta_with_valid(theta)
+        def nlp(unconstrained_theta):
+            theta, log_theta, dlog_du = self._theta_log_and_dlog_du_jax(unconstrained_theta)
+            moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
             resid = moments - y_obs
             chi2 = resid @ cov_inv @ resid
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
-            penalty = jnp.where(valid > 0.5, 0.0, invalid_penalty)
-            return 0.5 * (chi2 + prior_chi2) + penalty
+            log_jacobian = jnp.sum(jnp.log(jnp.maximum(jnp.abs(dlog_du), 1e-300)))
+            smooth_penalty = 100.0 * barrier_value
+            early_fail_penalty = jnp.where(
+                valid > 0.5,
+                0.0,
+                10.0 * jax.nn.softplus((r_max_cgs - first_invalid_r) / jnp.maximum(r_max_cgs, 1e-30)),
+            )
+            hard_penalty = jnp.where(valid > 0.5, 0.0, invalid_penalty)
+            return 0.5 * (chi2 + prior_chi2) - log_jacobian + smooth_penalty + early_fail_penalty + hard_penalty
 
         return nlp
 
-    def _fit_map_from_nlp(
+    def _fit_map_single_from_nlp(
         self,
         nlp,
         observed_moments: np.ndarray,
         covariance_moments: np.ndarray,
-        initial_theta: Sequence[float],
+        initial_unconstrained_theta: np.ndarray,
         max_iter: int,
         grad_tol: float,
+        start_index: int,
+        num_starts: int,
     ) -> MAPFitResult:
+        """Single-start damped-Newton MAP solve in unconstrained coordinates."""
         value_grad_fn = jax.jit(jax.value_and_grad(nlp))
-        hess_fn = jax.jit(jax.hessian(nlp))
+        grad_fn = jax.jit(jax.grad(nlp))
+        use_fd_hessian = self.integrator_mode == "tsit5"
+        hess_fn = None if use_fd_hessian else jax.jit(jax.hessian(nlp))
 
-        theta0 = np.asarray(initial_theta, dtype=float)
-        if theta0.shape != (3,) or np.any(theta0 <= 0.0):
-            raise ValueError("initial_theta must be positive length-3 array")
+        def compute_hessian(theta_u: np.ndarray) -> np.ndarray:
+            if hess_fn is not None:
+                return np.asarray(hess_fn(jnp.asarray(theta_u, dtype=jnp.float64)), dtype=float)
 
-        log_theta = np.log(theta0)
+            # Diffrax traces in tsit5 mode do not support second-order autodiff.
+            # Use finite differences of first derivatives in the 3D parameter space.
+            u = np.asarray(theta_u, dtype=float)
+            n = u.size
+            h_cols = np.zeros((n, n), dtype=float)
+            for i in range(n):
+                h_i = 1e-3 * max(1.0, abs(u[i]))
+                e_i = np.zeros_like(u)
+                e_i[i] = h_i
+                g_plus = np.asarray(grad_fn(jnp.asarray(u + e_i, dtype=jnp.float64)), dtype=float)
+                g_minus = np.asarray(grad_fn(jnp.asarray(u - e_i, dtype=jnp.float64)), dtype=float)
+                h_cols[:, i] = (g_plus - g_minus) / (2.0 * h_i)
+            return 0.5 * (h_cols + h_cols.T)
+
+        unconstrained_theta = np.asarray(initial_unconstrained_theta, dtype=float)
+        if unconstrained_theta.shape != (3,):
+            raise ValueError("initial_unconstrained_theta must be length-3")
+
         success = False
         message = "Maximum iterations reached before convergence"
         n_iter = 0
 
         for it in range(max_iter):
             n_iter = it + 1
-            val, grad = value_grad_fn(jnp.asarray(log_theta, dtype=jnp.float64))
+            val, grad = value_grad_fn(jnp.asarray(unconstrained_theta, dtype=jnp.float64))
             val = float(val)
             grad = np.asarray(grad, dtype=float)
 
@@ -429,7 +652,7 @@ class MomentInferenceModel:
                 message = "Converged: gradient infinity norm below tolerance"
                 break
 
-            hess = np.asarray(hess_fn(jnp.asarray(log_theta, dtype=jnp.float64)), dtype=float)
+            hess = compute_hessian(unconstrained_theta)
             hess = 0.5 * (hess + hess.T)
             if not np.all(np.isfinite(hess)):
                 hess = np.nan_to_num(hess, nan=0.0, posinf=0.0, neginf=0.0)
@@ -444,19 +667,19 @@ class MomentInferenceModel:
                     damping *= 10.0
                     continue
 
-                candidate = log_theta - step
+                candidate = unconstrained_theta - step
                 cand_val = float(nlp(jnp.asarray(candidate, dtype=jnp.float64)))
                 if np.isfinite(cand_val) and cand_val < val:
-                    log_theta = candidate
+                    unconstrained_theta = candidate
                     accepted = True
                     break
 
                 alpha = 0.5
                 for _ in range(8):
-                    candidate = log_theta - alpha * step
+                    candidate = unconstrained_theta - alpha * step
                     cand_val = float(nlp(jnp.asarray(candidate, dtype=jnp.float64)))
                     if np.isfinite(cand_val) and cand_val < val:
-                        log_theta = candidate
+                        unconstrained_theta = candidate
                         accepted = True
                         break
                     alpha *= 0.5
@@ -470,27 +693,39 @@ class MomentInferenceModel:
                     success = True
                     message = "Converged with zero gradient"
                     break
-                candidate = log_theta - 0.05 * (grad / gnorm)
+                candidate = unconstrained_theta - 0.05 * (grad / gnorm)
                 cand_val = float(nlp(jnp.asarray(candidate, dtype=jnp.float64)))
                 if np.isfinite(cand_val) and cand_val < val:
-                    log_theta = candidate
+                    unconstrained_theta = candidate
                 else:
                     message = "Line search stalled: unable to reduce objective"
                     break
 
-        final_nlp, final_grad = value_grad_fn(jnp.asarray(log_theta, dtype=jnp.float64))
+        final_nlp, final_grad = value_grad_fn(jnp.asarray(unconstrained_theta, dtype=jnp.float64))
         final_nlp = float(final_nlp)
         final_grad = np.asarray(final_grad, dtype=float)
         final_grad_norm = float(np.linalg.norm(final_grad, ord=np.inf))
 
-        hessian_log = np.asarray(hess_fn(jnp.asarray(log_theta, dtype=jnp.float64)), dtype=float)
-        hessian_log = np.nan_to_num(hessian_log, nan=0.0, posinf=0.0, neginf=0.0)
-        hessian_log = stabilize_covariance(hessian_log, min_eig=1e-12)
-        covariance_log = np.linalg.inv(hessian_log)
+        hessian_unconstrained = compute_hessian(unconstrained_theta)
+        hessian_unconstrained = np.nan_to_num(hessian_unconstrained, nan=0.0, posinf=0.0, neginf=0.0)
+        hessian_unconstrained = stabilize_covariance(hessian_unconstrained, min_eig=1e-12)
+        covariance_unconstrained = np.linalg.inv(hessian_unconstrained)
 
-        theta_map = np.exp(log_theta)
-        jac = np.diag(theta_map)
-        covariance_theta = jac @ covariance_log @ jac
+        theta_map_jax, log_theta_map_jax, dlog_du_jax = self._theta_log_and_dlog_du_jax(
+            jnp.asarray(unconstrained_theta, dtype=jnp.float64)
+        )
+        theta_map = np.asarray(theta_map_jax, dtype=float)
+        log_theta_map = np.asarray(log_theta_map_jax, dtype=float)
+        dlog_du = np.asarray(dlog_du_jax, dtype=float)
+
+        jac_log_u = np.diag(dlog_du)
+        covariance_log = jac_log_u @ covariance_unconstrained @ jac_log_u.T
+        covariance_log = stabilize_covariance(covariance_log, min_eig=1e-14)
+        hessian_log = np.linalg.inv(covariance_log)
+
+        jac_theta_log = np.diag(theta_map)
+        covariance_theta = jac_theta_log @ covariance_log @ jac_theta_log
+        covariance_theta = stabilize_covariance(covariance_theta, min_eig=1e-20)
         correlation_theta = covariance_to_correlation(covariance_theta)
 
         predicted = self.predict_moments(theta_map)
@@ -502,7 +737,10 @@ class MomentInferenceModel:
             success=success,
             message=message,
             n_iter=n_iter,
-            log_theta_map=np.asarray(log_theta, dtype=float),
+            start_index=int(start_index),
+            num_starts=int(num_starts),
+            unconstrained_theta_map=np.asarray(unconstrained_theta, dtype=float),
+            log_theta_map=np.asarray(log_theta_map, dtype=float),
             theta_map=np.asarray(theta_map, dtype=float),
             predicted_moments=np.asarray(predicted, dtype=float),
             observed_moments=np.asarray(observed_moments, dtype=float),
@@ -513,19 +751,105 @@ class MomentInferenceModel:
             covariance_log=np.asarray(covariance_log, dtype=float),
             covariance_theta=np.asarray(covariance_theta, dtype=float),
             correlation_theta=np.asarray(correlation_theta, dtype=float),
+            hessian_unconstrained=np.asarray(hessian_unconstrained, dtype=float),
+            covariance_unconstrained=np.asarray(covariance_unconstrained, dtype=float),
         )
+
+    def _build_map_start_points(
+        self,
+        initial_theta: Sequence[float],
+        prior_mean_log: Sequence[float] | None,
+        map_num_starts: int,
+        seed: int,
+    ) -> np.ndarray:
+        """Construct deterministic MAP initial points in unconstrained coordinates."""
+        n_starts = max(1, int(map_num_starts))
+        starts: list[np.ndarray] = [self._unconstrained_from_theta_numpy(np.asarray(initial_theta, dtype=float))]
+
+        prior_theta = (
+            np.exp(np.asarray(prior_mean_log, dtype=float))
+            if prior_mean_log is not None
+            else np.asarray([0.2, 0.2, 0.8], dtype=float)
+        )
+        starts.append(self._unconstrained_from_theta_numpy(prior_theta))
+
+        rng = np.random.default_rng(int(seed))
+        base = starts[0]
+        jitter_scale = np.asarray([0.8, 0.8, 0.7], dtype=float)
+        while len(starts) < n_starts:
+            starts.append(base + rng.normal(loc=0.0, scale=jitter_scale, size=3))
+
+        return np.asarray(starts[:n_starts], dtype=float)
+
+    def _fit_map_from_nlp(
+        self,
+        nlp,
+        observed_moments: np.ndarray,
+        covariance_moments: np.ndarray,
+        initial_theta: Sequence[float],
+        max_iter: int,
+        grad_tol: float,
+        map_num_starts: int,
+        seed: int,
+        prior_mean_log: Sequence[float] | None,
+    ) -> MAPFitResult:
+        """Run multi-start MAP and select the best valid minimum."""
+        starts = self._build_map_start_points(
+            initial_theta=initial_theta,
+            prior_mean_log=prior_mean_log,
+            map_num_starts=map_num_starts,
+            seed=seed,
+        )
+
+        results = [
+            self._fit_map_single_from_nlp(
+                nlp=nlp,
+                observed_moments=observed_moments,
+                covariance_moments=covariance_moments,
+                initial_unconstrained_theta=start,
+                max_iter=max_iter,
+                grad_tol=grad_tol,
+                start_index=i,
+                num_starts=int(starts.shape[0]),
+            )
+            for i, start in enumerate(starts)
+        ]
+
+        finite = np.asarray([np.isfinite(r.nlp) and np.all(np.isfinite(r.theta_map)) for r in results], dtype=bool)
+        pd = np.asarray(
+            [
+                np.all(np.linalg.eigvalsh(0.5 * (r.hessian_unconstrained + r.hessian_unconstrained.T)) > 0.0)
+                for r in results
+            ],
+            dtype=bool,
+        )
+
+        valid_pd = finite & pd
+        selection_mask = valid_pd if np.any(valid_pd) else finite
+        if not np.any(selection_mask):
+            selection_mask = np.ones(len(results), dtype=bool)
+
+        candidate_indices = np.where(selection_mask)[0]
+        best_local_idx = candidate_indices[np.argmin([results[i].nlp for i in candidate_indices])]
+        best = results[int(best_local_idx)]
+
+        quality = "PD minimum" if valid_pd[int(best_local_idx)] else "finite minimum (non-PD Hessian fallback)"
+        best.message = f"{best.message}; selected start {best.start_index + 1}/{best.num_starts} [{quality}]"
+        return best
 
     def fit_map(
         self,
         observed_moments: Sequence[float],
         covariance_moments: np.ndarray,
-        initial_theta: Sequence[float] = (0.2, 0.2, 1.0),
+        initial_theta: Sequence[float] = (0.2, 0.2, 0.8),
         prior_mean_log: Sequence[float] | None = None,
-        prior_sigma_log: Sequence[float] = (1.5, 1.5, 1.0),
+        prior_sigma_log: Sequence[float] = (1.5, 1.5, 0.8),
         max_iter: int = 25,
         grad_tol: float = 1e-5,
+        map_num_starts: int = 4,
+        seed: int = 0,
     ) -> MAPFitResult:
-        """Fit MAP estimate in log-parameter space using damped Newton iterations."""
+        """Fit MAP estimate with multi-start damped-Newton iterations."""
         nlp = self.make_negative_log_posterior(
             observed_moments=observed_moments,
             covariance_moments=covariance_moments,
@@ -539,6 +863,9 @@ class MomentInferenceModel:
             initial_theta=initial_theta,
             max_iter=max_iter,
             grad_tol=grad_tol,
+            map_num_starts=map_num_starts,
+            seed=seed,
+            prior_mean_log=prior_mean_log,
         )
 
     def _sample_hmc_from_nlp(
@@ -621,10 +948,11 @@ class MomentInferenceModel:
                 samples_log.append(q.copy())
                 log_probs.append(-u0)
 
-        samples_log_arr = np.asarray(samples_log, dtype=float)
-        samples_theta = np.exp(samples_log_arr)
+        samples_u_arr = np.asarray(samples_log, dtype=float)
+        samples_theta = self._theta_from_unconstrained_numpy(samples_u_arr)
+        samples_log_arr = np.log(np.maximum(samples_theta, self._THETA_FLOOR))
 
-        if samples_log_arr.shape[0] > 1:
+        if samples_u_arr.shape[0] > 1:
             covariance_log = stabilize_covariance(np.cov(samples_log_arr.T), min_eig=1e-12)
             covariance_theta = stabilize_covariance(np.cov(samples_theta.T), min_eig=1e-12)
         else:
@@ -632,6 +960,7 @@ class MomentInferenceModel:
             covariance_theta = np.eye(3)
 
         return HMCResult(
+            samples_unconstrained=samples_u_arr,
             samples_log=samples_log_arr,
             samples_theta=samples_theta,
             sampler="hmc",
@@ -641,12 +970,21 @@ class MomentInferenceModel:
             final_step_size=float(eps),
             num_divergent=0,
             num_steps_mean=float(leapfrog_steps),
+            num_steps_max=float(leapfrog_steps),
+            tree_depth_mean=float(np.log2(max(leapfrog_steps, 1))),
             mean_log_posterior=float(np.mean(log_probs)) if log_probs else float("nan"),
+            energy_mean=float("nan"),
+            energy_var=float("nan"),
+            potential_energy_mean=float("nan"),
+            bfmi=None,
             r_hat=None,
             ess_bulk=None,
             covariance_log=covariance_log,
             covariance_theta=covariance_theta,
             correlation_theta=covariance_to_correlation(covariance_theta),
+            nuts_chain_method="hmc",
+            num_divergent_per_chain=np.asarray([0], dtype=float),
+            bfmi_per_chain=None,
         )
 
     def _sample_nuts_from_nlp(
@@ -658,6 +996,7 @@ class MomentInferenceModel:
         step_size: float,
         target_accept: float,
         num_chains: int,
+        chain_method: str,
         seed: int,
     ) -> HMCResult:
         """Sample posterior with NumPyro NUTS."""
@@ -670,8 +1009,11 @@ class MomentInferenceModel:
                 "NumPyro is required for sampler='nuts'. Install it with `python -m pip install numpyro`."
             ) from exc
 
+        n_chains = max(1, int(num_chains))
+        resolved_chain_method = resolve_nuts_chain_method(n_chains, chain_method)
+
         def potential_fn(params):
-            return nlp(params["log_theta"])
+            return nlp(params["u_theta"])
 
         nuts_kernel = NUTS(
             potential_fn=potential_fn,
@@ -682,40 +1024,50 @@ class MomentInferenceModel:
             nuts_kernel,
             num_warmup=int(num_warmup),
             num_samples=int(num_samples),
-            num_chains=int(num_chains),
+            num_chains=n_chains,
             progress_bar=False,
-            chain_method="sequential",
+            chain_method=resolved_chain_method,
         )
         rng_key = jax.random.PRNGKey(int(seed))
         init_log = jnp.asarray(initial_log_theta, dtype=jnp.float64)
-        if int(num_chains) > 1:
-            init_log = jnp.broadcast_to(init_log, (int(num_chains), init_log.shape[0]))
+        if n_chains > 1:
+            init_log = jnp.broadcast_to(init_log, (n_chains, init_log.shape[0]))
         mcmc.run(
             rng_key,
-            init_params={"log_theta": init_log},
-            extra_fields=("accept_prob", "num_steps", "diverging"),
+            init_params={"u_theta": init_log},
+            extra_fields=("accept_prob", "num_steps", "diverging", "energy", "potential_energy"),
         )
 
-        samples_by_chain = mcmc.get_samples(group_by_chain=True)["log_theta"]
-        samples_by_chain = np.asarray(samples_by_chain, dtype=float)
-        samples_log = samples_by_chain.reshape(-1, samples_by_chain.shape[-1])
-        samples_theta = np.exp(samples_log)
+        samples_u_by_chain = mcmc.get_samples(group_by_chain=True)["u_theta"]
+        samples_u_by_chain = np.asarray(samples_u_by_chain, dtype=float)
+        samples_unconstrained = samples_u_by_chain.reshape(-1, samples_u_by_chain.shape[-1])
+        samples_theta = self._theta_from_unconstrained_numpy(samples_unconstrained)
+        samples_log = np.log(np.maximum(samples_theta, self._THETA_FLOOR))
 
         extra = mcmc.get_extra_fields(group_by_chain=True)
         accept_prob = np.asarray(extra.get("accept_prob"), dtype=float)
         diverging = np.asarray(extra.get("diverging"), dtype=bool)
         num_steps = np.asarray(extra.get("num_steps"), dtype=float)
+        energy = np.asarray(extra.get("energy"), dtype=float) if "energy" in extra else np.asarray([])
+        potential_energy = (
+            np.asarray(extra.get("potential_energy"), dtype=float) if "potential_energy" in extra else np.asarray([])
+        )
 
-        acceptance_rate_per_chain = np.mean(accept_prob, axis=1) if accept_prob.size else np.full((num_chains,), np.nan)
+        acceptance_rate_per_chain = np.mean(accept_prob, axis=1) if accept_prob.size else np.full((n_chains,), np.nan)
         acceptance_rate = float(np.mean(accept_prob)) if accept_prob.size else float("nan")
         num_divergent = int(np.sum(diverging)) if diverging.size else 0
+        num_divergent_per_chain = (
+            np.sum(diverging, axis=1).astype(float) if diverging.ndim == 2 else np.full((n_chains,), np.nan)
+        )
         num_steps_mean = float(np.mean(num_steps)) if num_steps.size else float("nan")
+        num_steps_max = float(np.max(num_steps)) if num_steps.size else float("nan")
+        tree_depth_mean = float(np.mean(np.log2(np.maximum(num_steps, 1.0)))) if num_steps.size else float("nan")
 
         step_state = getattr(getattr(mcmc.last_state, "adapt_state", None), "step_size", np.nan)
         final_step_size = float(np.mean(np.asarray(step_state, dtype=float)))
 
-        sample_dict = {"log_theta": samples_by_chain}
-        diag = numpyro_summary(sample_dict, group_by_chain=True)["log_theta"]
+        sample_dict = {"u_theta": samples_u_by_chain}
+        diag = numpyro_summary(sample_dict, group_by_chain=True)["u_theta"]
         r_hat = np.asarray(diag.get("r_hat"), dtype=float)
         ess_bulk = np.asarray(diag.get("n_eff"), dtype=float)
 
@@ -727,24 +1079,52 @@ class MomentInferenceModel:
             covariance_theta = np.eye(3)
 
         nlp_batch = jax.vmap(lambda x: nlp(x))
-        mean_log_posterior = float(-jnp.mean(nlp_batch(jnp.asarray(samples_log, dtype=jnp.float64))))
+        mean_log_posterior = float(-jnp.mean(nlp_batch(jnp.asarray(samples_unconstrained, dtype=jnp.float64))))
+
+        if energy.size:
+            energy_mean = float(np.mean(energy))
+            energy_var = float(np.var(energy))
+            deltas = np.diff(energy, axis=1) if energy.ndim == 2 and energy.shape[1] > 1 else np.asarray([])
+            if deltas.size and np.all(np.isfinite(deltas)) and energy_var > 0.0:
+                bfmi_chain = np.mean(deltas * deltas, axis=1) / (np.var(energy, axis=1) + 1e-30)
+                bfmi = float(np.mean(bfmi_chain))
+            else:
+                bfmi_chain = np.full((n_chains,), np.nan)
+                bfmi = float("nan")
+        else:
+            energy_mean = float("nan")
+            energy_var = float("nan")
+            bfmi_chain = np.full((n_chains,), np.nan)
+            bfmi = float("nan")
+
+        potential_energy_mean = float(np.mean(potential_energy)) if potential_energy.size else float("nan")
 
         return HMCResult(
+            samples_unconstrained=samples_unconstrained,
             samples_log=samples_log,
             samples_theta=samples_theta,
             sampler="nuts",
-            num_chains=int(num_chains),
+            num_chains=n_chains,
             acceptance_rate=acceptance_rate,
             acceptance_rate_per_chain=acceptance_rate_per_chain,
             final_step_size=final_step_size,
             num_divergent=num_divergent,
             num_steps_mean=num_steps_mean,
+            num_steps_max=num_steps_max,
+            tree_depth_mean=tree_depth_mean,
             mean_log_posterior=mean_log_posterior,
+            energy_mean=energy_mean,
+            energy_var=energy_var,
+            potential_energy_mean=potential_energy_mean,
+            bfmi=bfmi,
             r_hat=r_hat,
             ess_bulk=ess_bulk,
             covariance_log=covariance_log,
             covariance_theta=covariance_theta,
             correlation_theta=covariance_to_correlation(covariance_theta),
+            nuts_chain_method=resolved_chain_method,
+            num_divergent_per_chain=num_divergent_per_chain,
+            bfmi_per_chain=bfmi_chain,
         )
 
     def _sample_posterior(
@@ -758,6 +1138,7 @@ class MomentInferenceModel:
         leapfrog_steps: int,
         target_accept: float,
         num_chains: int,
+        nuts_chain_method: str,
         seed: int,
         sampler: str,
     ) -> HMCResult:
@@ -772,6 +1153,7 @@ class MomentInferenceModel:
                 step_size=step_size,
                 target_accept=target_accept,
                 num_chains=max(1, int(num_chains)),
+                chain_method=nuts_chain_method,
                 seed=seed,
             )
         if sampler_key == "hmc":
@@ -792,11 +1174,12 @@ class MomentInferenceModel:
         self,
         observed_moments: Sequence[float],
         covariance_moments: np.ndarray,
-        initial_theta: Sequence[float] = (0.2, 0.2, 1.0),
+        initial_theta: Sequence[float] = (0.2, 0.2, 0.8),
         prior_mean_log: Sequence[float] | None = None,
-        prior_sigma_log: Sequence[float] = (1.5, 1.5, 1.0),
+        prior_sigma_log: Sequence[float] = (1.5, 1.5, 0.8),
         map_max_iter: int = 25,
         map_grad_tol: float = 1e-5,
+        map_num_starts: int = 4,
         hmc_num_warmup: int = 250,
         hmc_num_samples: int = 500,
         hmc_step_size: float = 0.02,
@@ -804,6 +1187,7 @@ class MomentInferenceModel:
         hmc_target_accept: float = 0.70,
         sampler: str = "nuts",
         num_chains: int = 1,
+        nuts_chain_method: str = "auto",
         seed: int = 0,
     ) -> PosteriorFitResult:
         """Run MAP + posterior sampling workflow for observed [M0, M1, M2]."""
@@ -821,13 +1205,16 @@ class MomentInferenceModel:
             initial_theta=initial_theta,
             max_iter=map_max_iter,
             grad_tol=map_grad_tol,
+            map_num_starts=map_num_starts,
+            seed=seed + 17,
+            prior_mean_log=prior_mean_log,
         )
 
-        mass_diag = np.diag(stabilize_covariance(map_result.covariance_log, min_eig=1e-10))
+        mass_diag = np.diag(stabilize_covariance(map_result.covariance_unconstrained, min_eig=1e-10))
 
         hmc_result = self._sample_posterior(
             nlp=nlp,
-            initial_log_theta=map_result.log_theta_map,
+            initial_log_theta=map_result.unconstrained_theta_map,
             mass_diag=mass_diag,
             num_warmup=hmc_num_warmup,
             num_samples=hmc_num_samples,
@@ -835,6 +1222,7 @@ class MomentInferenceModel:
             leapfrog_steps=hmc_leapfrog_steps,
             target_accept=hmc_target_accept,
             num_chains=num_chains,
+            nuts_chain_method=nuts_chain_method,
             seed=seed,
             sampler=sampler,
         )
@@ -870,7 +1258,7 @@ def plot_corner(
     truths: Sequence[float] | None = None,
     map_theta: Sequence[float] | None = None,
 ) -> None:
-    """Create a corner plot with dense 2D occupancy shading for 3 parameters."""
+    """Create a corner plot with dense occupancy shading and optional KDE contours."""
     x = np.asarray(samples_theta, dtype=float)
     if x.ndim != 2 or x.shape[1] != len(labels):
         raise ValueError("samples_theta must have shape (N, D) matching labels")
@@ -878,6 +1266,16 @@ def plot_corner(
     d = x.shape[1]
     n_points = x.shape[0]
     fig, axes = plt.subplots(d, d, figsize=(3.1 * d, 3.1 * d), constrained_layout=True)
+    kde_ready = False
+    gaussian_kde = None
+    if n_points >= 1000:
+        try:
+            from scipy.stats import gaussian_kde as scipy_gaussian_kde
+        except Exception:
+            kde_ready = False
+        else:
+            gaussian_kde = scipy_gaussian_kde
+            kde_ready = True
 
     truths_arr = None if truths is None else np.asarray(truths, dtype=float)
     map_arr = None if map_theta is None else np.asarray(map_theta, dtype=float)
@@ -918,6 +1316,36 @@ def plot_corner(
                             colors="tab:blue",
                             linewidths=1.0,
                         )
+                if kde_ready and gaussian_kde is not None:
+                    n_kde = min(n_points, 5000)
+                    idx_kde = np.linspace(0, n_points - 1, n_kde, dtype=int)
+                    xy = np.vstack([x[idx_kde, j], x[idx_kde, i]])
+                    x_min, x_max = float(np.min(xy[0])), float(np.max(xy[0]))
+                    y_min, y_max = float(np.min(xy[1])), float(np.max(xy[1]))
+                    if x_max > x_min and y_max > y_min:
+                        pad_x = 0.05 * (x_max - x_min)
+                        pad_y = 0.05 * (y_max - y_min)
+                        x_eval = np.linspace(x_min - pad_x, x_max + pad_x, 70, dtype=float)
+                        y_eval = np.linspace(y_min - pad_y, y_max + pad_y, 70, dtype=float)
+                        grid_x, grid_y = np.meshgrid(x_eval, y_eval)
+                        try:
+                            kde = gaussian_kde(xy)
+                            grid_z = kde(np.vstack([grid_x.ravel(), grid_y.ravel()])).reshape(grid_x.shape)
+                            z_flat = grid_z[np.isfinite(grid_z)]
+                            if z_flat.size > 0 and np.nanmax(z_flat) > 0.0:
+                                q_levels = np.quantile(z_flat, [0.70, 0.88, 0.97])
+                                q_levels = np.unique(q_levels[q_levels > 0.0])
+                                if q_levels.size > 0:
+                                    ax.contour(
+                                        grid_x,
+                                        grid_y,
+                                        grid_z,
+                                        levels=q_levels,
+                                        colors="navy",
+                                        linewidths=1.1,
+                                    )
+                        except Exception:
+                            pass
                 if n_points > 1200:
                     idx = np.linspace(0, n_points - 1, 1200, dtype=int)
                     overlay = x[idx]

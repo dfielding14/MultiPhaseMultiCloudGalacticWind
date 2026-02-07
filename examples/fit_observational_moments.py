@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--step-kpc", type=float, default=0.02)
     parser.add_argument("--first-step-kpc", type=float, default=1e-12)
+    parser.add_argument("--integrator-mode", choices=["rk2", "rk3", "rk4", "tsit5"], default="rk4")
+    parser.add_argument("--integrator-rtol", type=float, default=1e-5)
+    parser.add_argument("--integrator-atol", type=float, default=1e-8)
+    parser.add_argument("--integrator-max-steps", type=int, default=131072)
 
     parser.add_argument("--map-max-iter", type=int, default=25)
     parser.add_argument("--hmc-warmup", type=int, default=1000)
@@ -60,6 +64,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hmc-target-accept", type=float, default=0.8)
     parser.add_argument("--sampler", choices=["nuts", "hmc"], default="nuts")
     parser.add_argument("--num-chains", type=int, default=4)
+    parser.add_argument(
+        "--nuts-chain-method",
+        choices=["auto", "sequential", "parallel", "vectorized"],
+        default="auto",
+    )
     parser.add_argument("--seed", type=int, default=0)
 
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
@@ -93,6 +102,10 @@ def main() -> None:
         n_cloud_species=args.n_cloud_species,
         cloud_mass_range=(args.cloud_mass_min, args.cloud_mass_max),
         cloud_alpha=args.cloud_alpha,
+        integrator_mode=args.integrator_mode,
+        integrator_rtol=args.integrator_rtol,
+        integrator_atol=args.integrator_atol,
+        integrator_max_steps=args.integrator_max_steps,
     )
 
     fit = model.fit_posterior(
@@ -107,6 +120,7 @@ def main() -> None:
         hmc_target_accept=args.hmc_target_accept,
         sampler=args.sampler,
         num_chains=args.num_chains,
+        nuts_chain_method=args.nuts_chain_method,
         seed=args.seed,
     )
 
@@ -142,6 +156,8 @@ def main() -> None:
     print(f"  sigma(eta_E)      = {theta_std[2]:.5f}")
     print(f"MAP chi2 = {fit.map.chi2:.4f}")
     print(f"Sampler = {fit.hmc.sampler} ({fit.hmc.num_chains} chain(s))")
+    if fit.hmc.sampler == "nuts":
+        print(f"NUTS chain method = {fit.hmc.nuts_chain_method}")
     print(f"Sampler acceptance rate = {fit.hmc.acceptance_rate:.3f}")
     print(f"Divergent transitions = {fit.hmc.num_divergent}")
     if fit.hmc.r_hat is not None:
@@ -175,13 +191,18 @@ def main() -> None:
         "hmc": {
             "sampler": fit.hmc.sampler,
             "num_chains": int(fit.hmc.num_chains),
+            "nuts_chain_method": fit.hmc.nuts_chain_method,
             "acceptance_rate": float(fit.hmc.acceptance_rate),
             "acceptance_rate_per_chain": None
             if fit.hmc.acceptance_rate_per_chain is None
             else fit.hmc.acceptance_rate_per_chain.tolist(),
             "final_step_size": float(fit.hmc.final_step_size),
             "num_divergent": int(fit.hmc.num_divergent),
+            "num_divergent_per_chain": None
+            if fit.hmc.num_divergent_per_chain is None
+            else fit.hmc.num_divergent_per_chain.tolist(),
             "num_steps_mean": float(fit.hmc.num_steps_mean),
+            "bfmi_per_chain": None if fit.hmc.bfmi_per_chain is None else fit.hmc.bfmi_per_chain.tolist(),
             "r_hat": None if fit.hmc.r_hat is None else fit.hmc.r_hat.tolist(),
             "ess_bulk": None if fit.hmc.ess_bulk is None else fit.hmc.ess_bulk.tolist(),
             "covariance_theta": fit.hmc.covariance_theta.tolist(),

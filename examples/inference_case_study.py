@@ -27,7 +27,7 @@ CASES = [
         "sfr": 0.3,
         "r_star_kpc": 0.08,
         "v_circ": 80.0,
-        "theta_true": np.array([0.45, 0.10, 0.90], dtype=float),
+        "theta_true": np.array([0.45, 0.10, 0.12], dtype=float),
         "frac_err": 0.15,
     },
     {
@@ -35,7 +35,7 @@ CASES = [
         "sfr": 3.0,
         "r_star_kpc": 0.30,
         "v_circ": 140.0,
-        "theta_true": np.array([0.25, 0.30, 1.00], dtype=float),
+        "theta_true": np.array([0.25, 0.30, 0.65], dtype=float),
         "frac_err": 0.12,
     },
     {
@@ -43,7 +43,7 @@ CASES = [
         "sfr": 20.0,
         "r_star_kpc": 0.30,
         "v_circ": 150.0,
-        "theta_true": np.array([0.10, 0.20, 1.00], dtype=float),
+        "theta_true": np.array([0.10, 0.20, 0.82], dtype=float),
         "frac_err": 0.10,
     },
     {
@@ -51,7 +51,7 @@ CASES = [
         "sfr": 50.0,
         "r_star_kpc": 0.70,
         "v_circ": 200.0,
-        "theta_true": np.array([0.15, 0.25, 1.00], dtype=float),
+        "theta_true": np.array([0.15, 0.25, 0.95], dtype=float),
         "frac_err": 0.08,
     },
 ]
@@ -62,18 +62,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--seed", type=int, default=42)
 
-    parser.add_argument("--n-cloud-species", type=int, default=11)
+    parser.add_argument("--n-cloud-species", type=int, default=13)
     parser.add_argument("--r-max-kpc", type=float, default=30.0)
-    parser.add_argument("--step-kpc", type=float, default=0.03)
+    parser.add_argument("--step-kpc", type=float, default=0.02)
     parser.add_argument("--first-step-kpc", type=float, default=1e-12)
+    parser.add_argument("--integrator-mode", choices=["rk2", "rk3", "rk4", "tsit5"], default="rk4")
+    parser.add_argument("--integrator-rtol", type=float, default=1e-5)
+    parser.add_argument("--integrator-atol", type=float, default=1e-8)
+    parser.add_argument("--integrator-max-steps", type=int, default=131072)
 
-    parser.add_argument("--hmc-warmup", type=int, default=140)
-    parser.add_argument("--hmc-samples", type=int, default=280)
+    parser.add_argument("--hmc-warmup", type=int, default=700)
+    parser.add_argument("--hmc-samples", type=int, default=1600)
     parser.add_argument("--hmc-step-size", type=float, default=0.02)
     parser.add_argument("--hmc-leapfrog-steps", type=int, default=12)
-    parser.add_argument("--hmc-target-accept", type=float, default=0.8)
+    parser.add_argument("--hmc-target-accept", type=float, default=0.9)
     parser.add_argument("--sampler", choices=["nuts", "hmc"], default="nuts")
     parser.add_argument("--num-chains", type=int, default=4)
+    parser.add_argument(
+        "--nuts-chain-method",
+        choices=["auto", "sequential", "parallel", "vectorized"],
+        default="auto",
+    )
     parser.add_argument("--map-max-iter", type=int, default=25)
 
     parser.add_argument("--quick", action="store_true", help="Use fewer HMC steps for a faster dry run")
@@ -166,6 +175,10 @@ def main() -> None:
             step_kpc=args.step_kpc,
             first_step_kpc=args.first_step_kpc,
             n_cloud_species=args.n_cloud_species,
+            integrator_mode=args.integrator_mode,
+            integrator_rtol=args.integrator_rtol,
+            integrator_atol=args.integrator_atol,
+            integrator_max_steps=args.integrator_max_steps,
         )
 
         theta_true = np.asarray(case["theta_true"], dtype=float)
@@ -188,7 +201,9 @@ def main() -> None:
         fit = model.fit_posterior(
             observed_moments=observed,
             covariance_moments=covariance,
-            initial_theta=(0.2, 0.2, 1.0),
+            initial_theta=(0.2, 0.2, 0.8),
+            prior_mean_log=np.log(np.asarray([0.2, 0.2, 0.7], dtype=float)),
+            prior_sigma_log=(1.4, 1.4, 0.45),
             map_max_iter=args.map_max_iter,
             hmc_num_warmup=args.hmc_warmup,
             hmc_num_samples=args.hmc_samples,
@@ -197,6 +212,7 @@ def main() -> None:
             hmc_target_accept=args.hmc_target_accept,
             sampler=args.sampler,
             num_chains=args.num_chains,
+            nuts_chain_method=args.nuts_chain_method,
             seed=args.seed + 101 * i,
         )
 
@@ -230,6 +246,8 @@ def main() -> None:
             f"{fit.hmc.sampler} acceptance={fit.hmc.acceptance_rate:.3f}, "
             f"divergences={fit.hmc.num_divergent}"
         )
+        if fit.hmc.sampler == "nuts":
+            print(f"  NUTS chain method: {fit.hmc.nuts_chain_method}")
 
         deg_lines = summarize_parameter_degeneracies(fit.hmc.correlation_theta, MomentInferenceModel.PARAM_NAMES)
         for line in deg_lines:

@@ -100,6 +100,25 @@ def _safe_power(base, exponent):
     return jnp.power(jnp.maximum(base, 0.0), exponent)
 
 
+def has_diffrax() -> bool:
+    """Return True when Diffrax is importable for adaptive integration."""
+    try:
+        import diffrax  # noqa: F401
+    except ModuleNotFoundError:
+        return False
+    return True
+
+
+def _load_diffrax():
+    try:
+        import diffrax
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "Diffrax is required for integrator_mode='tsit5'. Install with `python -m pip install diffrax`."
+        ) from exc
+    return diffrax
+
+
 def wind_evo_jax(state, r, params: JaxWindParams):
     """JAX-native multiphase RHS used for integration and autodiff."""
     n_cloud_species = (state.shape[0] - 4) // 3
@@ -404,6 +423,87 @@ def integrate_wind_rk4_scan(r_grid, y0, params: JaxWindParams):
 
 
 @jax.jit
+def integrate_wind_rk2_scan(r_grid, y0, params: JaxWindParams):
+    """Integrate the full multiphase wind with fixed-grid RK2 midpoint."""
+    y0_jax = jnp.asarray(y0, dtype=jnp.float64)
+    r_jax = jnp.asarray(r_grid, dtype=jnp.float64)
+
+    def step(y, inputs):
+        r0, r1 = inputs
+        h = r1 - r0
+        k1 = wind_evo_jax(y, r0, params)
+        k2 = wind_evo_jax(y + 0.5 * h * k1, r0 + 0.5 * h, params)
+        y_next = y + h * k2
+        return y_next, y_next
+
+    _, ys = jax.lax.scan(step, y0_jax, (r_jax[:-1], r_jax[1:]))
+    return jnp.vstack([y0_jax[None, :], ys])
+
+
+@jax.jit
+def integrate_wind_rk3_scan(r_grid, y0, params: JaxWindParams):
+    """Integrate the full multiphase wind with fixed-grid classical RK3."""
+    y0_jax = jnp.asarray(y0, dtype=jnp.float64)
+    r_jax = jnp.asarray(r_grid, dtype=jnp.float64)
+
+    def step(y, inputs):
+        r0, r1 = inputs
+        h = r1 - r0
+        k1 = wind_evo_jax(y, r0, params)
+        k2 = wind_evo_jax(y + 0.5 * h * k1, r0 + 0.5 * h, params)
+        k3 = wind_evo_jax(y - h * k1 + 2.0 * h * k2, r1, params)
+        y_next = y + (h / 6.0) * (k1 + 4.0 * k2 + k3)
+        return y_next, y_next
+
+    _, ys = jax.lax.scan(step, y0_jax, (r_jax[:-1], r_jax[1:]))
+    return jnp.vstack([y0_jax[None, :], ys])
+
+
+def integrate_wind_tsit5(
+    r_grid,
+    y0,
+    params: JaxWindParams,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+    max_steps: int = 131072,
+):
+    """
+    Integrate the full multiphase wind with adaptive Tsit5 (Diffrax).
+
+    The solution is saved exactly on the provided `r_grid` points.
+    """
+    diffrax = _load_diffrax()
+
+    y0_jax = jnp.asarray(y0, dtype=jnp.float64)
+    r_jax = jnp.asarray(r_grid, dtype=jnp.float64)
+    if r_jax.size < 2:
+        return y0_jax[None, :]
+
+    dt0 = jnp.maximum(r_jax[1] - r_jax[0], 1e-30)
+    term = diffrax.ODETerm(lambda r, y, args: wind_evo_jax(y, r, args))
+    solver = diffrax.Tsit5()
+    saveat = diffrax.SaveAt(ts=r_jax)
+    controller = diffrax.PIDController(rtol=float(rtol), atol=float(atol))
+
+    sol = diffrax.diffeqsolve(
+        term,
+        solver,
+        t0=r_jax[0],
+        t1=r_jax[-1],
+        dt0=dt0,
+        y0=y0_jax,
+        args=params,
+        saveat=saveat,
+        stepsize_controller=controller,
+        max_steps=int(max_steps),
+        throw=False,
+    )
+    success = sol.result == diffrax.RESULTS.successful
+    invalid = jnp.full_like(sol.ys, jnp.nan)
+    return jnp.where(success, sol.ys, invalid)
+
+
+@jax.jit
 def integrate_hot_wind_rk4_scan(
     r_grid,
     y0,
@@ -428,6 +528,65 @@ def integrate_hot_wind_rk4_scan(
         k3 = rhs(y + 0.5 * h * k2, r0_loc + 0.5 * h)
         k4 = rhs(y + h * k3, r1_loc)
         y_next = y + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return y_next, y_next
+
+    _, ys = jax.lax.scan(step, y0_jax, (r_jax[:-1], r_jax[1:]))
+    return jnp.vstack([y0_jax[None, :], ys])
+
+
+@jax.jit
+def integrate_hot_wind_rk2_scan(
+    r_grid,
+    y0,
+    v_circ,
+    include_source_terms,
+    r0,
+    Edot_per_Vol,
+    Mdot_per_Vol,
+):
+    """Integrate the hot-only control model with fixed-grid RK2 midpoint."""
+    y0_jax = jnp.asarray(y0, dtype=jnp.float64)
+    r_jax = jnp.asarray(r_grid, dtype=jnp.float64)
+
+    def rhs(y, r):
+        return hot_wind_evo_jax(y, r, v_circ, include_source_terms, r0, Edot_per_Vol, Mdot_per_Vol)
+
+    def step(y, inputs):
+        r0_loc, r1_loc = inputs
+        h = r1_loc - r0_loc
+        k1 = rhs(y, r0_loc)
+        k2 = rhs(y + 0.5 * h * k1, r0_loc + 0.5 * h)
+        y_next = y + h * k2
+        return y_next, y_next
+
+    _, ys = jax.lax.scan(step, y0_jax, (r_jax[:-1], r_jax[1:]))
+    return jnp.vstack([y0_jax[None, :], ys])
+
+
+@jax.jit
+def integrate_hot_wind_rk3_scan(
+    r_grid,
+    y0,
+    v_circ,
+    include_source_terms,
+    r0,
+    Edot_per_Vol,
+    Mdot_per_Vol,
+):
+    """Integrate the hot-only control model with fixed-grid classical RK3."""
+    y0_jax = jnp.asarray(y0, dtype=jnp.float64)
+    r_jax = jnp.asarray(r_grid, dtype=jnp.float64)
+
+    def rhs(y, r):
+        return hot_wind_evo_jax(y, r, v_circ, include_source_terms, r0, Edot_per_Vol, Mdot_per_Vol)
+
+    def step(y, inputs):
+        r0_loc, r1_loc = inputs
+        h = r1_loc - r0_loc
+        k1 = rhs(y, r0_loc)
+        k2 = rhs(y + 0.5 * h * k1, r0_loc + 0.5 * h)
+        k3 = rhs(y - h * k1 + 2.0 * h * k2, r1_loc)
+        y_next = y + (h / 6.0) * (k1 + 4.0 * k2 + k3)
         return y_next, y_next
 
     _, ys = jax.lax.scan(step, y0_jax, (r_jax[:-1], r_jax[1:]))

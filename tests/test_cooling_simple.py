@@ -12,6 +12,11 @@ from multiphasegalacticwind.cooling import (
     Lambda_P,
     get_tcool_min_interpolators,
 )
+from multiphasegalacticwind.topaz_cooling import (
+    load_cooling_table as load_topaz_cooling_table,
+    tcool_P_topaz,
+)
+from multiphasegalacticwind import WindModel
 
 
 def test_lambda_interpolator_returns_finite_values():
@@ -63,3 +68,28 @@ def test_tcool_array_inputs_are_finite():
     assert tcool.shape == T.shape
     assert np.all(np.isfinite(tcool))
     assert np.all(tcool > 0)
+
+
+def test_topaz_table_loads_and_tcool_is_finite():
+    table = load_topaz_cooling_table()
+    assert table.log10_temperature.size > 100
+    tcool = tcool_P_topaz(1e5, 1e3, 1.0, 0.62)
+    assert np.isfinite(tcool)
+    assert tcool > 0
+
+
+def test_topaz_backend_runs_smoke():
+    model = WindModel(
+        SFR=5.0,
+        v_circ=120.0,
+        eta_M=0.2,
+        eta_M_cold=0.05,
+        eta_E=1.0,
+        N_cloud_species=4,
+        r_max_kpc=5.0,
+        rtol=1e-6,
+        atol=1e-8,
+        cooling_backend="topaz",
+    )
+    solution = model.run()
+    assert solution.r[-1] > 2.0

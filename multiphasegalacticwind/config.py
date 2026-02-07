@@ -48,6 +48,8 @@ class WindConfig:
                                                                         custom_defaults.get('metallicity', 10**-0.5))))
         self.metallicity = self.Z_hot_over_Z_solar  # Keep for backward compatibility
         self.redshift = get_param('redshift', 0.0)  # Redshift for cooling function
+        self.cooling_backend = get_param('cooling_backend', 'topaz')  # {'legacy', 'topaz'}
+        self.topaz_cooling_table_path = get_param('topaz_cooling_table_path', None)  # optional CSV override
 
         # Wind geometry
         self.half_opening_angle = get_param('half_opening_angle', np.pi/2)
@@ -84,6 +86,10 @@ class WindConfig:
         self.sonic_point_offset = get_param('sonic_point_offset', 1e-6)  # Small offset from Mach=1 for initial conditions
         self.sonic_transition_tolerance = get_param('sonic_transition_tolerance', 0.01)  # Tolerance for detecting sonic transitions
 
+        # ODE solver stepping controls
+        self.solver_max_step_kpc = get_param('solver_max_step_kpc', 0.3)   # kpc, max RK step
+        self.solver_first_step_kpc = get_param('solver_first_step_kpc', 1e-12)  # kpc, initial RK step
+
     def to_dict(self) -> Dict[str, Any]:
         """Return configuration as a dictionary."""
         return {
@@ -91,6 +97,8 @@ class WindConfig:
             'metallicity': self.metallicity,  # Keep for backward compatibility
             'Z_hot_over_Z_solar': self.Z_hot_over_Z_solar,
             'redshift': self.redshift,
+            'cooling_backend': self.cooling_backend,
+            'topaz_cooling_table_path': self.topaz_cooling_table_path,
             'half_opening_angle': self.half_opening_angle,
             'Omwind': self.Omwind,
             'M_cloud_min': self.M_cloud_min,
@@ -112,7 +120,9 @@ class WindConfig:
             'E_SN': self.E_SN,
             'mstar': self.mstar,
             'sonic_point_offset': self.sonic_point_offset,
-            'sonic_transition_tolerance': self.sonic_transition_tolerance
+            'sonic_transition_tolerance': self.sonic_transition_tolerance,
+            'solver_max_step_kpc': self.solver_max_step_kpc,
+            'solver_first_step_kpc': self.solver_first_step_kpc,
         }
 
     def validate(self) -> None:
@@ -131,6 +141,12 @@ class WindConfig:
             raise ValueError(f"Z_hot_over_Z_solar must be non-negative, got {self.Z_hot_over_Z_solar}")
         if self.redshift < 0:
             raise ValueError(f"redshift must be non-negative, got {self.redshift}")
+        if self.cooling_backend not in {'legacy', 'topaz'}:
+            raise ValueError(
+                f"cooling_backend must be 'legacy' or 'topaz', got {self.cooling_backend}"
+            )
+        if self.topaz_cooling_table_path is not None and not isinstance(self.topaz_cooling_table_path, str):
+            raise ValueError("topaz_cooling_table_path must be a string path or None")
             
         # Wind geometry
         if not 0 < self.half_opening_angle <= np.pi:
@@ -171,6 +187,10 @@ class WindConfig:
             raise ValueError(f"sonic_point_offset must be positive, got {self.sonic_point_offset}")
         if self.sonic_transition_tolerance <= 0:
             raise ValueError(f"sonic_transition_tolerance must be positive, got {self.sonic_transition_tolerance}")
+        if self.solver_max_step_kpc is not None and self.solver_max_step_kpc <= 0:
+            raise ValueError(f"solver_max_step_kpc must be positive when set, got {self.solver_max_step_kpc}")
+        if self.solver_first_step_kpc is not None and self.solver_first_step_kpc <= 0:
+            raise ValueError(f"solver_first_step_kpc must be positive when set, got {self.solver_first_step_kpc}")
 
     @classmethod
     def set_defaults(cls, **kwargs: Any) -> None:
@@ -192,6 +212,7 @@ class WindConfig:
         # Validate that keys are valid parameter names
         valid_params = {
             'mu', 'Z_hot_over_Z_solar', 'metallicity', 'redshift',
+            'cooling_backend', 'topaz_cooling_table_path',
             'half_opening_angle', 'M_cloud_min', 'CoolingAreaChiPower',
             'ColdTurbulenceChiPower', 'TurbulentVelocityChiPower',
             'geometric_factor', 'Mdot_coefficient', 'Cooling_Factor',
@@ -199,7 +220,8 @@ class WindConfig:
             'cold_cloud_injection_radial_extent_frac', 'v_cloud_init',
             'v_cloud_min', 'cloud_radial_offset', 'Z_cloud_over_Z_solar',
             'T_cl', 'E_SN', 'mstar', 'sonic_point_offset',
-            'sonic_transition_tolerance'
+            'sonic_transition_tolerance', 'solver_max_step_kpc',
+            'solver_first_step_kpc'
         }
         
         for key, value in kwargs.items():

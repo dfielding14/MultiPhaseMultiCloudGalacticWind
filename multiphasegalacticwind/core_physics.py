@@ -12,6 +12,7 @@ import numpy as np
 from .constants import *
 # Import cooling functions
 from .cooling import tcool_P
+from .topaz_cooling import tcool_P_topaz
 
 def setup_cloud_powerlaw_distribution(log_M_cloud_min, log_M_cloud_max, N_cloud_species,
                                      alpha_cloud=2.0, eta_M_cold_tot=1.0, SFR=1.0):
@@ -120,6 +121,8 @@ def Wind_Evo(r, state, params):
     Omwind = config_dict['Omwind']
     mu = config_dict['mu']
     redshift = config_dict.get('redshift', 0.0)
+    cooling_backend = config_dict.get('cooling_backend', 'legacy')
+    topaz_cooling_table_path = config_dict.get('topaz_cooling_table_path', None)
 
     # Use pre-calculated cooling interpolator from params
     # Lambda_P_rho is now params[9]
@@ -190,7 +193,12 @@ def Wind_Evo(r, state, params):
     Z_mix = np.sqrt(Z_wind * Z_cloud)
 
     # Cooling time with proper handling
-    t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, redshift, mu)
+    if cooling_backend == 'topaz':
+        t_cool_layer = tcool_P_topaz(
+            T_mix, Pressure / kb, Z_mix / Z_solar, mu, table_path=topaz_cooling_table_path
+        )
+    else:
+        t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, redshift, mu)
     if np.isscalar(t_cool_layer):
         t_cool_layer = np.full_like(M_cloud, t_cool_layer)
     t_cool_layer = np.where(t_cool_layer < 0, 1e10*Myr, t_cool_layer)

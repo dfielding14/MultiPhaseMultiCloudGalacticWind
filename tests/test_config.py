@@ -16,9 +16,13 @@ def test_default_initialization():
     assert config.mu == 0.62
     assert config.Z_hot_over_Z_solar == 10**-0.5
     assert config.redshift == 0.0
+    assert config.cooling_backend == "topaz"
+    assert config.topaz_cooling_table_path is None
     assert config.half_opening_angle == np.pi / 2
     assert config.v_cloud_init == 100.0
     assert config.v_cloud_min == 1.0
+    assert config.solver_max_step_kpc == 0.3
+    assert config.solver_first_step_kpc == 1e-12
 
 
 def test_custom_initialization():
@@ -107,6 +111,9 @@ def test_parameter_ranges_and_validation():
         {"f_turb0": 1.0},
         {"drag_coeff": 0.0},
         {"sonic_point_offset": 0.0},
+        {"solver_max_step_kpc": 0.0},
+        {"solver_first_step_kpc": 0.0},
+        {"cooling_backend": "invalid"},
     ],
 )
 def test_validate_rejects_invalid_values(kwargs):

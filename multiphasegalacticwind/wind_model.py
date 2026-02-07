@@ -393,11 +393,24 @@ class WindModel:
         injection_radius = self.config.cold_cloud_injection_radial_extent_frac * r0
         injection_power = self.config.cold_cloud_injection_radial_power
 
-        # Pre-calculate cooling interpolator for efficiency
-        from .cooling import get_cooling_interpolator
-        cooling_interpolator = get_cooling_interpolator(
-            self.config.mu, self.config.Z_hot_over_Z_solar, self.config.redshift
-        )
+        # Pre-calculate cooling callable for efficiency (backend-selectable).
+        if self.config.cooling_backend == 'topaz':
+            from .topaz_cooling import get_lambda_p_rho_callable_topaz
+            cooling_interpolator = get_lambda_p_rho_callable_topaz(
+                self.config.mu,
+                self.config.Z_hot_over_Z_solar,
+                table_path=self.config.topaz_cooling_table_path,
+            )
+        elif self.config.cooling_backend == 'legacy':
+            from .cooling import get_cooling_interpolator
+            cooling_interpolator = get_cooling_interpolator(
+                self.config.mu, self.config.Z_hot_over_Z_solar, self.config.redshift
+            )
+        else:
+            raise ValueError(
+                f"Unknown cooling backend: {self.config.cooling_backend}. "
+                "Expected 'legacy' or 'topaz'."
+            )
 
         # Extended params tuple including source terms and cooling interpolator
         params = (v_circ_cgs, self.Ndot_cloud0, self.config.T_cl,
@@ -468,14 +481,21 @@ class WindModel:
 
         # Run the integration with maximum evaluations to prevent hanging
         try:
+            solve_kwargs = {
+                'rtol': self.rtol,
+                'atol': self.atol,
+                'dense_output': True,
+                'events': events,
+            }
+            if self.config.solver_max_step_kpc is not None:
+                solve_kwargs['max_step'] = self.config.solver_max_step_kpc * kpc
+            if self.config.solver_first_step_kpc is not None:
+                solve_kwargs['first_step'] = self.config.solver_first_step_kpc * kpc
+
             sol = solve_ivp(
                 lambda r, y: Wind_Evo(r, y, params),
                 r_span, y0,
-                rtol=self.rtol, atol=self.atol,
-                dense_output=True,
-                events=events,
-                max_step=0.1*kpc,  # Maximum step size to prevent jumping too far
-                first_step=1e-12*kpc  # Small first step to handle near-equilibrium start
+                **solve_kwargs,
             )
         except ValueError as e:
             if "`ts` must be strictly increasing or decreasing" in str(e):

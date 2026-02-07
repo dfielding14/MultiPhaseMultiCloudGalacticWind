@@ -31,6 +31,16 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
   - Runs viable and intentionally non-viable parameter sets
   - Prints event-trigger and termination diagnostics
 
+- **`m82_multiphase_user_script.py`** - Script version of the M82 notebook
+  - Mirrors `m82_multiphase_user_notebook.ipynb` workflow
+  - Adds CLI controls, timing summary, and optional cProfile mode
+  - Supports fast profiling via solver-step knobs
+
+- **`cooling_backend_comparison.py`** - Cooling backend + table-reduction study
+  - Compares legacy vs Topaz cooling backends on representative cases
+  - Explores Topaz table truncation below 3000 K and uniform downsampling
+  - Prints runtime and observable deltas for each variant
+
 ## Discretization Study
 - **`cloud_species_comparison.py`** - Discretization study for cloud-mass bin count
   - Compares solutions for multiple `N_cloud_species` choices
@@ -46,7 +56,7 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
 
 - **`m82_multiphase_user_notebook.ipynb`** - M82-like user-ready setup
   - Top-level editable controls for `eta_M`, `eta_M_cold_tot`, and `eta_E`
-  - Fixed M82-like baseline: SFR=20, v_circ=150, 6 cloud bins from 1-1e6 Msun
+  - Fixed M82-like baseline: SFR=20, v_circ=150, 13 cloud bins from 1-1e6 Msun
   - Uses built-in plotting flow to generate standard wind/observable plots
 
 - **`observational_comparison_notebook.ipynb`** - Observatory-focused analysis
@@ -65,6 +75,8 @@ python examples/column_density_example.py
 python examples/config_customization_example.py
 python examples/event_diagnostics_example.py
 python examples/cloud_species_comparison.py
+python examples/m82_multiphase_user_script.py --skip-plots --profile
+python examples/cooling_backend_comparison.py
 
 # Jupyter notebooks
 jupyter notebook examples/tutorial_comprehensive.ipynb

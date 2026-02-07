@@ -392,15 +392,19 @@ class WindModel:
         # Calculate injection radius as fraction of r0
         injection_radius = self.config.cold_cloud_injection_radial_extent_frac * r0
         injection_power = self.config.cold_cloud_injection_radial_power
+        config_dict = self.config.to_dict()
 
         # Pre-calculate cooling callable for efficiency (backend-selectable).
         if self.config.cooling_backend == 'topaz':
-            from .topaz_cooling import get_lambda_p_rho_callable_topaz
+            from .topaz_cooling import get_lambda_p_rho_callable_topaz, load_cooling_table
+            topaz_table = load_cooling_table(self.config.topaz_cooling_table_path)
             cooling_interpolator = get_lambda_p_rho_callable_topaz(
                 self.config.mu,
                 self.config.Z_hot_over_Z_solar,
                 table_path=self.config.topaz_cooling_table_path,
             )
+            # Reuse already-loaded table in Wind_Evo for mixed-layer tcool calls.
+            config_dict['_topaz_table'] = topaz_table
         elif self.config.cooling_backend == 'legacy':
             from .cooling import get_cooling_interpolator
             cooling_interpolator = get_cooling_interpolator(
@@ -414,7 +418,7 @@ class WindModel:
 
         # Extended params tuple including source terms and cooling interpolator
         params = (v_circ_cgs, self.Ndot_cloud0, self.config.T_cl,
-                  injection_radius, injection_power, self.config.to_dict(),
+                  injection_radius, injection_power, config_dict,
                   r0, Edot_per_Vol, Mdot_per_Vol, cooling_interpolator)
 
         # Check initial Mach number to determine which events to include

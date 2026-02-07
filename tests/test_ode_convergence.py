@@ -223,6 +223,37 @@ def test_mass_flux_uses_configured_solid_angle():
     assert np.isclose(solution.Mdot[idx], expected_mdot, rtol=1e-12, atol=0.0)
 
 
+def test_solver_max_step_tuning_preserves_key_observables():
+    """
+    Looser max-step caps should keep key observables near conservative settings.
+    """
+    from multiphasegalacticwind import WindModel
+
+    common = dict(
+        SFR=20.0,
+        v_circ=150.0,
+        eta_M=0.1,
+        eta_M_cold=0.2,
+        eta_E=1.0,
+        cloud_mass_range=(1.0, 1.0e6),
+        cloud_alpha=2.0,
+        N_cloud_species=13,
+        r_max_kpc=30.0,
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    conservative = WindModel(**common, solver_max_step_kpc=0.1).run()
+    tuned = WindModel(**common, solver_max_step_kpc=0.3).run()
+
+    assert np.isclose(tuned.v_at_10kpc, conservative.v_at_10kpc, rtol=5e-4, atol=0.0)
+    assert np.isclose(
+        tuned.mass_loading_at_10kpc,
+        conservative.mass_loading_at_10kpc,
+        rtol=5e-4,
+        atol=0.0,
+    )
+
+
 if __name__ == "__main__":
     test_ode_convergence()
     print("✓ ODE convergence test passed")

@@ -8,11 +8,16 @@ Based on Fielding & Bryan "The Structure of Multiphase Galactic Winds"
 """
 
 import numpy as np
+from numba import njit
 # Import physical constants
 from .constants import *
 # Import cooling functions
 from .cooling import tcool_P
-from .topaz_cooling import tcool_P_topaz
+from .topaz_cooling import (
+    lambda_p_rho_topaz_scalar_numba,
+    load_cooling_table,
+    tcool_P_topaz_vector,
+)
 
 def setup_cloud_powerlaw_distribution(log_M_cloud_min, log_M_cloud_max, N_cloud_species,
                                      alpha_cloud=2.0, eta_M_cold_tot=1.0, SFR=1.0):
@@ -77,6 +82,138 @@ def setup_cloud_powerlaw_distribution(log_M_cloud_min, log_M_cloud_max, N_cloud_
     return M_cloud0, eta_M_cold, Mdot_cold0, Ndot_cloud0
 
 
+_FOUR_PI_OVER_THREE = 4.0 * np.pi / 3.0
+
+
+@njit(cache=True)
+def _cloud_exchange_kernel_numba(
+    r,
+    v_circ,
+    v_wind,
+    rho_wind,
+    Z_wind,
+    vBsq_wind,
+    Phir,
+    cs_cl_sq,
+    rho_cloud,
+    chi,
+    Ndot_cloud0,
+    M_cloud,
+    v_cloud,
+    Z_cloud,
+    t_cool_layer,
+    injection_radius,
+    injection_power,
+    M_cloud_min,
+    TurbulentVelocityChiPower,
+    CoolingAreaChiPower,
+    ColdTurbulenceChiPower,
+    geometric_factor,
+    Mdot_coefficient,
+    drag_coeff,
+    f_turb0,
+    Omwind,
+    v_cloud_floor,
+):
+    n_species = M_cloud.shape[0]
+    dM_cloud_dr = np.zeros(n_species, dtype=np.float64)
+    dv_cloud_dr = np.zeros(n_species, dtype=np.float64)
+    dZ_cloud_dr = np.zeros(n_species, dtype=np.float64)
+
+    sum_mass = 0.0
+    sum_momentum = 0.0
+    sum_energy = 0.0
+    sum_metals = 0.0
+
+    if r < injection_radius:
+        injection_factor = (r / injection_radius) ** injection_power
+    else:
+        injection_factor = 1.0
+
+    r_sq = r * r
+    chi_turb = chi ** TurbulentVelocityChiPower
+    area_boost = geometric_factor * chi ** CoolingAreaChiPower
+    chi_cold_turb = chi ** ColdTurbulenceChiPower
+
+    for i in range(n_species):
+        v_cloud_i = v_cloud[i]
+        M_cloud_i = M_cloud[i]
+        Z_cloud_i = Z_cloud[i]
+        t_cool_i = t_cool_layer[i]
+
+        v_cloud_safe = v_cloud_i if v_cloud_i > v_cloud_floor else v_cloud_floor
+        Ndot_cloud = Ndot_cloud0[i] * injection_factor
+        number_density_cloud = Ndot_cloud / (Omwind * v_cloud_safe * r_sq)
+
+        if M_cloud_i > 0.0 and rho_cloud > 0.0:
+            r_cloud = (M_cloud_i / (_FOUR_PI_OVER_THREE * rho_cloud)) ** (1.0 / 3.0)
+            r_cloud_safe = r_cloud
+        else:
+            r_cloud = 0.0
+            r_cloud_safe = np.inf
+
+        v_rel = v_wind - v_cloud_i
+        v_turb = f_turb0 * np.abs(v_rel) * chi_turb
+        v_turb_cold = v_turb * chi_cold_turb
+
+        if t_cool_i < 0.0:
+            t_cool_i = 1e10 * Myr
+        denom = (v_turb if v_turb > 1e-10 else 1e-10) * t_cool_i
+        ksi = r_cloud / denom
+
+        cloud_active = M_cloud_i > M_cloud_min
+        if cloud_active and np.isfinite(r_cloud_safe):
+            if ksi < 1.0:
+                ksi_factor = ksi ** 0.5
+            else:
+                ksi_factor = ksi ** 0.25
+
+            Mdot_grow = (
+                Mdot_coefficient
+                * 3.0
+                * M_cloud_i
+                * v_turb
+                * area_boost
+                / (r_cloud_safe * chi)
+                * ksi_factor
+            )
+            Mdot_loss = Mdot_coefficient * 3.0 * (-M_cloud_i) * v_turb_cold / r_cloud_safe
+        else:
+            Mdot_grow = 0.0
+            Mdot_loss = 0.0
+
+        Mdot_cloud = Mdot_grow + Mdot_loss
+        p_dot_ram = (
+            0.5
+            * drag_coeff
+            * rho_wind
+            * np.pi
+            * v_rel
+            * np.abs(v_rel)
+            * r_cloud
+            * r_cloud
+        )
+        p_dot_transfer = v_wind * Mdot_grow + v_cloud_i * Mdot_loss
+        vBsq_cl = 0.5 * v_cloud_i * v_cloud_i + (gamma / (gamma - 1.0)) * cs_cl_sq + Phir
+        e_dot_transfer = vBsq_wind * Mdot_grow + vBsq_cl * Mdot_loss
+
+        sum_mass += number_density_cloud * Mdot_cloud
+        sum_momentum += number_density_cloud * (p_dot_transfer + p_dot_ram)
+        sum_energy += number_density_cloud * (e_dot_transfer + p_dot_ram * v_wind)
+        sum_metals += number_density_cloud * (Z_wind * Mdot_grow + Z_cloud_i * Mdot_loss)
+
+        if cloud_active:
+            dM_cloud_dr[i] = Mdot_cloud / v_cloud_safe
+            dv_cloud_dr[i] = (
+                p_dot_ram + v_rel * Mdot_grow - M_cloud_i * v_circ * v_circ / r
+            ) / (M_cloud_i * v_cloud_safe)
+            dZ_cloud_dr[i] = (
+                (Z_wind - Z_cloud_i) * Mdot_grow / (M_cloud_i * v_cloud_safe)
+            )
+
+    return sum_mass, sum_momentum, sum_energy, sum_metals, dM_cloud_dr, dv_cloud_dr, dZ_cloud_dr
+
+
 def Wind_Evo(r, state, params):
     """
     Compute wind evolution derivatives - multicloud version
@@ -123,6 +260,7 @@ def Wind_Evo(r, state, params):
     redshift = config_dict.get('redshift', 0.0)
     cooling_backend = config_dict.get('cooling_backend', 'legacy')
     topaz_cooling_table_path = config_dict.get('topaz_cooling_table_path', None)
+    topaz_table = config_dict.get('_topaz_table', None)
 
     # Use pre-calculated cooling interpolator from params
     # Lambda_P_rho is now params[9]
@@ -158,19 +296,6 @@ def Wind_Evo(r, state, params):
     Phir         = v_circ**2 * np.log(r)
     vBsq_wind    = 0.5 * v_wind**2 + (gamma/(gamma-1)) * Pressure/rho_wind + Phir
 
-    # Cloud properties with injection cutoff
-    Ndot_cloud = Ndot_cloud0 * np.where(r < injection_radius,
-                                        (r/injection_radius)**injection_power,
-                                        1.0)
-
-    # Use a physical floor tied to the configured minimum cloud speed to
-    # avoid singular cloud-flux terms near stalled clouds.
-    v_cloud_floor = max(config_dict.get('v_cloud_min', 0.0) * 1e5, 1e-10)
-    v_cloud_safe = np.where(v_cloud > v_cloud_floor, v_cloud, v_cloud_floor)
-    number_density_cloud = Ndot_cloud / (Omwind * v_cloud_safe * r**2)
-    cs_cl_sq = gamma * kb * T_cloud / (mu * mp)
-    vBsq_cl = 0.5 * v_cloud**2 + (gamma/(gamma-1)) * cs_cl_sq + Phir
-
     # Cloud transfer rates
     rho_cloud = Pressure * (mu*mp) / (kb*T_cloud)  # Pressure equilibrium
     chi = rho_cloud / rho_wind
@@ -179,50 +304,63 @@ def Wind_Evo(r, state, params):
     if chi <= 0:
         return np.zeros(4 + 3*N_cloud_species)
 
-    # Compute radii only for physically valid cloud masses to avoid
-    # invalid fractional powers during transient integration states.
-    r_cloud = np.zeros_like(M_cloud, dtype=float)
-    valid_radius = M_cloud > 0
-    r_cloud[valid_radius] = (M_cloud[valid_radius] / (4*np.pi/3. * rho_cloud))**(1/3.)
-    r_cloud_safe = np.where(r_cloud > 0, r_cloud, np.inf)
-    v_rel = v_wind - v_cloud
-    # Turbulent mixing speed should depend on relative-speed magnitude.
-    v_turb = f_turb0 * np.abs(v_rel) * chi**TurbulentVelocityChiPower
     T_wind = Pressure/kb * (mu*mp/rho_wind)
     T_mix = np.sqrt(T_wind * T_cloud)
     Z_mix = np.sqrt(Z_wind * Z_cloud)
 
-    # Cooling time with proper handling
+    # Cooling time with proper handling (Numba kernels are mandatory for Topaz backend).
     if cooling_backend == 'topaz':
-        t_cool_layer = tcool_P_topaz(
-            T_mix, Pressure / kb, Z_mix / Z_solar, mu, table_path=topaz_cooling_table_path
+        if topaz_table is None:
+            topaz_table = load_cooling_table(topaz_cooling_table_path)
+        t_cool_layer = tcool_P_topaz_vector(
+            T_mix.astype(float, copy=False),
+            Pressure / kb,
+            (Z_mix / Z_solar).astype(float, copy=False),
+            mu,
+            topaz_table,
         )
     else:
         t_cool_layer = tcool_P(T_mix, Pressure/kb, Z_mix/Z_solar, redshift, mu)
     if np.isscalar(t_cool_layer):
         t_cool_layer = np.full_like(M_cloud, t_cool_layer)
-    t_cool_layer = np.where(t_cool_layer < 0, 1e10*Myr, t_cool_layer)
+    t_cool_layer = np.ascontiguousarray(t_cool_layer, dtype=float)
 
-    # Add small epsilon to prevent division by zero when v_turb = 0
-    ksi = r_cloud / (np.maximum(v_turb, 1e-10) * t_cool_layer)
-    AreaBoost = geometric_factor * chi**CoolingAreaChiPower
-    v_turb_cold = v_turb * chi**ColdTurbulenceChiPower
+    # Use a physical floor tied to the configured minimum cloud speed to
+    # avoid singular cloud-flux terms near stalled clouds.
+    v_cloud_floor = max(config_dict.get('v_cloud_min', 0.0) * 1e5, 1e-10)
+    cs_cl_sq = gamma * kb * T_cloud / (mu * mp)
 
-    # Mass transfer rates (Mdot_loss is negative!)
-    # Only calculate for clouds above minimum mass
-    cloud_active = M_cloud > M_cloud_min
-    Mdot_grow = np.where(
-        cloud_active,
-        Mdot_coefficient * 3.0 * M_cloud * v_turb * AreaBoost / (r_cloud_safe * chi) *
-        np.where(ksi < 1, ksi**0.5, ksi**0.25),
-        0
+    sum_mass, sum_momentum, sum_energy, sum_metals, dM_cloud_dr, dv_cloud_dr, dZ_cloud_dr = (
+        _cloud_exchange_kernel_numba(
+            r,
+            v_circ,
+            v_wind,
+            rho_wind,
+            Z_wind,
+            vBsq_wind,
+            Phir,
+            cs_cl_sq,
+            rho_cloud,
+            chi,
+            Ndot_cloud0,
+            M_cloud,
+            v_cloud,
+            Z_cloud,
+            t_cool_layer,
+            injection_radius,
+            injection_power,
+            M_cloud_min,
+            TurbulentVelocityChiPower,
+            CoolingAreaChiPower,
+            ColdTurbulenceChiPower,
+            geometric_factor,
+            Mdot_coefficient,
+            drag_coeff,
+            f_turb0,
+            Omwind,
+            v_cloud_floor,
+        )
     )
-    Mdot_loss = np.where(
-        cloud_active,
-        Mdot_coefficient * 3.0 * -M_cloud * v_turb_cold / r_cloud_safe,
-        0
-    )
-    Mdot_cloud = Mdot_grow + Mdot_loss
 
     # Galaxy source terms (SN feedback)
     if r < r0:
@@ -233,21 +371,29 @@ def Wind_Evo(r, state, params):
         Edot_SN = 0.0
 
     # Density source (galaxy + clouds)
-    drhodt = Mdot_SN - 1.0 * np.sum(number_density_cloud * Mdot_cloud)
-
-    # Momentum source
-    # Fix: Use v_rel * |v_rel| to preserve sign (drag opposes relative motion)
-    p_dot_ram = 0.5 * drag_coeff * rho_wind * np.pi * v_rel * np.abs(v_rel) * r_cloud**2
-    p_dot_transfer = v_wind*Mdot_grow + v_cloud*Mdot_loss
-    dpdt = -1.0 * np.sum(number_density_cloud * (p_dot_transfer + p_dot_ram))
+    drhodt = Mdot_SN - sum_mass
+    dpdt = -sum_momentum
 
     # Energy source (galaxy + clouds + cooling)
-    e_dot_cool = 0.0 if (Cooling_Factor == 0) else -(rho_wind/(muH*mp))**2 * Lambda_P_rho((Pressure, rho_wind))
-    e_dot_transfer = vBsq_wind*Mdot_grow + vBsq_cl*Mdot_loss
-    dedt = Edot_SN - 1.0 * np.sum(number_density_cloud * (e_dot_transfer + p_dot_ram*v_wind)) + e_dot_cool
+    if Cooling_Factor == 0:
+        e_dot_cool = 0.0
+    elif cooling_backend == 'topaz':
+        lambda_hot = lambda_p_rho_topaz_scalar_numba(
+            Pressure,
+            rho_wind,
+            mu,
+            config_dict['Z_hot_over_Z_solar'],
+            topaz_table.log10_temperature,
+            topaz_table.primordial_cooling_cgs,
+            topaz_table.metal_cooling_cgs,
+        )
+        e_dot_cool = -(rho_wind / (muH * mp)) ** 2 * lambda_hot
+    else:
+        e_dot_cool = -(rho_wind / (muH * mp)) ** 2 * Lambda_P_rho((Pressure, rho_wind))
+    dedt = Edot_SN - sum_energy + e_dot_cool
 
     # Metallicity source
-    drhoZdt = -1.0 * np.sum(number_density_cloud * (Z_wind*Mdot_grow + Z_cloud*Mdot_loss))
+    drhoZdt = -sum_metals
 
     # wind gradients with regularization near sonic point
     # The factor (1 - 1/M²) causes a singularity at M = 1
@@ -276,17 +422,6 @@ def Wind_Evo(r, state, params):
                 + (rhoZ_wind/r)*(1/(rho_wind*v_wind/r))*((drhoZdt/Z_wind)-drhodt))
     dP_dr    = (Pressure/r)*gamma/denominator * ( -2.0 + (vc/v_wind)**2
                 + 1/(rho_wind*v_wind/r) * (drhodt + drhodt * (gamma-1)/2.*Mach_sq_wind * (1 - 2.0 * Phir/v_wind**2) - dpdt/v_wind + (gamma-1)*Mach_sq_wind*(dedt-v_wind*dpdt)/v_wind**2))
-
-    # Cloud gradients - set all to 0 for clouds below minimum mass
-    dM_cloud_dr = np.where(cloud_active, Mdot_cloud / v_cloud_safe, 0)
-
-    dv_cloud_dr = np.where(cloud_active,
-                          (p_dot_ram + v_rel*Mdot_grow - M_cloud * vc**2/r) / (M_cloud * v_cloud_safe),
-                          0)
-
-    dZ_cloud_dr = np.where(cloud_active,
-                          (Z_wind - Z_cloud) * Mdot_grow / (M_cloud * v_cloud_safe),
-                          0)
 
     # Return derivatives
     if N_cloud_species == 1:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -47,17 +48,20 @@ def build_radius_grid(r_start_cgs: float, r_end_cgs: float, first_step_cgs: floa
 def build_covariance(std: Sequence[float], corr: np.ndarray | None = None) -> np.ndarray:
     """Build a covariance matrix from 1-sigma errors and optional correlation matrix."""
     sigma = np.asarray(std, dtype=float)
-    if sigma.shape != (3,):
-        raise ValueError(f"std must be length-3 for [M0, M1, M2], got shape {sigma.shape}")
+    if sigma.ndim != 1:
+        raise ValueError(f"std must be a 1D array of standard deviations, got shape {sigma.shape}")
+    n_obs = int(sigma.size)
+    if n_obs < 1:
+        raise ValueError("std must contain at least one entry")
     if np.any(sigma <= 0.0):
         raise ValueError("All standard deviations must be positive")
 
     if corr is None:
-        corr_m = np.eye(3, dtype=float)
+        corr_m = np.eye(n_obs, dtype=float)
     else:
         corr_m = np.asarray(corr, dtype=float)
-        if corr_m.shape != (3, 3):
-            raise ValueError(f"corr must be shape (3, 3), got {corr_m.shape}")
+        if corr_m.shape != (n_obs, n_obs):
+            raise ValueError(f"corr must be shape ({n_obs}, {n_obs}), got {corr_m.shape}")
         if not np.allclose(corr_m, corr_m.T, atol=1e-12):
             raise ValueError("corr must be symmetric")
         if not np.allclose(np.diag(corr_m), 1.0, atol=1e-12):
@@ -154,6 +158,7 @@ class PosteriorFitResult:
     hmc: HMCResult
     observed_moments: np.ndarray
     covariance_moments: np.ndarray
+    runtime_seconds: dict[str, float] | None = None
 
 
 def summarize_parameter_degeneracies(correlation_theta: np.ndarray, names: Sequence[str]) -> list[str]:
@@ -186,11 +191,17 @@ def resolve_nuts_chain_method(num_chains: int, chain_method: str) -> str:
 
 
 class MomentInferenceModel:
-    """Autodiff-enabled inference model for [M0, M1, M2] observables."""
+    """Autodiff-enabled inference model for moment-based dN/dv observables."""
 
     PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
     _THETA_FLOOR = 1e-12
     _ETA_E_MAX = 0.999
+    _OBS_MOMENTS3 = "m0_m1_m2"
+    _OBS_SHAPE5 = "logm0_mean_sigma_skew_kurt"
+    _OBSERVABLE_SETS = {
+        _OBS_MOMENTS3: ("M0", "M1", "M2"),
+        _OBS_SHAPE5: ("logM0", "mean_v", "sigma_v", "skewness", "kurtosis"),
+    }
 
     def __init__(
         self,
@@ -208,6 +219,7 @@ class MomentInferenceModel:
         integrator_rtol: float = 1e-5,
         integrator_atol: float = 1e-8,
         integrator_max_steps: int = 131072,
+        observable_set: str = "m0_m1_m2",
         config: WindConfig | None = None,
         topaz_cooling_table_path: str | None = None,
     ) -> None:
@@ -233,6 +245,10 @@ class MomentInferenceModel:
         self.integrator_rtol = float(integrator_rtol)
         self.integrator_atol = float(integrator_atol)
         self.integrator_max_steps = int(integrator_max_steps)
+        self.observable_set = self._resolve_observable_set(observable_set)
+        self.observable_names = self._OBSERVABLE_SETS[self.observable_set]
+        self.observable_dim = len(self.observable_names)
+        self.default_observable_yscale = "log" if self.observable_set == self._OBS_MOMENTS3 else "linear"
 
         if self.integrator_mode not in {"rk2", "rk3", "rk4", "tsit5"}:
             raise ValueError("integrator_mode must be one of {'rk2', 'rk3', 'rk4', 'tsit5'}")
@@ -276,10 +292,52 @@ class MomentInferenceModel:
         self._predict_theta_with_valid_fn = self._build_predictor()
         if self.integrator_mode in {"rk2", "rk3", "rk4"}:
             self._predict_theta_fn = jax.jit(lambda theta: self._predict_theta_with_valid_fn(theta)[0])
+            self._predict_raw_theta_fn = jax.jit(lambda theta: self._predict_theta_with_valid_fn(theta)[1])
             self._predict_log_theta_fn = jax.jit(lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta)))
         else:
             self._predict_theta_fn = lambda theta: self._predict_theta_with_valid_fn(theta)[0]
+            self._predict_raw_theta_fn = lambda theta: self._predict_theta_with_valid_fn(theta)[1]
             self._predict_log_theta_fn = lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta))
+
+    @classmethod
+    def _resolve_observable_set(cls, observable_set: str) -> str:
+        key = observable_set.strip().lower()
+        aliases = {
+            "m0_m1_m2": cls._OBS_MOMENTS3,
+            "moments3": cls._OBS_MOMENTS3,
+            "raw_moments": cls._OBS_MOMENTS3,
+            "logm0_mean_sigma_skew_kurt": cls._OBS_SHAPE5,
+            "shape5": cls._OBS_SHAPE5,
+            "transformed_moments": cls._OBS_SHAPE5,
+            "log_shape_moments": cls._OBS_SHAPE5,
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported observable_set. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{observable_set}'."
+            )
+        return aliases[key]
+
+    @staticmethod
+    def _observables_shape5_from_raw_moments(raw_moments):
+        """Return [logM0, mean_v, sigma_v, skewness, kurtosis] from raw moments [M0..M4]."""
+        raw = jnp.asarray(raw_moments, dtype=jnp.float64)
+        m0 = jnp.maximum(raw[0], 1e-300)
+        mean_v = raw[1] / m0
+        second = raw[2] / m0
+        var_v = second - mean_v * mean_v
+        sigma_v = jnp.sqrt(jnp.maximum(var_v, 1e-24))
+
+        third = raw[3] / m0
+        fourth = raw[4] / m0
+        mu3 = third - 3.0 * mean_v * second + 2.0 * mean_v**3
+        mu4 = fourth - 4.0 * mean_v * third + 6.0 * mean_v * mean_v * second - 3.0 * mean_v**4
+
+        sigma3 = jnp.maximum(sigma_v**3, 1e-24)
+        sigma4 = jnp.maximum(sigma_v**4, 1e-24)
+        skewness = mu3 / sigma3
+        kurtosis = mu4 / sigma4
+        return jnp.asarray([jnp.log(m0), mean_v, sigma_v, skewness, kurtosis], dtype=jnp.float64)
 
     @classmethod
     def _theta_from_unconstrained_jax(cls, unconstrained_theta):
@@ -496,11 +554,30 @@ class MomentInferenceModel:
 
             m0 = jnp.sum(jnp.trapezoid(n_h_eff, r_grid, axis=0))
             m1 = jnp.sum(jnp.trapezoid(n_h_eff * v_kms, r_grid, axis=0))
-            m2 = jnp.sum(jnp.trapezoid(n_h_eff * v_kms * v_kms, r_grid, axis=0))
-            moments = jnp.asarray([m0, m1, m2], dtype=jnp.float64)
+            v2 = v_kms * v_kms
+            m2 = jnp.sum(jnp.trapezoid(n_h_eff * v2, r_grid, axis=0))
+            m3 = jnp.sum(jnp.trapezoid(n_h_eff * v2 * v_kms, r_grid, axis=0))
+            m4 = jnp.sum(jnp.trapezoid(n_h_eff * v2 * v2, r_grid, axis=0))
+            raw_moments = jnp.asarray([m0, m1, m2, m3, m4], dtype=jnp.float64)
 
-            valid_moments = jnp.all(jnp.isfinite(moments)) & jnp.all(moments > 0.0)
-            valid = valid_state & valid_moments
+            if self.observable_set == self._OBS_MOMENTS3:
+                observables = raw_moments[:3]
+                valid_observables = jnp.all(jnp.isfinite(observables)) & jnp.all(observables > 0.0)
+                fallback_obs = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
+                obs_finite = jnp.nan_to_num(observables, nan=0.0, posinf=1e100, neginf=-1e100)
+                obs_floor = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
+                obs_barrier = jnp.sum(jax.nn.softplus((obs_floor - obs_finite) / obs_floor))
+            else:
+                observables = self._observables_shape5_from_raw_moments(raw_moments)
+                var_v = (raw_moments[2] / jnp.maximum(raw_moments[0], 1e-300)) - observables[1] * observables[1]
+                valid_observables = jnp.all(jnp.isfinite(observables)) & (var_v > 0.0) & (raw_moments[0] > 0.0)
+                fallback_obs = jnp.asarray([jnp.log(1e-30), 300.0, 100.0, 0.0, 3.0], dtype=jnp.float64)
+                obs_finite_violation = jnp.mean(jnp.where(jnp.isfinite(observables), 0.0, 1.0))
+                variance_barrier = jax.nn.softplus((1e-8 - var_v) / 1e-8)
+                obs_barrier = obs_finite_violation + variance_barrier
+
+            valid_raw = jnp.all(jnp.isfinite(raw_moments)) & (raw_moments[0] > 0.0) & (raw_moments[2] > 0.0)
+            valid = valid_state & valid_raw & valid_observables
 
             v_scale = jnp.maximum(jnp.abs(y0[0]), 1.0)
             rho_scale = jnp.maximum(jnp.abs(y0[1]), 1e-30)
@@ -510,31 +587,41 @@ class MomentInferenceModel:
             soft_neg_p = jax.nn.softplus(-pressure / p_scale)
             finite_violation = jnp.mean(jnp.where(finite_matrix, 0.0, 1.0))
 
-            moments_finite = jnp.nan_to_num(moments, nan=0.0, posinf=1e100, neginf=-1e100)
-            moment_floor = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
-            moment_barrier = jnp.sum(jax.nn.softplus((moment_floor - moments_finite) / moment_floor))
-
             barrier_value = (
-                jnp.mean(soft_neg_v + soft_neg_rho + soft_neg_p) + 10.0 * finite_violation + moment_barrier
+                jnp.mean(soft_neg_v + soft_neg_rho + soft_neg_p) + 10.0 * finite_violation + obs_barrier
             )
+            observables_safe = jnp.where(valid, observables, fallback_obs)
 
-            fallback = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
-            moments_safe = jnp.where(valid, moments, fallback)
-            return moments_safe, jnp.where(valid, 1.0, 0.0), barrier_value, first_invalid_r
+            raw_fallback = jnp.asarray([1e-30, 1e-20, 1e-10, 1e-5, 1e0], dtype=jnp.float64)
+            raw_moments_safe = jnp.where(valid_raw & valid_state, raw_moments, raw_fallback)
+            return observables_safe, raw_moments_safe, jnp.where(valid, 1.0, 0.0), barrier_value, first_invalid_r
 
         if integrator_mode in {"rk2", "rk3", "rk4"}:
             return jax.jit(predict_theta_with_valid)
         return predict_theta_with_valid
 
-    def predict_moments(self, theta: Sequence[float]) -> np.ndarray:
-        """Predict [M0, M1, M2] for linear-space parameters [eta_M, eta_M_cold, eta_E]."""
+    def predict_observables(self, theta: Sequence[float]) -> np.ndarray:
+        """Predict configured observables for linear-space parameters [eta_M, eta_M_cold, eta_E]."""
         theta_arr = jnp.asarray(theta, dtype=jnp.float64)
         return np.asarray(self._predict_theta_fn(theta_arr), dtype=float)
 
-    def predict_moments_log(self, log_theta: Sequence[float]) -> np.ndarray:
-        """Predict [M0, M1, M2] for log-space parameters log([eta_M, eta_M_cold, eta_E])."""
+    def predict_moments(self, theta: Sequence[float]) -> np.ndarray:
+        """Backward-compatible alias for `predict_observables`."""
+        return self.predict_observables(theta)
+
+    def predict_observables_log(self, log_theta: Sequence[float]) -> np.ndarray:
+        """Predict configured observables for log-space parameters log([eta_M, eta_M_cold, eta_E])."""
         log_theta_arr = jnp.asarray(log_theta, dtype=jnp.float64)
         return np.asarray(self._predict_log_theta_fn(log_theta_arr), dtype=float)
+
+    def predict_moments_log(self, log_theta: Sequence[float]) -> np.ndarray:
+        """Backward-compatible alias for `predict_observables_log`."""
+        return self.predict_observables_log(log_theta)
+
+    def predict_raw_moments(self, theta: Sequence[float]) -> np.ndarray:
+        """Predict raw velocity moments [M0, M1, M2, M3, M4] regardless of observable_set."""
+        theta_arr = jnp.asarray(theta, dtype=jnp.float64)
+        return np.asarray(self._predict_raw_theta_fn(theta_arr), dtype=float)
 
     def make_negative_log_posterior(
         self,
@@ -551,8 +638,11 @@ class MomentInferenceModel:
         unconstrained manifold using an explicit Jacobian correction term.
         """
         y_obs = jnp.asarray(observed_moments, dtype=jnp.float64)
-        if y_obs.shape != (3,):
-            raise ValueError("observed_moments must be length-3 [M0, M1, M2]")
+        if y_obs.shape != (self.observable_dim,):
+            raise ValueError(
+                "observed_moments must match observable_set size "
+                f"{self.observable_dim} ({self.observable_names}), got shape {y_obs.shape}"
+            )
 
         cov = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
         cov_inv = jnp.asarray(np.linalg.inv(cov), dtype=jnp.float64)
@@ -577,8 +667,8 @@ class MomentInferenceModel:
         @jax.jit
         def nlp(unconstrained_theta):
             theta, log_theta, dlog_du = self._theta_log_and_dlog_du_jax(unconstrained_theta)
-            moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
-            resid = moments - y_obs
+            observables, _raw_moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
+            resid = observables - y_obs
             chi2 = resid @ cov_inv @ resid
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
             log_jacobian = jnp.sum(jnp.log(jnp.maximum(jnp.abs(dlog_du), 1e-300)))
@@ -997,6 +1087,7 @@ class MomentInferenceModel:
         target_accept: float,
         num_chains: int,
         chain_method: str,
+        progress_bar: bool,
         seed: int,
     ) -> HMCResult:
         """Sample posterior with NumPyro NUTS."""
@@ -1025,7 +1116,7 @@ class MomentInferenceModel:
             num_warmup=int(num_warmup),
             num_samples=int(num_samples),
             num_chains=n_chains,
-            progress_bar=False,
+            progress_bar=bool(progress_bar),
             chain_method=resolved_chain_method,
         )
         rng_key = jax.random.PRNGKey(int(seed))
@@ -1139,6 +1230,7 @@ class MomentInferenceModel:
         target_accept: float,
         num_chains: int,
         nuts_chain_method: str,
+        nuts_progress_bar: bool,
         seed: int,
         sampler: str,
     ) -> HMCResult:
@@ -1154,6 +1246,7 @@ class MomentInferenceModel:
                 target_accept=target_accept,
                 num_chains=max(1, int(num_chains)),
                 chain_method=nuts_chain_method,
+                progress_bar=nuts_progress_bar,
                 seed=seed,
             )
         if sampler_key == "hmc":
@@ -1188,9 +1281,15 @@ class MomentInferenceModel:
         sampler: str = "nuts",
         num_chains: int = 1,
         nuts_chain_method: str = "auto",
+        nuts_progress_bar: bool = False,
+        status_callback: Callable[[str], None] | None = None,
         seed: int = 0,
     ) -> PosteriorFitResult:
-        """Run MAP + posterior sampling workflow for observed [M0, M1, M2]."""
+        """Run MAP + posterior sampling workflow for configured observables."""
+        total_start = time.perf_counter()
+        if status_callback is not None:
+            status_callback("Building negative log-posterior.")
+
         nlp = self.make_negative_log_posterior(
             observed_moments=observed_moments,
             covariance_moments=covariance_moments,
@@ -1198,6 +1297,9 @@ class MomentInferenceModel:
             prior_sigma_log=prior_sigma_log,
         )
 
+        if status_callback is not None:
+            status_callback("Starting MAP optimization.")
+        map_start = time.perf_counter()
         map_result = self._fit_map_from_nlp(
             nlp=nlp,
             observed_moments=np.asarray(observed_moments, dtype=float),
@@ -1209,9 +1311,16 @@ class MomentInferenceModel:
             seed=seed + 17,
             prior_mean_log=prior_mean_log,
         )
+        map_elapsed = time.perf_counter() - map_start
 
         mass_diag = np.diag(stabilize_covariance(map_result.covariance_unconstrained, min_eig=1e-10))
 
+        if status_callback is not None:
+            sampler_name = sampler.strip().lower()
+            status_callback(
+                f"MAP complete in {map_elapsed:.2f} s. Starting {sampler_name.upper()} posterior sampling."
+            )
+        sample_start = time.perf_counter()
         hmc_result = self._sample_posterior(
             nlp=nlp,
             initial_log_theta=map_result.unconstrained_theta_map,
@@ -1223,19 +1332,34 @@ class MomentInferenceModel:
             target_accept=hmc_target_accept,
             num_chains=num_chains,
             nuts_chain_method=nuts_chain_method,
+            nuts_progress_bar=nuts_progress_bar,
             seed=seed,
             sampler=sampler,
         )
+        sample_elapsed = time.perf_counter() - sample_start
+        total_elapsed = time.perf_counter() - total_start
+
+        runtimes = {
+            "map": float(map_elapsed),
+            "posterior_sampling": float(sample_elapsed),
+            "total": float(total_elapsed),
+        }
+        if status_callback is not None:
+            status_callback(
+                "Posterior sampling complete in "
+                f"{sample_elapsed:.2f} s (total {total_elapsed:.2f} s)."
+            )
 
         return PosteriorFitResult(
             map=map_result,
             hmc=hmc_result,
             observed_moments=np.asarray(observed_moments, dtype=float),
             covariance_moments=stabilize_covariance(np.asarray(covariance_moments, dtype=float)),
+            runtime_seconds=runtimes,
         )
 
-    def predict_moments_for_log_samples(self, samples_log: np.ndarray, max_samples: int = 512) -> np.ndarray:
-        """Evaluate model moments for a subset of posterior log-parameter samples."""
+    def predict_observables_for_log_samples(self, samples_log: np.ndarray, max_samples: int = 512) -> np.ndarray:
+        """Evaluate configured observables for a subset of posterior log-parameter samples."""
         arr = np.asarray(samples_log, dtype=float)
         if arr.ndim == 3 and arr.shape[-1] == 3:
             arr = arr.reshape(-1, 3)
@@ -1249,6 +1373,10 @@ class MomentInferenceModel:
         batch = jnp.asarray(arr, dtype=jnp.float64)
         predict_batch = jax.jit(jax.vmap(self._predict_log_theta_fn, in_axes=0))
         return np.asarray(predict_batch(batch), dtype=float)
+
+    def predict_moments_for_log_samples(self, samples_log: np.ndarray, max_samples: int = 512) -> np.ndarray:
+        """Backward-compatible alias for `predict_observables_for_log_samples`."""
+        return self.predict_observables_for_log_samples(samples_log=samples_log, max_samples=max_samples)
 
 
 def plot_corner(
@@ -1370,28 +1498,41 @@ def plot_corner(
     plt.close(fig)
 
 
-def plot_moment_fit(
-    observed_moments: np.ndarray,
-    covariance_moments: np.ndarray,
-    map_moments: np.ndarray,
-    posterior_moment_samples: np.ndarray | None,
+def plot_observable_fit(
+    observed_values: np.ndarray,
+    covariance_values: np.ndarray,
+    map_values: np.ndarray,
+    posterior_samples: np.ndarray | None,
+    labels: Sequence[str],
     output_path: str,
+    yscale: str = "linear",
 ) -> None:
-    """Plot observed moments with uncertainty against MAP and posterior predictive summary."""
-    obs = np.asarray(observed_moments, dtype=float)
-    cov = np.asarray(covariance_moments, dtype=float)
+    """Plot observed observables with uncertainties against MAP and posterior predictive summaries."""
+    obs = np.asarray(observed_values, dtype=float)
+    cov = np.asarray(covariance_values, dtype=float)
     sigma = np.sqrt(np.clip(np.diag(cov), 1e-300, None))
-    map_pred = np.asarray(map_moments, dtype=float)
+    map_pred = np.asarray(map_values, dtype=float)
+    labels_arr = list(labels)
 
-    labels = ["M0", "M1", "M2"]
-    x = np.arange(3)
+    if obs.shape != map_pred.shape:
+        raise ValueError("observed_values and map_values must have the same shape")
+    if obs.ndim != 1:
+        raise ValueError("observed_values must be 1D")
+    if cov.shape != (obs.size, obs.size):
+        raise ValueError("covariance_values shape must match observable dimension")
+    if len(labels_arr) != obs.size:
+        raise ValueError("labels length must match observable dimension")
 
-    fig, ax = plt.subplots(figsize=(7.2, 4.6), constrained_layout=True)
+    x = np.arange(obs.size)
+
+    fig, ax = plt.subplots(figsize=(7.4, 4.8), constrained_layout=True)
     ax.errorbar(x, obs, yerr=sigma, fmt="o", color="black", lw=1.5, capsize=4, label="Observed")
     ax.scatter(x, map_pred, marker="s", s=45, color="tab:red", label="MAP prediction")
 
-    if posterior_moment_samples is not None and posterior_moment_samples.size > 0:
-        samp = np.asarray(posterior_moment_samples, dtype=float)
+    if posterior_samples is not None and posterior_samples.size > 0:
+        samp = np.asarray(posterior_samples, dtype=float)
+        if samp.ndim != 2 or samp.shape[1] != obs.size:
+            raise ValueError("posterior_samples must have shape (N, D) where D=len(labels)")
         p16 = np.percentile(samp, 16, axis=0)
         p50 = np.percentile(samp, 50, axis=0)
         p84 = np.percentile(samp, 84, axis=0)
@@ -1409,12 +1550,34 @@ def plot_moment_fit(
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_yscale("log")
-    ax.set_ylabel("Moment value")
-    ax.set_title("Observed vs fitted dN/dv moments")
+    ax.set_xticklabels(labels_arr, rotation=18 if len(labels_arr) > 4 else 0, ha="right" if len(labels_arr) > 4 else "center")
+    if yscale == "log" and np.all(obs > 0.0) and np.all(map_pred > 0.0):
+        ax.set_yscale("log")
+    else:
+        ax.set_yscale("linear")
+    ax.set_ylabel("Observable value")
+    ax.set_title("Observed vs fitted observables")
     ax.grid(alpha=0.25)
     ax.legend(frameon=False)
 
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
+
+
+def plot_moment_fit(
+    observed_moments: np.ndarray,
+    covariance_moments: np.ndarray,
+    map_moments: np.ndarray,
+    posterior_moment_samples: np.ndarray | None,
+    output_path: str,
+) -> None:
+    """Backward-compatible moment-fit helper for [M0, M1, M2]."""
+    plot_observable_fit(
+        observed_values=observed_moments,
+        covariance_values=covariance_moments,
+        map_values=map_moments,
+        posterior_samples=posterior_moment_samples,
+        labels=("M0", "M1", "M2"),
+        output_path=output_path,
+        yscale="log",
+    )

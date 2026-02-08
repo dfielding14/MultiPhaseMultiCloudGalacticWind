@@ -83,6 +83,103 @@ def test_map_and_hmc_smoke_on_synthetic_moments():
     assert np.all(rel_err < 0.35)
 
 
+def test_fit_posterior_reports_runtime_and_status_callback():
+    model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=3,
+        cloud_mass_range=(10.0, 1e4),
+        cloud_alpha=2.0,
+    )
+
+    theta_true = np.array([0.20, 0.12, 0.90], dtype=float)
+    moments_true = model.predict_moments(theta_true)
+    covariance = build_covariance(0.10 * moments_true, np.eye(3))
+
+    observed = moments_true * np.array([1.01, 0.99, 1.02], dtype=float)
+    status_messages: list[str] = []
+
+    fit = model.fit_posterior(
+        observed_moments=observed,
+        covariance_moments=covariance,
+        initial_theta=(0.2, 0.2, 0.8),
+        map_max_iter=8,
+        map_num_starts=2,
+        hmc_num_warmup=8,
+        hmc_num_samples=10,
+        sampler="hmc",
+        seed=123,
+        status_callback=status_messages.append,
+    )
+
+    assert fit.runtime_seconds is not None
+    assert set(fit.runtime_seconds.keys()) == {"map", "posterior_sampling", "total"}
+    assert fit.runtime_seconds["map"] >= 0.0
+    assert fit.runtime_seconds["posterior_sampling"] >= 0.0
+    assert fit.runtime_seconds["total"] >= fit.runtime_seconds["map"]
+    assert fit.runtime_seconds["total"] >= fit.runtime_seconds["posterior_sampling"]
+
+    assert len(status_messages) >= 4
+    assert any("MAP optimization" in msg for msg in status_messages)
+    assert any("posterior sampling" in msg for msg in status_messages)
+
+
+def test_shape_observable_mode_predicts_and_fits():
+    model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=3,
+        cloud_mass_range=(10.0, 1e4),
+        cloud_alpha=2.0,
+        observable_set="logm0_mean_sigma_skew_kurt",
+    )
+
+    theta_true = np.array([0.20, 0.12, 0.90], dtype=float)
+    obs_true = model.predict_observables(theta_true)
+    raw_true = model.predict_raw_moments(theta_true)
+
+    assert obs_true.shape == (5,)
+    assert raw_true.shape == (5,)
+    assert np.all(np.isfinite(obs_true))
+    assert np.all(np.isfinite(raw_true))
+    assert obs_true[2] > 0.0
+
+    sigma = np.array(
+        [
+            0.10,
+            0.10 * abs(obs_true[1]),
+            0.10 * abs(obs_true[2]),
+            0.20,
+            0.40,
+        ],
+        dtype=float,
+    )
+    covariance = build_covariance(sigma, np.eye(5))
+    observed = obs_true * np.array([1.01, 0.98, 1.02, 1.05, 0.95], dtype=float)
+
+    fit = model.fit_posterior(
+        observed_moments=observed,
+        covariance_moments=covariance,
+        initial_theta=(0.2, 0.2, 0.8),
+        map_max_iter=8,
+        map_num_starts=2,
+        hmc_num_warmup=8,
+        hmc_num_samples=10,
+        sampler="hmc",
+        seed=9,
+    )
+
+    assert fit.map.predicted_moments.shape == (5,)
+    assert np.all(np.isfinite(fit.map.predicted_moments))
+    assert fit.hmc.samples_theta.shape == (10, 3)
+
+
 def test_map_and_nuts_smoke_on_synthetic_moments():
     pytest.importorskip("numpyro")
 

@@ -77,15 +77,23 @@ def stabilize_covariance(cov: np.ndarray, min_eig: float = 1e-20) -> np.ndarray:
     sym = 0.5 * (cov + cov.T)
     sym = np.nan_to_num(sym, nan=0.0, posinf=0.0, neginf=0.0)
     n = sym.shape[0]
+    scale = max(float(np.max(np.abs(sym))), 1.0)
+    sym_scaled = sym / scale
+    min_eig_scaled = float(min_eig) / scale
 
-    jitter = max(min_eig, 1e-16)
+    jitter = max(min_eig_scaled, 1e-16)
     for _ in range(6):
         try:
-            eigvals, eigvecs = np.linalg.eigh(sym)
-            eigvals_clipped = np.clip(eigvals, min_eig, None)
-            return eigvecs @ np.diag(eigvals_clipped) @ eigvecs.T
+            eigvals, eigvecs = np.linalg.eigh(sym_scaled)
+            eigvals_clipped = np.clip(np.nan_to_num(eigvals, nan=min_eig_scaled, posinf=1e200), min_eig_scaled, 1e200)
+            eigvecs = np.nan_to_num(eigvecs, nan=0.0, posinf=0.0, neginf=0.0)
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore", under="ignore"):
+                spd_scaled = (eigvecs * eigvals_clipped[np.newaxis, :]) @ eigvecs.T
+            spd_scaled = np.nan_to_num(spd_scaled, nan=0.0, posinf=1e200, neginf=0.0)
+            spd = spd_scaled * scale
+            return 0.5 * (spd + spd.T)
         except np.linalg.LinAlgError:
-            sym = sym + jitter * np.eye(n)
+            sym_scaled = sym_scaled + jitter * np.eye(n)
             jitter *= 10.0
 
     return np.eye(n) * max(min_eig, 1e-12)
@@ -198,6 +206,7 @@ class MomentInferenceModel:
     _ETA_E_MAX = 0.999
     _OBS_MOMENTS3 = "m0_m1_m2"
     _OBS_SHAPE5 = "logm0_mean_sigma_skew_kurt"
+    _OBS_DNDV_BINNED = "dndv_binned"
     _OBSERVABLE_SETS = {
         _OBS_MOMENTS3: ("M0", "M1", "M2"),
         _OBS_SHAPE5: ("logM0", "mean_v", "sigma_v", "skewness", "kurtosis"),
@@ -220,6 +229,10 @@ class MomentInferenceModel:
         integrator_atol: float = 1e-8,
         integrator_max_steps: int = 131072,
         observable_set: str = "m0_m1_m2",
+        dndv_num_bins: int = 25,
+        dndv_vmin_kms: float = 0.0,
+        dndv_vmax_kms: float = 1200.0,
+        dndv_kernel_sigma_kms: float | None = None,
         config: WindConfig | None = None,
         topaz_cooling_table_path: str | None = None,
     ) -> None:
@@ -245,13 +258,39 @@ class MomentInferenceModel:
         self.integrator_rtol = float(integrator_rtol)
         self.integrator_atol = float(integrator_atol)
         self.integrator_max_steps = int(integrator_max_steps)
+        self.dndv_num_bins = int(dndv_num_bins)
+        self.dndv_vmin_kms = float(dndv_vmin_kms)
+        self.dndv_vmax_kms = float(dndv_vmax_kms)
         self.observable_set = self._resolve_observable_set(observable_set)
-        self.observable_names = self._OBSERVABLE_SETS[self.observable_set]
-        self.observable_dim = len(self.observable_names)
-        self.default_observable_yscale = "log" if self.observable_set == self._OBS_MOMENTS3 else "linear"
 
         if self.integrator_mode not in {"rk2", "rk3", "rk4", "tsit5"}:
             raise ValueError("integrator_mode must be one of {'rk2', 'rk3', 'rk4', 'tsit5'}")
+        if self.dndv_num_bins < 6:
+            raise ValueError("dndv_num_bins must be >= 6")
+        if self.dndv_vmax_kms <= self.dndv_vmin_kms:
+            raise ValueError("dndv_vmax_kms must exceed dndv_vmin_kms")
+
+        self.dndv_bin_edges_kms = np.linspace(
+            self.dndv_vmin_kms,
+            self.dndv_vmax_kms,
+            self.dndv_num_bins + 1,
+            dtype=float,
+        )
+        self.dndv_bin_centers_kms = 0.5 * (self.dndv_bin_edges_kms[:-1] + self.dndv_bin_edges_kms[1:])
+        if dndv_kernel_sigma_kms is None:
+            dndv_kernel_sigma_kms = 0.5 * (self.dndv_bin_edges_kms[1] - self.dndv_bin_edges_kms[0])
+        self.dndv_kernel_sigma_kms = float(dndv_kernel_sigma_kms)
+        if self.dndv_kernel_sigma_kms <= 0.0:
+            raise ValueError("dndv_kernel_sigma_kms must be positive")
+
+        if self.observable_set == self._OBS_DNDV_BINNED:
+            self.observable_names = tuple(f"dN/dv@{v:.0f}km/s" for v in self.dndv_bin_centers_kms)
+            self.default_observable_yscale = "log"
+        else:
+            self.observable_names = self._OBSERVABLE_SETS[self.observable_set]
+            self.default_observable_yscale = "log" if self.observable_set == self._OBS_MOMENTS3 else "linear"
+        self.observable_dim = len(self.observable_names)
+
         if self.integrator_mode == "tsit5" and not has_diffrax():
             raise ModuleNotFoundError(
                 "integrator_mode='tsit5' requires Diffrax. Install with `python -m pip install diffrax`."
@@ -310,6 +349,10 @@ class MomentInferenceModel:
             "shape5": cls._OBS_SHAPE5,
             "transformed_moments": cls._OBS_SHAPE5,
             "log_shape_moments": cls._OBS_SHAPE5,
+            "dndv_binned": cls._OBS_DNDV_BINNED,
+            "dndv": cls._OBS_DNDV_BINNED,
+            "binned_dndv": cls._OBS_DNDV_BINNED,
+            "full_dndv": cls._OBS_DNDV_BINNED,
         }
         if key not in aliases:
             raise ValueError(
@@ -338,6 +381,17 @@ class MomentInferenceModel:
         skewness = mu3 / sigma3
         kurtosis = mu4 / sigma4
         return jnp.asarray([jnp.log(m0), mean_v, sigma_v, skewness, kurtosis], dtype=jnp.float64)
+
+    @staticmethod
+    def _observables_dndv_binned(v_kms, n_h_eff, r_grid, velocity_bins_kms, kernel_sigma_kms):
+        """Return Gaussian-kernel binned dN/dv over a fixed velocity grid."""
+        sigma = jnp.maximum(jnp.asarray(kernel_sigma_kms, dtype=jnp.float64), 1e-12)
+        vb = jnp.asarray(velocity_bins_kms, dtype=jnp.float64)
+
+        dv = (v_kms[:, :, None] - vb[None, None, :]) / sigma
+        kernel = jnp.exp(-0.5 * dv * dv) / (sigma * jnp.sqrt(2.0 * jnp.pi))
+        dndv_species = jnp.trapezoid(n_h_eff[:, :, None] * kernel, r_grid, axis=0)
+        return jnp.sum(dndv_species, axis=0)
 
     @classmethod
     def _theta_from_unconstrained_jax(cls, unconstrained_theta):
@@ -425,6 +479,8 @@ class MomentInferenceModel:
         r_obs_max_kpc = self.r_max_kpc
         r_kpc = r_grid / kpc
         radial_window_col = ((r_kpc >= r_obs_min_kpc) & (r_kpc <= r_obs_max_kpc))[:, None]
+        dndv_velocity_bins = jnp.asarray(self.dndv_bin_centers_kms, dtype=jnp.float64)
+        dndv_kernel_sigma = jnp.asarray(self.dndv_kernel_sigma_kms, dtype=jnp.float64)
         injection_profile_col = jnp.where(
             r_grid < injection_radius,
             (r_grid / jnp.maximum(injection_radius, 1e-30)) ** injection_power,
@@ -567,7 +623,7 @@ class MomentInferenceModel:
                 obs_finite = jnp.nan_to_num(observables, nan=0.0, posinf=1e100, neginf=-1e100)
                 obs_floor = jnp.asarray([1e-30, 1e-20, 1e-10], dtype=jnp.float64)
                 obs_barrier = jnp.sum(jax.nn.softplus((obs_floor - obs_finite) / obs_floor))
-            else:
+            elif self.observable_set == self._OBS_SHAPE5:
                 observables = self._observables_shape5_from_raw_moments(raw_moments)
                 var_v = (raw_moments[2] / jnp.maximum(raw_moments[0], 1e-300)) - observables[1] * observables[1]
                 valid_observables = jnp.all(jnp.isfinite(observables)) & (var_v > 0.0) & (raw_moments[0] > 0.0)
@@ -575,6 +631,20 @@ class MomentInferenceModel:
                 obs_finite_violation = jnp.mean(jnp.where(jnp.isfinite(observables), 0.0, 1.0))
                 variance_barrier = jax.nn.softplus((1e-8 - var_v) / 1e-8)
                 obs_barrier = obs_finite_violation + variance_barrier
+            else:
+                dndv_floor = 1e-40
+                dndv_binned = self._observables_dndv_binned(
+                    v_kms=v_kms,
+                    n_h_eff=n_h_eff,
+                    r_grid=r_grid,
+                    velocity_bins_kms=dndv_velocity_bins,
+                    kernel_sigma_kms=dndv_kernel_sigma,
+                )
+                observables = jnp.maximum(dndv_binned, dndv_floor)
+                valid_observables = jnp.all(jnp.isfinite(observables)) & jnp.all(observables > 0.0)
+                fallback_obs = jnp.full((self.observable_dim,), dndv_floor, dtype=jnp.float64)
+                obs_finite = jnp.nan_to_num(observables, nan=0.0, posinf=1e100, neginf=-1e100)
+                obs_barrier = jnp.sum(jax.nn.softplus((dndv_floor - obs_finite) / dndv_floor))
 
             valid_raw = jnp.all(jnp.isfinite(raw_moments)) & (raw_moments[0] > 0.0) & (raw_moments[2] > 0.0)
             valid = valid_state & valid_raw & valid_observables
@@ -606,8 +676,8 @@ class MomentInferenceModel:
         return np.asarray(self._predict_theta_fn(theta_arr), dtype=float)
 
     def predict_moments(self, theta: Sequence[float]) -> np.ndarray:
-        """Backward-compatible alias for `predict_observables`."""
-        return self.predict_observables(theta)
+        """Predict raw [M0, M1, M2] for linear-space parameters."""
+        return self.predict_raw_moments(theta)[:3]
 
     def predict_observables_log(self, log_theta: Sequence[float]) -> np.ndarray:
         """Predict configured observables for log-space parameters log([eta_M, eta_M_cold, eta_E])."""
@@ -615,13 +685,20 @@ class MomentInferenceModel:
         return np.asarray(self._predict_log_theta_fn(log_theta_arr), dtype=float)
 
     def predict_moments_log(self, log_theta: Sequence[float]) -> np.ndarray:
-        """Backward-compatible alias for `predict_observables_log`."""
-        return self.predict_observables_log(log_theta)
+        """Predict raw [M0, M1, M2] for log-space parameters."""
+        log_theta_arr = np.asarray(log_theta, dtype=float)
+        return self.predict_moments(np.exp(log_theta_arr))
 
     def predict_raw_moments(self, theta: Sequence[float]) -> np.ndarray:
         """Predict raw velocity moments [M0, M1, M2, M3, M4] regardless of observable_set."""
         theta_arr = jnp.asarray(theta, dtype=jnp.float64)
         return np.asarray(self._predict_raw_theta_fn(theta_arr), dtype=float)
+
+    def get_dndv_velocity_bins(self) -> np.ndarray:
+        """Return binned dN/dv velocity centers [km/s] for `observable_set='dndv_binned'`."""
+        if self.observable_set != self._OBS_DNDV_BINNED:
+            raise ValueError("Velocity bins are only defined for observable_set='dndv_binned'")
+        return np.asarray(self.dndv_bin_centers_kms, dtype=float)
 
     def make_negative_log_posterior(
         self,
@@ -818,7 +895,7 @@ class MomentInferenceModel:
         covariance_theta = stabilize_covariance(covariance_theta, min_eig=1e-20)
         correlation_theta = covariance_to_correlation(covariance_theta)
 
-        predicted = self.predict_moments(theta_map)
+        predicted = self.predict_observables(theta_map)
         cov_obs = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
         resid = predicted - np.asarray(observed_moments, dtype=float)
         chi2 = float(resid @ np.linalg.inv(cov_obs) @ resid)
@@ -1559,6 +1636,65 @@ def plot_observable_fit(
     ax.set_title("Observed vs fitted observables")
     ax.grid(alpha=0.25)
     ax.legend(frameon=False)
+
+    fig.savefig(output_path, dpi=220)
+    plt.close(fig)
+
+
+def plot_dndv_fit(
+    velocity_bins_kms: np.ndarray,
+    observed_dndv: np.ndarray,
+    covariance_dndv: np.ndarray,
+    map_dndv: np.ndarray,
+    posterior_dndv_samples: np.ndarray | None,
+    output_path: str,
+) -> None:
+    """Plot binned dN/dv with uncertainty, MAP, and posterior predictive envelope."""
+    v = np.asarray(velocity_bins_kms, dtype=float)
+    obs = np.asarray(observed_dndv, dtype=float)
+    cov = np.asarray(covariance_dndv, dtype=float)
+    map_pred = np.asarray(map_dndv, dtype=float)
+
+    if v.ndim != 1 or obs.ndim != 1 or map_pred.ndim != 1:
+        raise ValueError("velocity_bins_kms, observed_dndv, and map_dndv must be 1D")
+    if obs.shape != v.shape or map_pred.shape != v.shape:
+        raise ValueError("velocity_bins_kms, observed_dndv, and map_dndv must have matching shapes")
+    if cov.shape != (v.size, v.size):
+        raise ValueError("covariance_dndv shape must match velocity bin count")
+
+    sigma = np.sqrt(np.clip(np.diag(cov), 1e-300, None))
+    obs_floor = np.maximum(obs, 1e-40)
+    map_floor = np.maximum(map_pred, 1e-40)
+
+    fig, ax = plt.subplots(figsize=(8.2, 4.8), constrained_layout=True)
+    ax.plot(v, obs_floor, color="black", lw=1.3, marker="o", ms=3.5, label="Observed")
+    ax.fill_between(
+        v,
+        np.maximum(obs_floor - sigma, 1e-40),
+        np.maximum(obs_floor + sigma, 1e-40),
+        color="black",
+        alpha=0.14,
+        linewidth=0.0,
+        label="Observed 1-sigma",
+    )
+    ax.plot(v, map_floor, color="tab:red", lw=1.8, label="MAP prediction")
+
+    if posterior_dndv_samples is not None and posterior_dndv_samples.size > 0:
+        samp = np.asarray(posterior_dndv_samples, dtype=float)
+        if samp.ndim != 2 or samp.shape[1] != v.size:
+            raise ValueError("posterior_dndv_samples must have shape (N, num_bins)")
+        p16 = np.maximum(np.percentile(samp, 16, axis=0), 1e-40)
+        p50 = np.maximum(np.percentile(samp, 50, axis=0), 1e-40)
+        p84 = np.maximum(np.percentile(samp, 84, axis=0), 1e-40)
+        ax.fill_between(v, p16, p84, color="tab:blue", alpha=0.20, linewidth=0.0, label="Posterior 16-84%")
+        ax.plot(v, p50, color="tab:blue", lw=1.4, ls="--", label="Posterior median")
+
+    ax.set_yscale("log")
+    ax.set_xlabel("Velocity [km/s]")
+    ax.set_ylabel(r"dN/dv [cm$^{-2}$ / (km s$^{-1}$)]")
+    ax.set_title("Binned dN/dv: observed vs fitted")
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, fontsize=9)
 
     fig.savefig(output_path, dpi=220)
     plt.close(fig)

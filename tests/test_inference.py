@@ -180,6 +180,57 @@ def test_shape_observable_mode_predicts_and_fits():
     assert fit.hmc.samples_theta.shape == (10, 3)
 
 
+def test_dndv_binned_observable_mode_predicts_and_fits():
+    model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=3,
+        cloud_mass_range=(10.0, 1e4),
+        cloud_alpha=2.0,
+        observable_set="dndv_binned",
+        dndv_num_bins=12,
+        dndv_vmin_kms=0.0,
+        dndv_vmax_kms=900.0,
+        dndv_kernel_sigma_kms=35.0,
+    )
+
+    theta_true = np.array([0.20, 0.12, 0.90], dtype=float)
+    obs_true = model.predict_observables(theta_true)
+    v_bins = model.get_dndv_velocity_bins()
+
+    assert obs_true.shape == (12,)
+    assert v_bins.shape == (12,)
+    assert np.all(np.isfinite(obs_true))
+    assert np.all(obs_true > 0.0)
+
+    idx = np.arange(obs_true.size)
+    sigma = np.maximum(0.12 * obs_true, 0.03 * np.max(obs_true))
+    corr = 0.6 ** np.abs(idx[:, None] - idx[None, :])
+    covariance = build_covariance(sigma, corr)
+
+    observed = obs_true * (1.0 + 0.03 * np.cos(0.4 * idx))
+    observed = np.maximum(observed, 1e-40)
+
+    fit = model.fit_posterior(
+        observed_moments=observed,
+        covariance_moments=covariance,
+        initial_theta=(0.2, 0.2, 0.8),
+        map_max_iter=8,
+        map_num_starts=2,
+        hmc_num_warmup=8,
+        hmc_num_samples=10,
+        sampler="hmc",
+        seed=13,
+    )
+
+    assert fit.map.predicted_moments.shape == (12,)
+    assert np.all(np.isfinite(fit.map.predicted_moments))
+    assert fit.hmc.samples_theta.shape == (10, 3)
+
+
 def test_map_and_nuts_smoke_on_synthetic_moments():
     pytest.importorskip("numpyro")
 

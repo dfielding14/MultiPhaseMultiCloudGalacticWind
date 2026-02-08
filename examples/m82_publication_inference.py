@@ -14,6 +14,7 @@ import numpy as np
 from multiphasegalacticwind.inference import (
     MomentInferenceModel,
     build_covariance,
+    plot_dndv_fit,
     plot_observable_fit,
     plot_corner,
     summarize_parameter_degeneracies,
@@ -57,13 +58,34 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--observable-set",
-        choices=["m0_m1_m2", "logm0_mean_sigma_skew_kurt"],
+        choices=["m0_m1_m2", "logm0_mean_sigma_skew_kurt", "dndv_binned"],
         default="logm0_mean_sigma_skew_kurt",
         help="Observable vector used in the likelihood.",
     )
     parser.add_argument("--frac-error", type=float, default=0.10, help="Fractional 1-sigma error scale")
     parser.add_argument("--shape-skew-sigma", type=float, default=0.20, help="Absolute 1-sigma for skewness")
     parser.add_argument("--shape-kurt-sigma", type=float, default=0.40, help="Absolute 1-sigma for kurtosis")
+    parser.add_argument("--dndv-num-bins", type=int, default=25, help="Number of velocity bins for dN/dv mode")
+    parser.add_argument("--dndv-vmin-kms", type=float, default=0.0, help="Minimum velocity bin edge [km/s]")
+    parser.add_argument("--dndv-vmax-kms", type=float, default=1200.0, help="Maximum velocity bin edge [km/s]")
+    parser.add_argument(
+        "--dndv-kernel-sigma-kms",
+        type=float,
+        default=None,
+        help="Gaussian kernel width for dN/dv projection [km/s]. Default: half-bin width.",
+    )
+    parser.add_argument(
+        "--dndv-sigma-floor-frac",
+        type=float,
+        default=0.03,
+        help="Minimum bin uncertainty as a fraction of max(true dN/dv).",
+    )
+    parser.add_argument(
+        "--dndv-bin-corr",
+        type=float,
+        default=0.60,
+        help="AR(1) bin-to-bin correlation coefficient for synthetic dN/dv covariance.",
+    )
     parser.add_argument("--seed", type=int, default=42)
 
     parser.add_argument("--r-max-kpc", type=float, default=30.0)
@@ -143,6 +165,8 @@ def _build_synthetic_covariance(
     frac_error: float,
     shape_skew_sigma: float,
     shape_kurt_sigma: float,
+    dndv_sigma_floor_frac: float,
+    dndv_bin_corr: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     if model.observable_set == "m0_m1_m2":
         sigma = np.maximum(frac_error * np.abs(true_observables), 1e-30)
@@ -154,6 +178,16 @@ def _build_synthetic_covariance(
             ],
             dtype=float,
         )
+        covariance = build_covariance(sigma, corr)
+        return sigma, covariance
+
+    if model.observable_set == "dndv_binned":
+        amp = max(np.max(np.abs(true_observables)), 1e-30)
+        sigma_floor = max(dndv_sigma_floor_frac, 1e-6) * amp
+        sigma = np.maximum(frac_error * np.abs(true_observables), sigma_floor)
+        rho = float(np.clip(dndv_bin_corr, -0.95, 0.95))
+        idx = np.arange(model.observable_dim)
+        corr = rho ** np.abs(idx[:, None] - idx[None, :])
         covariance = build_covariance(sigma, corr)
         return sigma, covariance
 
@@ -217,6 +251,10 @@ def main() -> None:
             integrator_atol=args.integrator_atol,
             integrator_max_steps=args.integrator_max_steps,
             observable_set=args.observable_set,
+            dndv_num_bins=args.dndv_num_bins,
+            dndv_vmin_kms=args.dndv_vmin_kms,
+            dndv_vmax_kms=args.dndv_vmax_kms,
+            dndv_kernel_sigma_kms=args.dndv_kernel_sigma_kms,
         )
         t_model = time.perf_counter() - t0
         logger.log(f"MomentInferenceModel constructed in {t_model:.2f} s.")
@@ -242,12 +280,16 @@ def main() -> None:
             frac_error=args.frac_error,
             shape_skew_sigma=args.shape_skew_sigma,
             shape_kurt_sigma=args.shape_kurt_sigma,
+            dndv_sigma_floor_frac=args.dndv_sigma_floor_frac,
+            dndv_bin_corr=args.dndv_bin_corr,
         )
 
         rng = np.random.default_rng(args.seed)
         observed = rng.multivariate_normal(true_observables, covariance)
         if model.observable_set == "m0_m1_m2":
             observed = np.maximum(observed, 1e-24)
+        elif model.observable_set == "dndv_binned":
+            observed = np.maximum(observed, 1e-40)
         else:
             observed[2] = max(observed[2], 1e-3)  # keep sampled velocity dispersion physical
         logger.log("Synthetic observation generated: " + _format_observables(model.observable_names, observed))
@@ -289,7 +331,12 @@ def main() -> None:
         logger.log(f"Posterior predictive observables computed in {t_pred:.2f} s.")
 
         corner_path = os.path.join(args.output_dir, "posterior_corner.png")
-        moment_fit_path = os.path.join(args.output_dir, "observable_fit.png")
+        if model.observable_set == "dndv_binned":
+            observable_plot_path = os.path.join(args.output_dir, "dndv_fit.png")
+            observable_plot_key = "plot_dndv_fit"
+        else:
+            observable_plot_path = os.path.join(args.output_dir, "observable_fit.png")
+            observable_plot_key = "plot_observable_fit"
 
         t0 = time.perf_counter()
         plot_corner(
@@ -303,17 +350,27 @@ def main() -> None:
         logger.log(f"Corner plot written in {t_corner:.2f} s -> {corner_path}")
 
         t0 = time.perf_counter()
-        plot_observable_fit(
-            observed_values=observed,
-            covariance_values=covariance,
-            map_values=fit.map.predicted_moments,
-            posterior_samples=posterior_observable_samples,
-            labels=model.observable_names,
-            output_path=moment_fit_path,
-            yscale=model.default_observable_yscale,
-        )
+        if model.observable_set == "dndv_binned":
+            plot_dndv_fit(
+                velocity_bins_kms=model.get_dndv_velocity_bins(),
+                observed_dndv=observed,
+                covariance_dndv=covariance,
+                map_dndv=fit.map.predicted_moments,
+                posterior_dndv_samples=posterior_observable_samples,
+                output_path=observable_plot_path,
+            )
+        else:
+            plot_observable_fit(
+                observed_values=observed,
+                covariance_values=covariance,
+                map_values=fit.map.predicted_moments,
+                posterior_samples=posterior_observable_samples,
+                labels=model.observable_names,
+                output_path=observable_plot_path,
+                yscale=model.default_observable_yscale,
+            )
         t_moment_plot = time.perf_counter() - t0
-        logger.log(f"Observable-fit plot written in {t_moment_plot:.2f} s -> {moment_fit_path}")
+        logger.log(f"Observable-fit plot written in {t_moment_plot:.2f} s -> {observable_plot_path}")
 
         recovery = _summarize_recovery(theta_true, fit.map.theta_map, fit.hmc.samples_theta)
         runtime_fit = fit.runtime_seconds or {}
@@ -323,7 +380,7 @@ def main() -> None:
             "fit_total_wall": float(t_fit),
             "posterior_predictive_eval": float(t_pred),
             "plot_corner": float(t_corner),
-            "plot_observable_fit": float(t_moment_plot),
+            observable_plot_key: float(t_moment_plot),
             "fit_map": float(runtime_fit.get("map", float("nan"))),
             "fit_posterior_sampling": float(runtime_fit.get("posterior_sampling", float("nan"))),
             "fit_total_reported": float(runtime_fit.get("total", float("nan"))),
@@ -340,6 +397,10 @@ def main() -> None:
                 "observable_set": model.observable_set,
                 "observable_labels": list(model.observable_names),
                 "frac_error": float(args.frac_error),
+                "dndv_num_bins": int(args.dndv_num_bins),
+                "dndv_vmin_kms": float(args.dndv_vmin_kms),
+                "dndv_vmax_kms": float(args.dndv_vmax_kms),
+                "dndv_kernel_sigma_kms": float(model.dndv_kernel_sigma_kms),
                 "seed": int(args.seed),
             },
             "observables": {
@@ -348,6 +409,9 @@ def main() -> None:
                 "sigma": sigma.tolist(),
                 "covariance": covariance.tolist(),
                 "raw_moments_true": true_raw_moments.tolist(),
+                "velocity_bins_kms": None
+                if model.observable_set != "dndv_binned"
+                else model.get_dndv_velocity_bins().tolist(),
             },
             "map": {
                 "theta_map": fit.map.theta_map.tolist(),
@@ -389,7 +453,7 @@ def main() -> None:
             "runtime_seconds": runtime,
             "outputs": {
                 "corner_plot": corner_path,
-                "observable_fit_plot": moment_fit_path,
+                "observable_fit_plot": observable_plot_path,
                 "status_log": log_path,
             },
         }

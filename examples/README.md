@@ -52,6 +52,11 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
   - Accepts observed (`M0`, `M1`, `M2`) plus full error/correlation specification
   - Saves dense posterior corner plot, moment-fit plot, and posterior sample arrays
 
+- **`m82_publication_inference.py`** - End-to-end publication-style synthetic recovery test
+  - M82-like truth setup with heavy MAP + NUTS workflow and wall-time status logging
+  - Default likelihood uses transformed observables: `logM0`, mean velocity, dispersion, skewness, kurtosis
+  - Optional full-shape mode uses binned `dN/dv` likelihood (`--observable-set dndv_binned`, typically 20-30 bins)
+
 - **`inference_case_study.py`** - SFR/size case-study inference sweep
   - Runs multiple far-ranging galaxy scenarios (dwarf to high-SFR extended systems)
   - Generates per-case corner plots and degeneracy summaries
@@ -100,6 +105,7 @@ python examples/m82_multiphase_user_script.py --skip-plots --profile
 python examples/parameter_dependence_sweep.py --quick
 python examples/autodiff_sensitivity_analysis.py
 python examples/fit_observational_moments.py --help
+python examples/m82_publication_inference.py --help
 python examples/inference_case_study.py --quick
 python examples/cooling_backend_comparison.py
 

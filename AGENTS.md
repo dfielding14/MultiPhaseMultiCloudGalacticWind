@@ -61,6 +61,9 @@ Notebook guidance:
   - Unit conversion boundary between user units and CGS internals.
 - `multiphasegalacticwind/observables.py`
   - Post-processing into observational quantities (notably `dN/dv`).
+- `multiphasegalacticwind/inference.py`
+  - JAX MAP+HMC/NUTS inference for wind parameters.
+  - Supports observable modes: `m0_m1_m2`, `logm0_mean_sigma_skew_kurt`, and optional `dndv_binned` (20-30 bin style likelihoods).
 - `multiphasegalacticwind/analysis_helpers.py`
   - Diagnostics and derived-quantity helpers.
 - `multiphasegalacticwind/plotting.py`, `multiphasegalacticwind/plotting_helpers.py`
@@ -244,6 +247,9 @@ Current tests live in `tests/`:
   - configuration and cooling regression checks
 - `tests/test_jax_solver.py`
   - JAX solver/Jacobian shape and finiteness checks
+- `tests/test_inference.py`
+  - MAP/HMC/NUTS regression checks for all supported inference observable sets
+  - runtime/status callback and covariance-shape contracts
 
 Run tests:
 - `PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider`

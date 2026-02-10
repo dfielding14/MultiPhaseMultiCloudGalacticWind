@@ -28,6 +28,13 @@ from .inference import (
     plot_corner,
     plot_moment_fit,
 )
+from .classy_observations import (
+    ClassyObservation,
+    BinnedDndvObservation,
+    load_classy_observations,
+    get_classy_observation,
+    build_binned_dndv_observation,
+)
 
 __version__ = "0.1.0"
 __all__ = ["WindModel", "WindConfig", "get_default_config", "setup_plotting_style", "plot_wind_solution",
@@ -37,4 +44,6 @@ __all__ = ["WindModel", "WindConfig", "get_default_config", "setup_plotting_styl
            "calculate_column_density_by_species",
            "MomentInferenceModel", "MAPFitResult", "HMCResult", "PosteriorFitResult",
            "build_covariance", "covariance_to_correlation", "summarize_parameter_degeneracies",
-           "plot_corner", "plot_moment_fit"]
+           "plot_corner", "plot_moment_fit",
+           "ClassyObservation", "BinnedDndvObservation", "load_classy_observations",
+           "get_classy_observation", "build_binned_dndv_observation"]

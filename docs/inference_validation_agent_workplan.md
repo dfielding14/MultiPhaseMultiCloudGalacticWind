@@ -827,17 +827,18 @@ Watch for:
 The next implementation task should be:
 
 ```text
-Run examples/inference_synthetic_recovery.py across the baseline truth cases and build docs/inference_synthetic_recovery_report.md.
+Create examples/trml_sensitivity_screen.py and docs/trml_sensitivity_report.md.
 ```
 
 Do not add new fitted parameters in that task.
 
 Minimum scope:
 
-- run all baseline truth cases for at least the shape-five observable mode,
-- compare raw moments, shape-five, and binned `dN/dv` if runtime allows,
-- summarize coverage, bias, posterior widths, MAP errors, and sampler diagnostics,
-- write the recovery report under `docs/`,
-- keep sampler outputs and generated plots out of version control unless explicitly requested.
+- vary fixed cloud-wind and TRML parameters one at a time around a fiducial wind,
+- record validity, observable vectors, and derived summaries for each scan point,
+- compute leverage metrics such as changes in `M0`, mean velocity, velocity width, and profile distance,
+- rank parameters by observable leverage and invalid-region behavior,
+- write the sensitivity report under `docs/`,
+- keep generated scan outputs and plots out of version control unless explicitly requested.
 
-Only after that report and the TRML sensitivity screen should agents modify inference internals for deeper TRML parameters.
+Only after the TRML sensitivity report should agents choose one effective added parameter and modify inference internals.

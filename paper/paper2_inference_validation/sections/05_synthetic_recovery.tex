@@ -14,6 +14,16 @@
 % - Present recovery metrics: truth coverage in 68 and 95 percent intervals, posterior
 %   mean and median bias, posterior width, MAP error, chi-square, sampler acceptance,
 %   divergences, R-hat, ESS, and the parameter correlation matrix.
+% - CPU-scale pilot result from docs/inference_synthetic_recovery_report.md:
+%   in a reduced r_max=6 kpc, four-cloud-species shape-five run, five of eight
+%   truth cases were valid and sampled. The invalid cases were
+%   high_eta_m_low_eta_e, high_eta_m_cold, and near_failure_boundary.
+%   Successful HMC runs had acceptance rates 0.54--0.78 and no divergences,
+%   but eta_E was biased low in several truth cases. This pilot validates the
+%   recovery harness and identifies degeneracies; it does not yet justify adding
+%   inferred TRML parameters.
+% - Table placeholder: truth case, validity, MAP theta, 68/95 percent coverage,
+%   chi-square, acceptance rate, divergences, and strongest parameter correlation.
 % - Compare raw moments, shape-five observables, and binned dN/dv.
 % - Identify the dominant degeneracies among eta_M, eta_M,cold, and eta_E.
 % - Close by stating whether the baseline three-parameter inference is trustworthy enough to apply to real data or extend.

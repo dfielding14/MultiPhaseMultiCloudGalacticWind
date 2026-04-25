@@ -164,6 +164,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sampler", choices=["hmc", "nuts", "none"], default="hmc")
     parser.add_argument("--num-chains", type=int, default=1)
     parser.add_argument("--nuts-chain-method", choices=["auto", "sequential", "parallel", "vectorized"], default="auto")
+    parser.add_argument("--nuts-dense-mass", action="store_true", help="Use dense mass-matrix adaptation for NUTS.")
+    parser.add_argument("--nuts-max-tree-depth", type=int, default=10)
     parser.add_argument("--disable-progress-bar", action="store_true")
     parser.add_argument("--map-max-iter", type=int, default=25)
     parser.add_argument("--map-num-starts", type=int, default=4)
@@ -196,6 +198,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--num-samples must be >= 1")
     if args.num_warmup < 0:
         parser.error("--num-warmup must be >= 0")
+    if args.nuts_max_tree_depth < 1:
+        parser.error("--nuts-max-tree-depth must be >= 1")
     if args.posterior_predictive_samples < 1:
         parser.error("--posterior-predictive-samples must be >= 1")
     return args
@@ -528,6 +532,8 @@ def run_realization(
                 sampler=args.sampler,
                 num_chains=args.num_chains,
                 nuts_chain_method=args.nuts_chain_method,
+                nuts_dense_mass=args.nuts_dense_mass,
+                nuts_max_tree_depth=args.nuts_max_tree_depth,
                 nuts_progress_bar=not args.disable_progress_bar,
                 seed=args.seed + 1009 * realization_id,
             )
@@ -543,6 +549,8 @@ def run_realization(
                 "sampler": fit.hmc.sampler,
                 "num_chains": int(fit.hmc.num_chains),
                 "nuts_chain_method": fit.hmc.nuts_chain_method,
+                "nuts_dense_mass": fit.hmc.nuts_dense_mass,
+                "nuts_max_tree_depth": fit.hmc.nuts_max_tree_depth,
                 "acceptance_rate": float(fit.hmc.acceptance_rate),
                 "acceptance_rate_per_chain": None
                 if fit.hmc.acceptance_rate_per_chain is None

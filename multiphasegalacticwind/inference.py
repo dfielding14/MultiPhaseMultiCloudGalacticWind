@@ -156,6 +156,8 @@ class HMCResult:
     covariance_theta: np.ndarray
     correlation_theta: np.ndarray
     nuts_chain_method: str | None = None
+    nuts_dense_mass: bool | None = None
+    nuts_max_tree_depth: int | None = None
     num_divergent_per_chain: np.ndarray | None = None
     bfmi_per_chain: np.ndarray | None = None
 
@@ -1166,6 +1168,8 @@ class MomentInferenceModel:
             covariance_theta=covariance_theta,
             correlation_theta=covariance_to_correlation(covariance_theta),
             nuts_chain_method="hmc",
+            nuts_dense_mass=None,
+            nuts_max_tree_depth=None,
             num_divergent_per_chain=np.asarray([0], dtype=float),
             bfmi_per_chain=None,
         )
@@ -1180,6 +1184,8 @@ class MomentInferenceModel:
         target_accept: float,
         num_chains: int,
         chain_method: str,
+        dense_mass: bool,
+        max_tree_depth: int,
         progress_bar: bool,
         seed: int,
     ) -> HMCResult:
@@ -1203,6 +1209,8 @@ class MomentInferenceModel:
             potential_fn=potential_fn,
             target_accept_prob=float(target_accept),
             step_size=float(step_size),
+            dense_mass=bool(dense_mass),
+            max_tree_depth=int(max_tree_depth),
         )
         mcmc = MCMC(
             nuts_kernel,
@@ -1307,6 +1315,8 @@ class MomentInferenceModel:
             covariance_theta=covariance_theta,
             correlation_theta=covariance_to_correlation(covariance_theta),
             nuts_chain_method=resolved_chain_method,
+            nuts_dense_mass=bool(dense_mass),
+            nuts_max_tree_depth=int(max_tree_depth),
             num_divergent_per_chain=num_divergent_per_chain,
             bfmi_per_chain=bfmi_chain,
         )
@@ -1323,6 +1333,8 @@ class MomentInferenceModel:
         target_accept: float,
         num_chains: int,
         nuts_chain_method: str,
+        nuts_dense_mass: bool,
+        nuts_max_tree_depth: int,
         nuts_progress_bar: bool,
         seed: int,
         sampler: str,
@@ -1339,6 +1351,8 @@ class MomentInferenceModel:
                 target_accept=target_accept,
                 num_chains=max(1, int(num_chains)),
                 chain_method=nuts_chain_method,
+                dense_mass=bool(nuts_dense_mass),
+                max_tree_depth=int(nuts_max_tree_depth),
                 progress_bar=nuts_progress_bar,
                 seed=seed,
             )
@@ -1374,11 +1388,15 @@ class MomentInferenceModel:
         sampler: str = "nuts",
         num_chains: int = 1,
         nuts_chain_method: str = "auto",
+        nuts_dense_mass: bool = False,
+        nuts_max_tree_depth: int = 10,
         nuts_progress_bar: bool = False,
         status_callback: Callable[[str], None] | None = None,
         seed: int = 0,
     ) -> PosteriorFitResult:
         """Run MAP + posterior sampling workflow for configured observables."""
+        if int(nuts_max_tree_depth) < 1:
+            raise ValueError("nuts_max_tree_depth must be >= 1")
         total_start = time.perf_counter()
         if status_callback is not None:
             status_callback("Building MAP and sampler negative log-posteriors.")
@@ -1433,6 +1451,8 @@ class MomentInferenceModel:
             target_accept=hmc_target_accept,
             num_chains=num_chains,
             nuts_chain_method=nuts_chain_method,
+            nuts_dense_mass=nuts_dense_mass,
+            nuts_max_tree_depth=nuts_max_tree_depth,
             nuts_progress_bar=nuts_progress_bar,
             seed=seed,
             sampler=sampler,

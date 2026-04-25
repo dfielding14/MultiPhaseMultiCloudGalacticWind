@@ -306,6 +306,8 @@ def test_map_and_nuts_smoke_on_synthetic_moments():
         hmc_target_accept=0.7,
         sampler="nuts",
         num_chains=2,
+        nuts_dense_mass=True,
+        nuts_max_tree_depth=8,
         seed=11,
     )
 
@@ -316,6 +318,8 @@ def test_map_and_nuts_smoke_on_synthetic_moments():
     assert fit.hmc.acceptance_rate_per_chain is not None
     assert fit.hmc.acceptance_rate_per_chain.shape == (2,)
     assert fit.hmc.nuts_chain_method in {"parallel", "vectorized", "sequential"}
+    assert fit.hmc.nuts_dense_mass is True
+    assert fit.hmc.nuts_max_tree_depth == 8
     assert fit.hmc.num_divergent_per_chain is not None
     assert fit.hmc.num_divergent_per_chain.shape == (2,)
     assert fit.hmc.bfmi_per_chain is not None

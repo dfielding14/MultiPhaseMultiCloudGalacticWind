@@ -27,7 +27,7 @@ The next phase is a corrected synthetic-recovery campaign, not TRML sensitivity.
    Use `--use-truth-observables` so the synthetic observation is the forward model output at the known truth. This should be the first gate because a noiseless recovery failure points to inference machinery, sampler geometry, priors, or identifiability rather than random noise.
 
 2. Tune NUTS on the exact fiducial case.
-   Require `chi2` near zero at the MAP, truth inside the posterior intervals, no serious divergences, `Rhat <= 1.05`, and enough effective samples for the corner plot to be interpretable. The short corrected diagnostic improved the MAP but still showed broad `eta_E` and a few NUTS divergences, so production runs should use longer warmup/sampling and a higher target acceptance such as 0.90--0.95.
+   Require `chi2` near zero at the MAP, truth inside the posterior intervals, no serious divergences, `Rhat <= 1.05`, and enough effective samples for the corner plot to be interpretable. The short corrected diagnostic improved the MAP but still showed broad `eta_E` and a few NUTS divergences, so production runs should use dense mass-matrix adaptation, longer warmup, and a high target acceptance.
 
 3. Run exact-observable recovery across the valid truth cases.
    Apply the no-noise test to each truth case that produces valid forward-model observables. This tells us whether each truth case is identifiable under the chosen observables and covariance before adding stochastic scatter.
@@ -92,7 +92,60 @@ Interpretation:
 
 - The corrected MAP and observable-fit machinery pass the noiseless fiducial gate.
 - The posterior still leaves `eta_E` broad and biased low in the median, even though the true value is inside the central intervals.
-- The single NUTS divergence means this is not yet a clean production setting. Before running all truth cases, the next step is to tune the exact fiducial NUTS run further or adjust posterior geometry until divergences are removed.
+- The single NUTS divergence means this first gate was not yet a clean production setting. The follow-up tuning below removes this divergence without changing the MAP or observable fit.
+
+## Fiducial NUTS Tuning
+
+Two follow-up exact fiducial runs tested dense mass-matrix adaptation with longer warmup and a deeper NUTS tree limit. The better setting was:
+
+```bash
+JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 \
+python examples/inference_synthetic_recovery.py \
+  --truth-case fiducial \
+  --observable-set logm0_mean_sigma_skew_kurt \
+  --use-truth-observables \
+  --num-noise-realizations 1 \
+  --num-samples 256 \
+  --num-warmup 1024 \
+  --seed 20260427 \
+  --output examples/outputs/inference_synthetic_recovery/fiducial_shape5_exact_nuts_dense097_20260425 \
+  --r-max-kpc 6.0 \
+  --step-kpc 0.08 \
+  --n-cloud-species 4 \
+  --cloud-mass-min 10.0 \
+  --cloud-mass-max 1.0e4 \
+  --sampler nuts \
+  --num-chains 2 \
+  --nuts-chain-method vectorized \
+  --nuts-dense-mass \
+  --nuts-max-tree-depth 12 \
+  --disable-progress-bar \
+  --map-max-iter 24 \
+  --map-num-starts 4 \
+  --hmc-step-size 0.01 \
+  --hmc-target-accept 0.97 \
+  --jax-platform cpu
+```
+
+Tuning comparison:
+
+| Run | Dense mass | Target accept | Warmup | Divergences | Max `Rhat` | Min ESS | Acceptance |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| diagonal baseline | no | 0.95 | 512 | 1 | 1.000 | 150 | 0.948 |
+| dense conservative | yes | 0.99 | 1024 | 0 | 1.041 | 62 | 0.989 |
+| dense selected | yes | 0.97 | 1024 | 0 | 1.013 | 127 | 0.982 |
+
+The selected dense run preserves the corrected exact-data MAP `(0.195, 0.195, 0.756)` with `chi2 = 0.0208`, includes the truth inside all 68 percent and 95 percent marginal intervals, and removes NUTS divergences while keeping acceptable convergence diagnostics. The 68 percent posterior intervals are `(0.140, 0.258)`, `(0.152, 0.213)`, and `(0.526, 0.854)` for `eta_M`, `eta_M_cold`, and `eta_E`. The posterior still leaves `eta_E` broad, so the broad energy-loading constraint should be interpreted as an identifiability feature to monitor in the all-truth-case exact recovery, not as a remaining sampler failure in the fiducial case.
+
+Recommended exact-recovery settings for the next sweep:
+
+- `--sampler nuts`
+- `--nuts-dense-mass`
+- `--nuts-max-tree-depth 12`
+- `--hmc-target-accept 0.97`
+- `--hmc-step-size 0.01`
+- `--num-warmup 1024`
+- at least `--num-samples 256` for the diagnostic sweep, with more samples for final production figures.
 
 ## Setup
 

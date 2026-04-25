@@ -27,3 +27,29 @@
 % - Compare raw moments, shape-five observables, and binned dN/dv.
 % - Identify the dominant degeneracies among eta_M, eta_M,cold, and eta_E.
 % - Close by stating whether the baseline three-parameter inference is trustworthy enough to apply to real data or extend.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/synthetic_recovery_shape5_summary.png}
+\caption{
+CPU-scale synthetic recovery pilot for the baseline three-parameter model.
+The left panel shows the truth cases in the plane of hot and cold mass loading.
+Green circles mark truth cases that produced valid observables and completed sampling; red crosses mark truth cases that were invalid for this reduced setup.
+The right panel shows the MAP-to-truth ratio for the five valid shape-moment recoveries.
+The pilot uses $r_{\rm max}=6\,\mathrm{kpc}$, four cloud-mass species, one noise realization per truth case, and short HMC chains.
+It is therefore a validation of the recovery harness and a first degeneracy diagnostic, not a final coverage study.
+}
+\label{fig:synthetic_recovery_shape5_summary}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/synthetic_recovery_mode_and_correlations.png}
+\caption{
+Observable-mode and parameter-degeneracy diagnostics from the baseline synthetic recovery pilot.
+The left panel compares fiducial MAP recovery for raw moments, transformed shape moments, and binned $dN/dv$ using the same reduced forward-model settings.
+The right panel shows posterior parameter correlations for the successful shape-moment truth cases.
+The narrow-profile case has a strong $\eta_M$--$\eta_E$ correlation, illustrating that some synthetic data constrain combinations of hot mass loading and hot energy loading more strongly than either parameter alone.
+}
+\label{fig:synthetic_recovery_mode_correlations}
+\end{figure*}

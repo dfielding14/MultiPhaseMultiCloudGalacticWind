@@ -1,0 +1,19 @@
+\section{Synthetic Input Recovery}
+\label{sec:synthetic_recovery}
+
+% Outline:
+% - State the question: if we generate fake data from known wind parameters, can the inference recover them?
+% - Define the baseline truth cases used by examples/inference_synthetic_recovery.py:
+%   fiducial, low_eta_m_high_eta_e, high_eta_m_low_eta_e, low_eta_m_cold,
+%   high_eta_m_cold, near_failure_boundary, strong_wings, and narrow_profile.
+% - Use the same three observable modes as the inference code: raw M0-M2 moments,
+%   logM0/mean/sigma/skewness/kurtosis, and binned dN/dv.
+% - Define the synthetic covariance model explicitly: correlated fractional errors
+%   for raw moments, mixed fractional/absolute errors for the transformed shape
+%   moments, and AR(1) bin-to-bin covariance with a profile-amplitude floor for dN/dv.
+% - Present recovery metrics: truth coverage in 68 and 95 percent intervals, posterior
+%   mean and median bias, posterior width, MAP error, chi-square, sampler acceptance,
+%   divergences, R-hat, ESS, and the parameter correlation matrix.
+% - Compare raw moments, shape-five observables, and binned dN/dv.
+% - Identify the dominant degeneracies among eta_M, eta_M,cold, and eta_E.
+% - Close by stating whether the baseline three-parameter inference is trustworthy enough to apply to real data or extend.

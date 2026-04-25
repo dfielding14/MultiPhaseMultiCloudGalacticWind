@@ -85,6 +85,10 @@ Notebook guidance:
   - Human-facing explanation of inference validation for physicists, especially inference novices.
 - `docs/inference_validation_agent_workplan.md`
   - Agent-facing staged execution plan for prior predictive checks, synthetic recovery, TRML sensitivity screens, and eventual expanded inference.
+- `paper/writing_style_guide.md`
+  - Writing style guide for Paper 2 manuscript prose.
+- `paper/paper2_inference_validation/paper2_inference_validation.tex`
+  - Tracked Paper 2 manuscript source. Update this alongside major inference-validation milestones.
 
 ---
 
@@ -353,6 +357,13 @@ Do not jump directly to fitting all TRML closure knobs. Parameters such as `f_tu
 - Avoid duplicate code paths.
 - Prefer explicit variable names over compressed algebra in critical physics routines.
 
+## Paper 2 Writing Rules
+- The tracked Paper 2 TeX source is `paper/paper2_inference_validation/paper2_inference_validation.tex`.
+- Any additions to that TeX document must follow `paper/writing_style_guide.md`.
+- Keep early manuscript changes as commented outlines until the corresponding result is stable.
+- Replace outline comments with prose only after the code, report, or analysis result has been validated.
+- Do not commit rendered PDFs, logs, temporary figure exports, or other generated manuscript artifacts unless explicitly requested.
+
 ---
 
 ## Scope Discipline
@@ -360,4 +371,6 @@ This repository is not a notebook/report/artifact store.
 If an output is generated during analysis, keep it out of versioned tree unless it is:
 - core package code,
 - tests,
+- durable docs,
+- tracked manuscript source,
 - or this AGENTS document.

@@ -21,7 +21,9 @@ import numpy as np
 from multiphasegalacticwind.constants import kpc
 
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "inference_prior_predictive")
+DEFAULT_CLASSY_PROFILES_PATH = os.path.join(REPO_ROOT, "multiphasegalacticwind", "data", "classy_profiles.npz")
 PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
 ETA_E_MAX = 0.999
 DEFAULT_PRIOR_BOUNDS = {
@@ -29,6 +31,7 @@ DEFAULT_PRIOR_BOUNDS = {
     "eta_M_cold": (0.001, 10.0),
     "eta_E": (0.05, ETA_E_MAX),
 }
+DNDV_PLOT_YMIN = 1.0e12
 
 
 def configure_matplotlib_for_paper(use_tex: bool = True) -> None:
@@ -126,6 +129,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-usetex",
         action="store_true",
         help="Disable Matplotlib LaTeX text rendering. Default uses LaTeX.",
+    )
+    parser.add_argument(
+        "--overlay-classy",
+        action="store_true",
+        help="Overlay processed CLASSY dN/dv profiles on the dndv_binned envelope plot.",
+    )
+    parser.add_argument(
+        "--classy-profiles-path",
+        default=DEFAULT_CLASSY_PROFILES_PATH,
+        help="Processed CLASSY profile NPZ used when --overlay-classy is set.",
     )
 
     args = parser.parse_args(argv)
@@ -373,6 +386,38 @@ def _finite_valid_mask(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return valid & np.all(np.isfinite(arr), axis=1)
 
 
+def load_classy_profiles(path: str) -> list[tuple[str, np.ndarray, np.ndarray]]:
+    """Load processed CLASSY dN/dv profiles as positive outflow speeds."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"CLASSY profile file not found: {path}")
+
+    data = np.load(path)
+    required = {"object_ids", "profile_offsets", "velocity_kms", "dndv_cm2_per_kms"}
+    missing = required.difference(data.files)
+    if missing:
+        raise KeyError(f"CLASSY profile file is missing required arrays: {sorted(missing)}")
+
+    object_ids = np.asarray(data["object_ids"], dtype=str)
+    offsets = np.asarray(data["profile_offsets"], dtype=int)
+    velocity = np.asarray(data["velocity_kms"], dtype=float)
+    dndv = np.asarray(data["dndv_cm2_per_kms"], dtype=float)
+    if offsets.shape != (object_ids.size + 1,):
+        raise ValueError("profile_offsets must have length len(object_ids) + 1")
+    if velocity.shape != dndv.shape:
+        raise ValueError("velocity_kms and dndv_cm2_per_kms must have matching shapes")
+
+    profiles: list[tuple[str, np.ndarray, np.ndarray]] = []
+    for object_id, start, stop in zip(object_ids, offsets[:-1], offsets[1:]):
+        v = np.abs(velocity[start:stop])
+        y = dndv[start:stop]
+        mask = np.isfinite(v) & np.isfinite(y) & (y > 0.0)
+        if not np.any(mask):
+            continue
+        order = np.argsort(v[mask])
+        profiles.append((str(object_id), v[mask][order], y[mask][order]))
+    return profiles
+
+
 def _plot_validity(output_dir: str, theta: np.ndarray, valid: np.ndarray) -> str:
     path = os.path.join(output_dir, "prior_predictive_validity.png")
     fig, axes = plt.subplots(1, 3, figsize=(12.0, 3.7), constrained_layout=True)
@@ -454,12 +499,44 @@ def _plot_parameter_scatter(output_dir: str, theta: np.ndarray, raw_moments: np.
     return path
 
 
-def _plot_dndv_envelope(output_dir: str, model: Any, observables: np.ndarray, valid: np.ndarray) -> str | None:
+def _plot_classy_profile_overlay(
+    ax: plt.Axes,
+    profiles: Sequence[tuple[str, np.ndarray, np.ndarray]] | None,
+) -> float:
+    if not profiles:
+        return np.nan
+
+    y_max = np.nan
+    for i, (_object_id, velocity_kms, dndv) in enumerate(profiles):
+        label = "CLASSY profiles" if i == 0 else None
+        ax.plot(
+            velocity_kms,
+            dndv,
+            color="0.2",
+            lw=0.45,
+            alpha=0.28,
+            zorder=1,
+            label=label,
+        )
+        finite = dndv[np.isfinite(dndv) & (dndv > 0.0)]
+        if finite.size:
+            y_max = np.nanmax([y_max, float(np.nanmax(finite))])
+    return float(y_max)
+
+
+def _plot_dndv_envelope(
+    output_dir: str,
+    model: Any,
+    observables: np.ndarray,
+    valid: np.ndarray,
+    classy_profiles: Sequence[tuple[str, np.ndarray, np.ndarray]] | None = None,
+) -> str | None:
     if model.observable_set != "dndv_binned":
         return None
 
     path = os.path.join(output_dir, "prior_predictive_dndv_envelope.png")
     fig, ax = plt.subplots(figsize=(7.0, 4.2), constrained_layout=True)
+    classy_ymax = _plot_classy_profile_overlay(ax, classy_profiles)
     mask = _finite_valid_mask(observables, valid)
     if not np.any(mask):
         _plot_empty(ax, "No valid dN/dv samples")
@@ -467,10 +544,12 @@ def _plot_dndv_envelope(output_dir: str, model: Any, observables: np.ndarray, va
         v = model.get_dndv_velocity_bins()
         y = observables[mask]
         p05, p16, p50, p84, p95 = np.percentile(y, [5, 16, 50, 84, 95], axis=0)
-        ax.fill_between(v, p05, p95, color="tab:blue", alpha=0.18, label="5-95 percent")
-        ax.fill_between(v, p16, p84, color="tab:blue", alpha=0.32, label="16-84 percent")
-        ax.plot(v, p50, color="tab:blue", lw=2.0, label="median")
+        ax.fill_between(v, p05, p95, color="tab:blue", alpha=0.18, label="5-95 percent", zorder=2)
+        ax.fill_between(v, p16, p84, color="tab:blue", alpha=0.32, label="16-84 percent", zorder=3)
+        ax.plot(v, p50, color="tab:blue", lw=2.0, label="median", zorder=4)
         ax.set_yscale("log")
+        y_upper = np.nanmax([float(np.nanmax(p95)), classy_ymax, DNDV_PLOT_YMIN * 10.0])
+        ax.set_ylim(DNDV_PLOT_YMIN, 1.2 * y_upper)
         ax.set_xlabel("velocity [km/s]")
         ax.set_ylabel(r"$dN/dv$ [cm$^{-2}$ (km/s)$^{-1}$]")
         ax.legend(frameon=False)
@@ -481,7 +560,12 @@ def _plot_dndv_envelope(output_dir: str, model: Any, observables: np.ndarray, va
     return path
 
 
-def make_plots(output_dir: str, model: Any, results: Sequence[SampleResult]) -> dict[str, str]:
+def make_plots(
+    output_dir: str,
+    model: Any,
+    results: Sequence[SampleResult],
+    classy_profiles: Sequence[tuple[str, np.ndarray, np.ndarray]] | None = None,
+) -> dict[str, str]:
     """Create minimum prior predictive diagnostic plots."""
     arrays = _arrays_from_results(results)
     paths = {
@@ -489,7 +573,7 @@ def make_plots(output_dir: str, model: Any, results: Sequence[SampleResult]) -> 
         "observable_histograms": _plot_observable_histograms(output_dir, arrays["raw_moments"], arrays["valid"]),
         "parameter_scatter": _plot_parameter_scatter(output_dir, arrays["theta_samples"], arrays["raw_moments"], arrays["valid"]),
     }
-    dndv_path = _plot_dndv_envelope(output_dir, model, arrays["observables"], arrays["valid"])
+    dndv_path = _plot_dndv_envelope(output_dir, model, arrays["observables"], arrays["valid"], classy_profiles)
     if dndv_path is not None:
         paths["dndv_envelope"] = dndv_path
     return paths
@@ -542,6 +626,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     rng = np.random.default_rng(args.seed)
     model = build_model(args)
     theta_samples = sample_prior(rng, args.num_samples)
+    classy_profiles = load_classy_profiles(args.classy_profiles_path) if args.overlay_classy else None
 
     results: list[SampleResult] = []
     for i, theta in enumerate(theta_samples):
@@ -558,7 +643,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     output_files: dict[str, str] = {}
     output_files["npz"] = write_npz(args.output, model, results)
     output_files["csv"] = write_csv_summary(args.output, model, results)
-    output_files.update(make_plots(args.output, model, results))
+    output_files.update(make_plots(args.output, model, results, classy_profiles))
     output_files["metadata"] = write_metadata(
         args.output,
         args,

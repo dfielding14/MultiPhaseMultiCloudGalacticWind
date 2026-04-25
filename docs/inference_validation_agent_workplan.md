@@ -23,12 +23,43 @@ Do not:
 - create one-off diagnostic scripts in the project root,
 - add broad inference abstractions before baseline recovery exists,
 - fit many TRML parameters before sensitivity and recovery studies justify them.
+- add prose to the Paper 2 TeX source without following `paper/writing_style_guide.md`.
 
 Local test command:
 
 ```bash
 JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider
 ```
+
+## Version Control And Paper 2 Cadence
+
+Treat each major task or milestone as a version-control boundary.
+
+Required cadence:
+
+- before starting a major task, make sure `git status --short` is understood,
+- after each major task, stage the source, tests, docs, and Paper 2 TeX updates that belong to that task,
+- do not stage generated outputs, prior-predictive atlases, sampler chains, temporary notebooks, or rendered paper PDFs unless explicitly requested,
+- run the relevant focused tests before staging and the CPU full suite before committing behavior changes,
+- commit after each completed major task so later agents can bisect the inference program cleanly.
+
+Paper 2 source:
+
+```text
+paper/paper2_inference_validation/paper2_inference_validation.tex
+```
+
+Every major inference-validation step should update the Paper 2 TeX document in parallel with the code/report deliverable. Early updates can be commented outlines; later updates should replace comments with manuscript prose once the result is stable. Any prose additions must follow `paper/writing_style_guide.md`.
+
+Paper 2 figures:
+
+- put manuscript figures under `paper/paper2_inference_validation/figures/`,
+- include a figure in the TeX document only when the surrounding section calls for it,
+- do not include every diagnostic plot by default; keep dense checks in reports or appendices unless they advance the paper's argument,
+- every included figure must have a clear caption that states what is plotted, what assumptions/generated sample it uses, and why it matters for the paper,
+- figure order should follow the logic of the text: establish model validity, then observable ranges, then recovery, then sensitivity, then real-data posterior predictive checks,
+- captions and any prose around figures must follow `paper/writing_style_guide.md`,
+- do not commit temporary render outputs, draft figure variants, or generated PDFs unless explicitly requested.
 
 ## Current Technical Baseline
 
@@ -109,6 +140,7 @@ After the correctness baseline, these can run in parallel.
 | Real data preparation | data format known | no | observed vectors and covariances |
 | Performance benchmarks | first harness exists | no | recommended sample sizes |
 | Documentation updates | anytime | no | reproducible user guide |
+| Paper 2 outline/prose | milestone result exists | no | manuscript sections updated alongside validation results |
 
 ## Task 0: Verify Correctness Baseline
 
@@ -137,6 +169,7 @@ Acceptance criteria:
 - full test suite passes on CPU,
 - no Metal backend is used,
 - failures are fixed before any inference expansion work.
+- Paper 2 source has a commented baseline-correctness note or outline entry if the correction changes the story.
 
 ## Task 1: Implement 3-Parameter Prior Predictive Harness
 
@@ -229,7 +262,8 @@ Acceptance criteria:
 - script runs for at least 20 samples in CI-scale runtime,
 - script can run 200 or more samples locally,
 - invalid model outputs are recorded rather than crashing the whole run,
-- no generated files are written to the repo root by default.
+- no generated files are written to the repo root by default,
+- Paper 2 prior-predictive section is updated with the planned figure slots and main questions.
 
 Testing:
 
@@ -263,7 +297,8 @@ Acceptance criteria:
 
 - report states whether real observed systems are inside the model envelope,
 - report identifies invalid regions,
-- report recommends whether to proceed to recovery.
+- report recommends whether to proceed to recovery,
+- Paper 2 prior-predictive section is updated from outline comments toward result prose.
 
 Parallelizable:
 
@@ -339,7 +374,8 @@ Acceptance criteria:
 - works for all three observable modes,
 - can run a small smoke case quickly,
 - records sampler failures explicitly,
-- outputs enough data to make coverage plots.
+- outputs enough data to make coverage plots,
+- Paper 2 synthetic-recovery section lists the truth cases, covariance choices, and planned recovery metrics.
 
 ## Task 4: Build Baseline Recovery Report
 
@@ -370,7 +406,8 @@ Acceptance criteria:
 - states whether `eta_M`, `eta_M_cold`, and `eta_E` are recoverable,
 - identifies which observable mode should be used for real data,
 - identifies any systematic biases,
-- explicitly says whether to proceed to TRML inference expansion.
+- explicitly says whether to proceed to TRML inference expansion,
+- Paper 2 synthetic-recovery section is updated with the result narrative and figure/table placeholders.
 
 ## Task 5: Implement TRML Sensitivity Screen
 
@@ -442,7 +479,8 @@ Acceptance criteria:
 
 - rank table separates high-leverage from low-leverage parameters,
 - degeneracies are described qualitatively,
-- recommends one first effective parameter to add.
+- recommends one first effective parameter to add,
+- Paper 2 microphysics-sensitivity section is updated with the ranked-parameter story.
 
 Parallelizable:
 
@@ -494,7 +532,8 @@ Acceptance criteria:
 
 - only one added parameter is chosen for first implementation,
 - prior range is specified,
-- synthetic recovery plan is specified.
+- synthetic recovery plan is specified,
+- Paper 2 microphysics or discussion section states why the chosen parameter is physically interpretable and why alternatives are deferred.
 
 ## Task 7: Generalize Inference Parameters Minimally
 
@@ -559,6 +598,10 @@ Required tests:
 - prediction changes when new parameter changes,
 - synthetic smoke recovery runs.
 
+Paper 2 update:
+
+- add an outline comment or draft paragraph explaining the new parameterization and its prior.
+
 ## Task 8: Expanded Prior Predictive And Recovery
 
 Purpose:
@@ -588,7 +631,8 @@ Acceptance criteria:
 - recovery is not systematically biased,
 - baseline parameters remain recoverable,
 - posterior predictive checks improve for physically meaningful reasons,
-- sampler diagnostics remain acceptable.
+- sampler diagnostics remain acceptable,
+- Paper 2 expanded-inference discussion states whether the added parameter is meaningfully constrained.
 
 Do not add `drag_coeff` or chi exponents until this stage passes.
 
@@ -636,7 +680,8 @@ Acceptance criteria:
 - report states which parameters are data-constrained,
 - report identifies prior-dominated parameters,
 - report identifies systematic residuals,
-- report avoids overinterpreting weakly identified parameters.
+- report avoids overinterpreting weakly identified parameters,
+- Paper 2 CLASSY and posterior-predictive sections are updated with the real-data fit narrative.
 
 ## Task 10: Population-Level Model
 
@@ -665,7 +710,8 @@ Acceptance criteria:
 - single-object workflow works,
 - data model for multiple objects is documented,
 - computational cost is understood,
-- synthetic population recovery passes.
+- synthetic population recovery passes,
+- Paper 2 discussion or future-work section is updated to reflect whether population-level inference is part of this paper or deferred.
 
 ## Required Deliverables By Milestone
 
@@ -676,6 +722,7 @@ Files:
 ```text
 examples/inference_prior_predictive.py
 docs/inference_prior_predictive_report.md
+paper/paper2_inference_validation/paper2_inference_validation.tex
 ```
 
 Must answer:
@@ -691,6 +738,7 @@ Files:
 ```text
 examples/inference_synthetic_recovery.py
 docs/inference_synthetic_recovery_report.md
+paper/paper2_inference_validation/paper2_inference_validation.tex
 ```
 
 Must answer:
@@ -706,6 +754,7 @@ Files:
 ```text
 examples/trml_sensitivity_screen.py
 docs/trml_sensitivity_report.md
+paper/paper2_inference_validation/paper2_inference_validation.tex
 ```
 
 Must answer:
@@ -746,6 +795,7 @@ Before final response on any implementation task:
 
 - run focused tests for changed modules,
 - run the CPU-only full suite if behavior changed,
+- stage and commit after each major validated task when the user requests version-control cleanup,
 - report exact test command,
 - report exact files changed,
 - mention any tests not run,
@@ -777,17 +827,17 @@ Watch for:
 The next implementation task should be:
 
 ```text
-Create examples/inference_prior_predictive.py for the current 3-parameter model.
+Run examples/inference_synthetic_recovery.py across the baseline truth cases and build docs/inference_synthetic_recovery_report.md.
 ```
 
 Do not add new fitted parameters in that task.
 
 Minimum scope:
 
-- sample `eta_M`, `eta_M_cold`, and `eta_E`,
-- run `MomentInferenceModel.predict_observables`,
-- record validity and observables,
-- write `.npz` output outside the repo root unless requested,
-- provide a short smoke test or manual smoke command.
+- run all baseline truth cases for at least the shape-five observable mode,
+- compare raw moments, shape-five, and binned `dN/dv` if runtime allows,
+- summarize coverage, bias, posterior widths, MAP errors, and sampler diagnostics,
+- write the recovery report under `docs/`,
+- keep sampler outputs and generated plots out of version control unless explicitly requested.
 
-Only after that task and the synthetic recovery task should agents modify inference internals for deeper TRML parameters.
+Only after that report and the TRML sensitivity screen should agents modify inference internals for deeper TRML parameters.

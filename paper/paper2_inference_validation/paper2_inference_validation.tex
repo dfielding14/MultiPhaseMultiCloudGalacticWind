@@ -1,0 +1,56 @@
+\documentclass[twocolumn,linenumbers]{aastex7}
+
+% Paper 2 source for the multiphase galactic wind inference-validation project.
+% All additions to this document should follow ../writing_style_guide.md.
+% Keep generated figures, logs, and compiled PDF artifacts out of version control.
+% Local compile check:
+%   cd paper/paper2_inference_validation
+%   TEXINPUTS=../aastex//: pdflatex -output-directory=/tmp/paper2_build paper2_inference_validation.tex
+
+\shorttitle{Inference Validation for Multiphase Galactic Winds}
+\shortauthors{Fielding et al.}
+
+\begin{document}
+
+\title{Validating Inference for Multiphase Galactic Wind Models}
+
+\author{Drummond Fielding}
+\affiliation{Center for Cosmology and Particle Physics, Department of Physics, New York University, New York, NY 10003, USA}
+\email{TODO: add corresponding author email}
+
+% \author{Coauthor Name}
+% \affiliation{Coauthor Affiliation}
+
+\begin{abstract}
+% Outline:
+% - Open with the central uncertainty: observations increasingly constrain cool outflow kinematics and columns, but it remains unclear which wind-launch and cloud-wind parameters can actually be inferred from those data.
+% - State what this paper does: validates a Bayesian inference workflow for a multiphase analytic wind model before using it to interpret real absorption-line observations.
+% - Name the method compactly: prior predictive checks, synthetic input recovery, posterior predictive checks, and sensitivity tests for turbulent radiative mixing-layer parameters.
+% - State the baseline parameter set: hot mass loading, cold mass loading, and hot energy loading.
+% - State the planned extension: test whether one effective cloud-wind interaction parameter is identifiable before adding more phenomenological knobs.
+% - End with the implication: this gives a disciplined way to separate physically constrained wind properties from prior-dominated subgrid assumptions.
+\end{abstract}
+
+\keywords{galactic winds --- interstellar medium --- circumgalactic medium --- starburst galaxies --- Bayesian statistics}
+
+\input{sections/01_introduction}
+\input{sections/02_forward_model}
+\input{sections/03_inference_framework}
+\input{sections/04_prior_predictive}
+\input{sections/05_synthetic_recovery}
+\input{sections/06_microphysics_sensitivity}
+\input{sections/07_classy_application}
+\input{sections/08_posterior_predictive}
+\input{sections/09_discussion}
+\input{sections/10_summary}
+
+\appendix
+
+\input{sections/appendix_model_details}
+\input{sections/appendix_likelihoods}
+\input{sections/appendix_additional_validation}
+
+\bibliography{paper2_refs}{}
+\bibliographystyle{aasjournal}
+
+\end{document}

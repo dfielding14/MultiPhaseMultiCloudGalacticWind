@@ -37,6 +37,22 @@ def test_sample_prior_shape_and_bounds():
     assert np.all(samples[:, 2] < harness.ETA_E_MAX)
 
 
+def test_load_classy_profiles_returns_positive_outflow_speeds():
+    harness = load_harness_module()
+
+    profiles = harness.load_classy_profiles(harness.DEFAULT_CLASSY_PROFILES_PATH)
+
+    assert len(profiles) == 43
+    for object_id, velocity_kms, dndv in profiles:
+        assert object_id
+        assert velocity_kms.ndim == 1
+        assert dndv.shape == velocity_kms.shape
+        assert np.all(np.isfinite(velocity_kms))
+        assert np.all(np.diff(velocity_kms) >= 0.0)
+        assert np.all(np.isfinite(dndv))
+        assert np.all(dndv > 0.0)
+
+
 def test_prior_predictive_smoke_writes_outputs(tmp_path):
     harness = load_harness_module()
     output_dir = tmp_path / "prior_predictive"

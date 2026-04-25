@@ -10,4 +10,7 @@ examples/outputs/
 
 # Local legacy notebook exports and manuscript/rendered artifacts
 Multiphase_Wind_Fitting_function_for_Classy.py
-paper/
+paper/*
+!paper/writing_style_guide.md
+!paper/paper2_inference_validation/
+!paper/paper2_inference_validation/**

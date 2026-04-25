@@ -1,0 +1,424 @@
+\section{Forward Model and Observable Mapping}
+\label{sec:model}
+
+The forward model used in this paper is a steady, one-dimensional description of a starburst-driven multiphase wind.
+It follows the classical picture in which supernovae and stellar winds thermalize inside a compact launch region and drive a hot, volume-filling outflow \citep{Chevalier85}.
+The model then embeds cool clouds in this hot wind and evolves the two phases together as they exchange mass, momentum, and energy through turbulent, radiatively cooling interfaces \citep{Fielding22}.
+The calculation is intentionally reduced: it does not attempt to resolve the cloud-wind interface directly, nor does it model the full three-dimensional geometry of a real outflow.
+Instead, it asks whether a physically controlled radial model can map a small set of wind and cloud parameters into the cool-gas velocity and column-density distributions measured in absorption.
+
+The main extension relative to the single-cloud implementation used in earlier applications is that the cool phase is represented by a mass spectrum.
+The injected cool material is divided into logarithmically spaced cloud-mass bins, and each bin evolves as a separate cloud species with its own mass, velocity, metallicity, size, cooling parameter, and contribution to the final column-density profile.
+This matters because small clouds are numerous and couple efficiently to the hot phase, while larger clouds can survive longer and carry substantial cold mass to larger radii.
+The observable profile is therefore not the trajectory of one representative cloud, but the sum of many cloud species that respond differently to the same hot wind.
+This section defines that forward map.
+The statistical machinery used to fit or validate the model is introduced only after the physical model has been specified.
+
+\subsection{Model Geometry and Hot-Wind Launch}
+\label{subsec:model_launch}
+
+We consider a radial wind subtending a solid angle $\Omega_{\rm wind}$.
+The model is initialized at a characteristic launch radius $r_\star$, which should be interpreted as the radius at which the hot wind has passed through the sonic point and begins to interact with the cool cloud population followed in the calculation.
+For a galaxy with star formation rate $\dot{M}_\star$, the hot phase is specified by two dimensionless loading factors.
+The hot mass loading is
+\begin{equation}
+\dot{M}_{\rm hot} = \eta_M \dot{M}_\star ,
+\end{equation}
+and the hot energy injection rate is
+\begin{equation}
+\dot{E}_{\rm hot}
+=
+\eta_E
+\frac{E_{\rm SN}}{m_\star}
+\dot{M}_\star .
+\end{equation}
+Here $E_{\rm SN}$ is the mechanical energy per supernova and $m_\star$ is the stellar mass formed per supernova.
+The ratio $\dot{E}_{\rm hot}/\dot{M}_{\rm hot}$ sets the specific energy of the hot wind, while $\eta_M$ and $\eta_E$ separately control the hot density, pressure, and cooling rate.
+
+The launch state is set by imposing a Mach number slightly offset from unity,
+\begin{equation}
+{\cal M}_0 = 1 + \epsilon_{\rm sonic}.
+\end{equation}
+This small offset regularizes the transonic initial condition while keeping the solution tied to the sonic point.
+In the current implementation the hot velocity at $r_\star$ is
+\begin{equation}
+v_\star =
+\left(\frac{\dot{E}_{\rm hot}}{\dot{M}_{\rm hot}}\right)^{1/2}
+\left[
+\frac{1}{(\gamma-1){\cal M}_0}
++ \frac{1}{2}
+\right]^{-1/2},
+\end{equation}
+with density fixed by mass-flux conservation,
+\begin{equation}
+\rho_\star =
+\frac{\dot{M}_{\rm hot}}
+{\Omega_{\rm wind} r_\star^2 v_\star},
+\end{equation}
+and pressure fixed by the Mach-number definition,
+\begin{equation}
+P_\star =
+\frac{\rho_\star v_\star^2}{\gamma {\cal M}_0^2}.
+\end{equation}
+These equations are the implemented launch convention used by the calculations in this paper.
+The same mass and energy injection rates also define source terms inside the launch region, normalized by the volume $4\pi r_\star^3/3$.
+The flux normalization outside the launch region retains the explicit wind solid angle $\Omega_{\rm wind}$.
+
+Gravity is represented by an isothermal potential,
+\begin{equation}
+\Phi(r) = v_{\rm circ}^2 \ln r ,
+\end{equation}
+where $v_{\rm circ}$ is the circular velocity of the galaxy.
+Thus the fixed galaxy inputs that determine the hot-wind background are $\dot{M}_\star$, $r_\star$, $v_{\rm circ}$, and $\Omega_{\rm wind}$.
+Increasing $\eta_E/\eta_M$ raises the specific energy and therefore the characteristic launch speed.
+Increasing $\eta_M$ at fixed $\eta_E/\eta_M$ raises the hot density and makes radiative cooling and cloud coupling more important.
+Changing $r_\star$ shifts the density scale through the area of the launch surface, while $v_{\rm circ}$ controls how strongly gravity decelerates the outflow.
+
+% TODO Figure: add a conceptual model schematic showing r_star, Omega_wind,
+% the hot radial wind, the isothermal gravitational potential, and embedded
+% cloud species with different initial masses. This should be a guide to the
+% geometry and source terms, not a fit to any individual galaxy.
+
+\subsection{Cold Cloud Mass Spectrum}
+\label{subsec:model_cloud_spectrum}
+
+The new ingredient in this paper is the explicit cloud mass spectrum.
+We divide the cold phase into $N_{\rm cl}$ logarithmically spaced initial masses,
+\begin{equation}
+M_{{\rm cl},i}
+\in
+\left[M_{\rm cl,min},M_{\rm cl,max}\right].
+\end{equation}
+The number injection spectrum is assumed to be a power law,
+\begin{equation}
+\frac{d\dot{N}_{\rm cl}}{dM_{\rm cl}}
+\propto
+M_{\rm cl}^{-\alpha_{\rm cl}},
+\end{equation}
+or, equivalently,
+\begin{equation}
+\frac{d\dot{N}_{\rm cl}}{d\ln M_{\rm cl}}
+\propto
+M_{\rm cl}^{1-\alpha_{\rm cl}} .
+\end{equation}
+The total cold mass injection rate is
+\begin{equation}
+\dot{M}_{\rm cold,tot}
+=
+\eta_{M,{\rm cold}}\dot{M}_\star .
+\end{equation}
+The mass loading assigned to each bin is the fraction of the total cold mass flux in that bin,
+\begin{equation}
+\eta_{M,{\rm cold},i}
+=
+\eta_{M,{\rm cold}}
+\frac{M_i \dot{N}^{\rm rel}_i}
+{\sum_j M_j \dot{N}^{\rm rel}_j},
+\end{equation}
+so that
+\begin{equation}
+\dot{M}_{{\rm cold},i}
+=
+\eta_{M,{\rm cold},i}\dot{M}_\star ,
+\end{equation}
+\begin{equation}
+\dot{N}_{{\rm cl},i}
+=
+\frac{\dot{M}_{{\rm cold},i}}{M_{{\rm cl},i}}.
+\end{equation}
+This construction separates the total amount of cold material, controlled by $\eta_{M,{\rm cold}}$, from how that material is divided among many cloud sizes, controlled by $\alpha_{\rm cl}$ and the cloud-mass bounds.
+
+Planned intuition figure:
+a three-panel cloud-spectrum initialization plot.
+The panels should show the mass grid, the cold mass flux per bin, and the number injection rate per bin.
+This figure should make clear that small clouds can dominate the number budget while larger clouds can carry a substantial fraction of the mass.
+
+\subsection{Cloud Injection and Number Density}
+\label{subsec:model_cloud_injection}
+
+Each cloud species has a radial number flux
+\begin{equation}
+\dot{N}_i(r)
+=
+\dot{N}_{i,0} I(r),
+\end{equation}
+where the injection profile is
+\begin{equation}
+I(r) =
+\left\{
+\begin{array}{ll}
+\left(r/r_{\rm inj}\right)^{p_{\rm inj}}, & r < r_{\rm inj},\\
+1, & r \ge r_{\rm inj}.
+\end{array}
+\right.
+\end{equation}
+Flux conservation then gives the local number density of species $i$,
+\begin{equation}
+n_{{\rm cl},i}
+=
+\frac{\dot{N}_i(r)}
+{\Omega_{\rm wind} r^2 v_{{\rm cl},i}}.
+\end{equation}
+The hot phase couples to the cold phase through sums over species of the form $n_{{\rm cl},i}\dot{M}_i$, $n_{{\rm cl},i}\dot{p}_i$, and $n_{{\rm cl},i}\dot{e}_i$.
+This is where the mass spectrum matters dynamically: a bin with little mass per cloud can still matter if its cloud number density is large.
+
+\subsection{Pressure Equilibrium and Mixing-Layer Cooling}
+\label{subsec:model_mixing_layer}
+
+The cold clouds are assumed to remain in pressure equilibrium with the hot phase.
+For a fixed cloud temperature $T_{\rm cl}$,
+\begin{equation}
+\rho_{{\rm cl},i}
+=
+\frac{P\mu m_p}{k_B T_{\rm cl}},
+\end{equation}
+and
+\begin{equation}
+R_{{\rm cl},i}
+=
+\left(
+\frac{3M_{{\rm cl},i}}
+{4\pi \rho_{{\rm cl},i}}
+\right)^{1/3}.
+\end{equation}
+The density contrast is
+\begin{equation}
+\chi_i =
+\frac{\rho_{{\rm cl},i}}{\rho_{\rm hot}}.
+\end{equation}
+The turbulent radiative mixing layer is evaluated at
+\begin{equation}
+T_{{\rm mix},i}
+=
+\left(T_{\rm hot}T_{\rm cl}\right)^{1/2},
+\end{equation}
+\begin{equation}
+Z_{{\rm mix},i}
+=
+\left(Z_{\rm hot}Z_{{\rm cl},i}\right)^{1/2}.
+\end{equation}
+The relevant cooling time is therefore
+\begin{equation}
+t_{{\rm cool},i}
+=
+t_{\rm cool}
+\left(T_{{\rm mix},i},P/k_B,Z_{{\rm mix},i}\right).
+\end{equation}
+The turbulent velocity is modeled as
+\begin{equation}
+v_{{\rm turb},i}
+=
+f_{\rm turb}
+\left|v_{\rm hot}-v_{{\rm cl},i}\right|
+\chi_i^{a_{\rm turb}},
+\end{equation}
+which defines the cooling parameter
+\begin{equation}
+\xi_i
+=
+\frac{R_{{\rm cl},i}}
+{v_{{\rm turb},i}t_{{\rm cool},i}}.
+\end{equation}
+The quantity $\xi_i$ is the most useful way to explain the mixing-layer physics.
+When $\xi_i$ is large, mixed gas cools efficiently and can add mass to the cloud.
+When $\xi_i$ is small, turbulent shredding dominates.
+
+Planned intuition figure:
+plot $\xi_i(r)$ for several cloud masses in a fiducial wind, with a horizontal line at $\xi=1$.
+The figure should show which cloud masses are expected to grow, survive, or be destroyed.
+
+\subsection{Cloud Mass Exchange}
+\label{subsec:model_mass_exchange}
+
+For each active cloud species, the net cloud mass change is
+\begin{equation}
+\dot{M}_i =
+\dot{M}_{{\rm grow},i}
++
+\dot{M}_{{\rm loss},i}.
+\end{equation}
+The growth term is
+\begin{equation}
+\dot{M}_{{\rm grow},i}
+=
+C_M
+\frac{3M_i v_{{\rm turb},i}}{R_i\chi_i}
+A_i f_{\xi,i},
+\end{equation}
+where
+\begin{equation}
+A_i =
+f_A \chi_i^{a_A},
+\end{equation}
+and
+\begin{equation}
+f_{\xi,i}
+=
+\left\{
+\begin{array}{ll}
+\xi_i^{1/2}, & \xi_i < 1,\\
+\xi_i^{1/4}, & \xi_i \ge 1.
+\end{array}
+\right.
+\end{equation}
+The cloud mass-loss term is
+\begin{equation}
+\dot{M}_{{\rm loss},i}
+=
+-C_M
+\frac{3M_i v_{{\rm turb,cold},i}}{R_i},
+\end{equation}
+with
+\begin{equation}
+v_{{\rm turb,cold},i}
+=
+v_{{\rm turb},i}\chi_i^{a_{\rm cold}}.
+\end{equation}
+These equations encode the central competition in the model.
+Clouds grow when mixed gas cools rapidly enough to condense, and they lose mass when turbulent motions entrain cold gas into the hot flow faster than cooling can return it.
+
+Planned intuition figure:
+plot $M_i(r)/M_{i,0}$ and $v_i(r)$ for several initial cloud masses.
+This should be the main figure that teaches the reader why the mass spectrum cannot be replaced by one representative cloud.
+
+\subsection{Momentum and Energy Exchange}
+\label{subsec:model_momentum_energy}
+
+Clouds exchange momentum with the hot phase through ram pressure and through the transfer of mass between phases.
+The ram pressure force on species $i$ is
+\begin{equation}
+\dot{p}_{{\rm ram},i}
+=
+\frac{1}{2}C_D \rho_{\rm hot}
+\pi R_i^2
+v_{{\rm rel},i}\left|v_{{\rm rel},i}\right|,
+\end{equation}
+where $v_{{\rm rel},i}=v_{\rm hot}-v_i$.
+The momentum carried by mass exchange is
+\begin{equation}
+\dot{p}_{{\rm trans},i}
+=
+v_{\rm hot}\dot{M}_{{\rm grow},i}
++
+v_i\dot{M}_{{\rm loss},i}.
+\end{equation}
+The hot phase also cools radiatively,
+\begin{equation}
+\dot{e}_{\rm cool}
+=
+-f_{\rm cool}
+\left(\frac{\rho_{\rm hot}}{\mu_H m_p}\right)^2
+\Lambda(P,\rho_{\rm hot},Z_{\rm hot}).
+\end{equation}
+The specific energy exchanged with cloud growth and destruction is written in terms of Bernoulli-like quantities,
+\begin{equation}
+B_{\rm hot}
+=
+\frac{1}{2}v_{\rm hot}^2
++
+\frac{\gamma}{\gamma-1}\frac{P}{\rho_{\rm hot}}
++
+\Phi,
+\end{equation}
+\begin{equation}
+B_{{\rm cl},i}
+=
+\frac{1}{2}v_i^2
++
+\frac{c_{s,{\rm cl}}^2}{\gamma-1}
++
+\Phi.
+\end{equation}
+Thus
+\begin{equation}
+\dot{e}_{{\rm trans},i}
+=
+B_{\rm hot}\dot{M}_{{\rm grow},i}
++
+B_{{\rm cl},i}\dot{M}_{{\rm loss},i}.
+\end{equation}
+
+\subsection{Coupled Wind Equations}
+\label{subsec:model_coupled_equations}
+
+The hot wind is evolved with source terms from supernova injection, radiative cooling, gravity, and all cloud species.
+It is useful to define the cloud-coupling source terms schematically as
+\begin{equation}
+\dot{\rho}_{\rm src}
+=
+q_M
+-
+\sum_i n_i \dot{M}_i,
+\end{equation}
+\begin{equation}
+\dot{p}_{\rm src}
+=
+-
+\sum_i n_i
+\left(
+\dot{p}_{{\rm trans},i}
++
+\dot{p}_{{\rm ram},i}
+\right),
+\end{equation}
+\begin{equation}
+\dot{e}_{\rm src}
+=
+q_E
+-
+\sum_i n_i
+\left(
+\dot{e}_{{\rm trans},i}
++
+\dot{p}_{{\rm ram},i}v_{\rm hot}
+\right)
++
+\dot{e}_{\rm cool}.
+\end{equation}
+Here $q_M$ and $q_E$ are the hot mass and energy injection rates per unit volume inside the launch region.
+The full numerical integration evolves the hot variables together with $M_i(r)$, $v_i(r)$, and $Z_i(r)$ for every cloud species.
+
+Planned intuition figure:
+plot the radial mass, momentum, and energy source terms summed over the cloud spectrum, optionally decomposed by cloud mass bin.
+This figure should show which cloud masses dominate the dynamical back-reaction on the hot flow.
+
+\subsection{Column-Density Velocity Profiles}
+\label{subsec:model_observables}
+
+The primary observable predicted by the model is the cool-gas column-density velocity distribution.
+For cloud species $i$, the cold mass density along the flow is
+\begin{equation}
+\rho_{{\rm cold},i}
+=
+\frac{\dot{N}_i M_i}
+{\Omega_{\rm wind}r^2v_i},
+\end{equation}
+and the corresponding hydrogen number density is
+\begin{equation}
+n_{{\rm H},i}
+=
+\frac{\rho_{{\rm cold},i}}{\mu_{\rm cool}m_p}.
+\end{equation}
+For monotonic cloud velocity histories,
+\begin{equation}
+\frac{dN}{dv}
+\simeq
+\sum_i
+\frac{n_{{\rm H},i}}{\left|dv_i/dr\right|}.
+\end{equation}
+For the binned observable used later in the paper, we instead compute a kernel-smoothed profile,
+\begin{equation}
+\left(\frac{dN}{dv}\right)_k
+=
+\sum_i
+\int
+n_{{\rm H},i}(r)
+K_\sigma\left[v_i(r)-v_k\right]\,dr .
+\end{equation}
+Velocity moments and compact shape summaries are computed from this same profile.
+This closes the forward map from physical wind parameters to cool-phase absorption-line observables; the inference machinery introduced below only operates on these predicted observables.
+
+Planned intuition figure:
+show species-resolved contributions to $dN/dv$ for a fiducial wind.
+Thin colored curves should show individual mass bins, and a thick black curve should show the sum.
+This is likely the most important figure for explaining why the multi-cloud spectrum changes the interpretation of absorption-line data.

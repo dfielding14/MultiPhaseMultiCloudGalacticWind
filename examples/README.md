@@ -2,6 +2,12 @@
 
 This directory contains runnable examples for the `multiphasegalacticwind` package.
 
+Local JAX examples should use CPU on this Apple Silicon machine unless backend debugging is the task:
+
+```bash
+JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu python examples/simple_example.py
+```
+
 ## Quick Start
 - **`simple_example.py`** - Minimal working example
   - Quick test to verify installation
@@ -46,6 +52,16 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
   - Produces summary elasticity matrix for `dN/dv` moments (`M0`, `M1`, `M2`), radial sensitivity profiles, and linearization check plots
   - Writes outputs by default to `examples/outputs/autodiff_sensitivity/`
   - Saves Jacobian/profile arrays to `autodiff_sensitivity_data.npz`
+
+- **`inference_prior_predictive.py`** - Three-parameter prior predictive atlas
+  - Samples the current (`eta_M`, `eta_M_cold`, `eta_E`) prior and records observable summaries
+  - Writes `.npz`, `.csv`, metadata, and paper-style diagnostic figures under `examples/outputs/`
+  - Defaults to CPU JAX and the shape-5 observable set
+
+Planned inference-validation scripts are documented in [`docs/inference_validation_agent_workplan.md`](../docs/inference_validation_agent_workplan.md):
+
+- `inference_synthetic_recovery.py` - synthetic input recovery for the current three-parameter inference surface
+- `trml_sensitivity_screen.py` - one-at-a-time sensitivity scans for TRML/cloud-wind parameters before expanded inference
 
 - **`fit_observational_moments.py`** - Inference from observed moments
   - Fits (`eta_M`, `eta_M_cold`, `eta_E`) using MAP + Hessian + multi-chain NUTS in log-parameter space
@@ -94,6 +110,10 @@ This directory contains runnable examples for the `multiphasegalacticwind` packa
 ## Running the Examples
 
 ```bash
+# Recommended local JAX backend on this machine
+export JAX_PLATFORMS=cpu
+export JAX_PLATFORM_NAME=cpu
+
 # Python scripts
 python examples/simple_example.py
 python examples/comprehensive_example.py
@@ -106,6 +126,7 @@ python examples/parameter_dependence_sweep.py --quick
 python examples/autodiff_sensitivity_analysis.py
 python examples/fit_observational_moments.py --help
 python examples/m82_publication_inference.py --help
+python examples/inference_prior_predictive.py --help
 python examples/inference_case_study.py --quick
 python examples/cooling_backend_comparison.py
 

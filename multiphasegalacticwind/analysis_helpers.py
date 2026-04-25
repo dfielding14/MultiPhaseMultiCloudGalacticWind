@@ -205,7 +205,7 @@ def cloud_ksi(r: float, state: np.ndarray, config: Optional[WindConfig] = None,
     
     # Cloud properties
     r_cl = cloud_radius(r, state, config, N_cloud_species)
-    chi = T_cl / T_wind
+    chi = T_wind / T_cl
     v_rel = v_wind - v_cloud
     
     # Turbulent velocity
@@ -232,8 +232,13 @@ def cloud_ksi(r: float, state: np.ndarray, config: Optional[WindConfig] = None,
     return ksi
 
 
-def Cooling_and_Acceleration(r: float, state: np.ndarray, 
-                             config: Optional[WindConfig] = None) -> Dict[str, Any]:
+def Cooling_and_Acceleration(
+    r: float,
+    state: np.ndarray,
+    config: Optional[WindConfig] = None,
+    *,
+    v_circ_kms: float = 150.0,
+) -> Dict[str, Any]:
     """
     Calculate cooling rates and acceleration terms.
     
@@ -245,6 +250,8 @@ def Cooling_and_Acceleration(r: float, state: np.ndarray,
         State vector
     config : WindConfig, optional
         Configuration object
+    v_circ_kms : float, optional
+        Circular velocity in km/s for the isothermal gravitational potential.
         
     Returns
     -------
@@ -277,7 +284,7 @@ def Cooling_and_Acceleration(r: float, state: np.ndarray,
     edot_cool = 1.5 * Pressure / t_cool if t_cool > 0 else 0.0
     
     # Acceleration terms (simplified - assuming isothermal potential)
-    v_circ = 150.0 * km  # Default circular velocity
+    v_circ = float(v_circ_kms) * km
     dv_dr_grav = -(v_circ/v_wind)**2 * v_wind / r
     dv_dr_press = -cs_sq / (rho_wind * v_wind) * (-2 * rho_wind / r)  # Assuming drho/dr ~ -2*rho/r
     

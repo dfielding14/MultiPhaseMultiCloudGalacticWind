@@ -35,10 +35,13 @@ Repository structure:
 - `multiphasegalacticwind/observables.py`
   - Observable mappings such as `dN/dv` and velocity moments.
 - `multiphasegalacticwind/inference.py`
-  - MAP + Hessian + HMC inference utilities for fitting (`eta_M`, `eta_M_cold`, `eta_E`) to observed (`M0`, `M1`, `M2`).
+  - MAP + Hessian + HMC inference utilities.
+  - Current fitted parameters are (`eta_M`, `eta_M_cold`, `eta_E`).
+  - Supported observable modes include raw moments, transformed shape moments, and binned `dN/dv`.
   - Corner-plot and moment-fit visualization helpers.
 - `multiphasegalacticwind/config.py`
   - Configurable physics/numerical controls via `WindConfig`.
+  - Unknown config keywords raise `ValueError`; documented aliases include `metallicity` and `cooling_factor`.
 - `multiphasegalacticwind/constants.py`
   - Physical constants and unit conversions (CGS-centric internals).
 
@@ -53,9 +56,20 @@ Key ingredients:
 - Pressure-equilibrium cloud closure (`rho_cloud ~ P/(k_B T_cloud)`).
 - Turbulent mixing-layer coupling and drag-based momentum exchange.
 - Tabulated radiative cooling with pressure/temperature dependent cooling times.
+- Numeric `Cooling_Factor` scaling in the wind energy equation.
+- Cloud thermal enthalpy using `cs_cl^2 / (gamma - 1)` with `cs_cl^2 = gamma k_B T_cloud / (mu m_p)`.
 - Runtime validity guards for unphysical states (negative pressure/density, NaNs).
 
 For implementation equations and units, see `AGENTS.md`.
+
+## Documentation Map
+- `AGENTS.md` - canonical engineering and physics guide for future code changes.
+- `docs/windconfig_parameters.md` - accepted `WindConfig` parameters, aliases, validation rules, and units.
+- `docs/inference_validation_roadmap.md` - landing page for the inference validation roadmap.
+- `docs/inference_validation_for_physicists.md` - inference validation guide for physicists, especially inference novices.
+- `docs/inference_validation_agent_workplan.md` - implementation workplan for agents building prior predictive checks, synthetic recovery, TRML sensitivity studies, and expanded inference.
+- `docs/jax_inference_improvements.md` - detailed JAX inference notes and improvement ideas.
+- `docs/h100_gpu_migration_playbook.md` - GPU migration notes for larger inference workloads.
 
 ## Units
 User-facing API (`WindModel`/`Solution`) mainly uses:
@@ -119,12 +133,16 @@ fit = model.fit_posterior(
 print(fit.map.theta_map)
 ```
 
+Current inference deliberately fits only `eta_M`, `eta_M_cold`, and `eta_E`. The plan for adding deeper turbulent radiative mixing layer or cloud-wind interaction parameters is documented in `docs/inference_validation_for_physicists.md` and `docs/inference_validation_agent_workplan.md`; the next implementation step is a three-parameter prior predictive atlas, not a broad TRML parameter expansion.
+
 ## Running Tests
 From repository root:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider
+JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider
 ```
+
+The CPU backend is the verified local test path on this Apple Silicon machine. Do not use Metal locally unless explicitly debugging JAX backend behavior.
 
 ## Running Examples
 From repository root:
@@ -144,3 +162,4 @@ python examples/inference_case_study.py --quick
 - Document assumptions and units at API boundaries.
 - Prefer physically correct equations over numerically convenient shortcuts.
 - Add/adjust tests whenever changing model behavior.
+- For inference work, validate priors, synthetic recovery, and posterior predictive behavior before adding new fitted physics parameters.

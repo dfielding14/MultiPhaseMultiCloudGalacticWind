@@ -5,7 +5,7 @@ Complete documentation for parameters accepted by `WindConfig` in the current co
 ## Overview
 
 `WindConfig` controls model physics and event thresholds. `WindModel` controls galaxy/wind launch inputs and solver settings.
-Parameter names are case-sensitive (for example `Cooling_Factor`, not `cooling_factor`).
+Parameter names are case-sensitive except for documented legacy aliases (`metallicity` and `cooling_factor`).
 
 ```python
 from multiphasegalacticwind import WindModel, WindConfig
@@ -44,7 +44,7 @@ model = WindModel(SFR=10.0, f_turb0=0.2, Z_hot_over_Z_solar=1.0)
 | `drag_coeff` | `0.5` | dimensionless | Ram-drag coefficient |
 | `Mdot_coefficient` | `1/3` | dimensionless | Mass-transfer prefactor |
 | `geometric_factor` | `1.0` | dimensionless | Surface-area boost factor |
-| `Cooling_Factor` | `1.0` | dimensionless | Global multiplier on cooling losses |
+| `Cooling_Factor` | `1.0` | dimensionless | Non-negative global multiplier on cooling losses; `cooling_factor` is a legacy alias |
 | `CoolingAreaChiPower` | `0.5` | dimensionless | Exponent in cooling-area scaling with `chi` |
 | `ColdTurbulenceChiPower` | `-0.5` | dimensionless | Exponent for cold-phase turbulent velocity scaling |
 | `TurbulentVelocityChiPower` | `0.0` | dimensionless | Exponent for turbulent velocity scaling |
@@ -115,7 +115,7 @@ config = WindConfig(cloud_radial_offset=0.1)
 ## Validation and defaults
 
 - `WindModel` calls `config.validate()` during initialization.
-- Invalid values (for example non-positive `drag_coeff`, negative `redshift`, or non-positive `sonic_point_offset`) raise `ValueError`.
+- Unknown config keywords and invalid values (for example non-positive `drag_coeff`, negative `redshift`, negative `Cooling_Factor`, or non-positive `sonic_point_offset`) raise `ValueError`.
 - Global defaults can be overridden for a session using `WindConfig.set_defaults(...)`.
 
 ## Notes on units

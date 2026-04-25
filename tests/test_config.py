@@ -8,6 +8,7 @@ import pytest
 
 from multiphasegalacticwind.config import WindConfig, get_default_config
 from multiphasegalacticwind.constants import Msun
+from multiphasegalacticwind.wind_model import WindModel
 
 
 def test_default_initialization():
@@ -47,6 +48,20 @@ def test_backward_compatibility_metallicity_alias():
     config = WindConfig(metallicity=0.5)
     assert config.Z_hot_over_Z_solar == 0.5
     assert config.metallicity == 0.5
+
+
+def test_backward_compatibility_cooling_factor_alias():
+    config = WindConfig(cooling_factor=0.5)
+    assert config.Cooling_Factor == 0.5
+    assert config.to_dict()["Cooling_Factor"] == 0.5
+
+
+def test_conflicting_alias_values_raise():
+    with pytest.raises(ValueError):
+        WindConfig(Cooling_Factor=1.0, cooling_factor=0.5)
+
+    with pytest.raises(ValueError):
+        WindConfig(Z_hot_over_Z_solar=1.0, metallicity=0.5)
 
 
 def test_to_dict_contains_expected_keys_and_values():
@@ -115,6 +130,7 @@ def test_parameter_ranges_and_validation():
         {"solver_first_step_kpc": 0.0},
         {"cooling_backend": "legacy"},
         {"cooling_backend": "invalid"},
+        {"Cooling_Factor": -1.0},
     ],
 )
 def test_validate_rejects_invalid_values(kwargs):
@@ -126,3 +142,36 @@ def test_validate_rejects_invalid_values(kwargs):
 def test_set_defaults_rejects_unknown_parameter():
     with pytest.raises(ValueError):
         WindConfig.set_defaults(does_not_exist=1)
+
+
+def test_wind_config_init_rejects_unknown_parameter():
+    with pytest.raises(ValueError):
+        WindConfig(does_not_exist=1)
+
+
+def test_wind_model_config_kwargs_reject_unknown_parameter():
+    with pytest.raises(ValueError):
+        WindModel(does_not_exist=1)
+
+
+def test_wind_model_supports_cooling_factor_alias():
+    model = WindModel(cooling_factor=0.0, eta_M_cold=0.0, r_max_kpc=1.0)
+    assert model.config.Cooling_Factor == 0.0
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"N_cloud_species": 0},
+        {"N_cloud_species": 1.5},
+        {"cloud_mass_range": (-1.0, 10.0)},
+        {"cloud_mass_range": (0.0, 10.0)},
+        {"cloud_mass_range": (np.nan, 10.0)},
+        {"cloud_mass_range": (1.0, np.inf)},
+        {"cloud_mass_range": (10.0, 1.0)},
+        {"cloud_mass_range": (10.0, 10.0), "N_cloud_species": 1},
+    ],
+)
+def test_wind_model_rejects_invalid_cloud_distribution_inputs(kwargs):
+    with pytest.raises(ValueError):
+        WindModel(**kwargs)

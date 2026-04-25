@@ -194,7 +194,7 @@ def _cloud_exchange_kernel_numba(
             * r_cloud
         )
         p_dot_transfer = v_wind * Mdot_grow + v_cloud_i * Mdot_loss
-        vBsq_cl = 0.5 * v_cloud_i * v_cloud_i + (gamma / (gamma - 1.0)) * cs_cl_sq + Phir
+        vBsq_cl = 0.5 * v_cloud_i * v_cloud_i + cs_cl_sq / (gamma - 1.0) + Phir
         e_dot_transfer = vBsq_wind * Mdot_grow + vBsq_cl * Mdot_loss
 
         sum_mass += number_density_cloud * Mdot_cloud
@@ -387,9 +387,9 @@ def Wind_Evo(r, state, params):
             topaz_table.primordial_cooling_cgs,
             topaz_table.metal_cooling_cgs,
         )
-        e_dot_cool = -(rho_wind / (muH * mp)) ** 2 * lambda_hot
+        e_dot_cool = -Cooling_Factor * (rho_wind / (muH * mp)) ** 2 * lambda_hot
     else:
-        e_dot_cool = -(rho_wind / (muH * mp)) ** 2 * Lambda_P_rho((Pressure, rho_wind))
+        e_dot_cool = -Cooling_Factor * (rho_wind / (muH * mp)) ** 2 * Lambda_P_rho((Pressure, rho_wind))
     dedt = Edot_SN - sum_energy + e_dot_cool
 
     # Metallicity source

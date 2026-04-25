@@ -219,14 +219,10 @@ def wind_evo_jax(state, r, params: JaxWindParams):
         params.topaz_primordial_cooling_cgs,
         params.topaz_metal_cooling_cgs,
     )
-    e_dot_cool = jnp.where(
-        params.Cooling_Factor == 0.0,
-        0.0,
-        -(rho_wind / (muH * mp)) ** 2 * lambda_hot,
-    )
+    e_dot_cool = -params.Cooling_Factor * (rho_wind / (muH * mp)) ** 2 * lambda_hot
 
     cs_cl_sq = gamma * kb * params.T_cloud / (params.mu * mp)
-    vBsq_cl = 0.5 * v_cloud * v_cloud + (gamma / (gamma - 1.0)) * cs_cl_sq + Phir
+    vBsq_cl = 0.5 * v_cloud * v_cloud + cs_cl_sq / (gamma - 1.0) + Phir
     e_dot_transfer = vBsq_wind * Mdot_grow + vBsq_cl * Mdot_loss
     dedt = Edot_SN - jnp.sum(number_density_cloud * (e_dot_transfer + p_dot_ram * v_wind)) + e_dot_cool
 

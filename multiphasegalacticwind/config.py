@@ -21,6 +21,40 @@ class WindConfig:
     but can be easily customized for different physical scenarios.
     """
 
+    _ALIASES = {
+        'metallicity': 'Z_hot_over_Z_solar',
+        'cooling_factor': 'Cooling_Factor',
+    }
+
+    _VALID_PARAMS = {
+        'mu', 'Z_hot_over_Z_solar', 'redshift',
+        'cooling_backend', 'topaz_cooling_table_path',
+        'half_opening_angle', 'M_cloud_min', 'CoolingAreaChiPower',
+        'ColdTurbulenceChiPower', 'TurbulentVelocityChiPower',
+        'geometric_factor', 'Mdot_coefficient', 'Cooling_Factor',
+        'drag_coeff', 'f_turb0', 'cold_cloud_injection_radial_power',
+        'cold_cloud_injection_radial_extent_frac', 'v_cloud_init',
+        'v_cloud_min', 'cloud_radial_offset', 'Z_cloud_over_Z_solar',
+        'T_cl', 'E_SN', 'mstar', 'sonic_point_offset',
+        'sonic_transition_tolerance', 'solver_max_step_kpc',
+        'solver_first_step_kpc',
+    }
+
+    @classmethod
+    def _normalize_kwargs(cls, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Map supported aliases to canonical names and reject unknown parameters."""
+        normalized = {}
+        for key, value in kwargs.items():
+            canonical_key = cls._ALIASES.get(key, key)
+            if canonical_key not in cls._VALID_PARAMS:
+                raise ValueError(f"Unknown WindConfig parameter: {key}")
+            if canonical_key in normalized and normalized[canonical_key] != value:
+                raise ValueError(
+                    f"Conflicting values for WindConfig parameter {canonical_key!r}"
+                )
+            normalized[canonical_key] = value
+        return normalized
+
     def __init__(self, **kwargs: Any) -> None:
         """
         Initialize configuration with default values.
@@ -32,6 +66,8 @@ class WindConfig:
         >>> config = WindConfig(f_turb0=0.2, drag_coeff=0.3)
         >>> model = WindModel(config=config, SFR=10.0)
         """
+        kwargs = self._normalize_kwargs(kwargs)
+
         # Get custom defaults if they exist
         custom_defaults = getattr(self.__class__, '_custom_defaults', {})
         
@@ -42,10 +78,7 @@ class WindConfig:
         # Gas properties
         self.mu = get_param('mu', 0.62)  # Mean molecular weight
         # Metallicity parameters (relative to solar)
-        self.Z_hot_over_Z_solar = kwargs.get('Z_hot_over_Z_solar', 
-                                            kwargs.get('metallicity', 
-                                                      custom_defaults.get('Z_hot_over_Z_solar', 
-                                                                        custom_defaults.get('metallicity', 10**-0.5))))
+        self.Z_hot_over_Z_solar = get_param('Z_hot_over_Z_solar', 10**-0.5)
         self.metallicity = self.Z_hot_over_Z_solar  # Keep for backward compatibility
         self.redshift = get_param('redshift', 0.0)  # Redshift for cooling function
         self.cooling_backend = get_param('cooling_backend', 'topaz')  # JAX path currently supports 'topaz'
@@ -165,6 +198,8 @@ class WindConfig:
             raise ValueError(f"drag_coeff must be positive, got {self.drag_coeff}")
         if self.Mdot_coefficient <= 0:
             raise ValueError(f"Mdot_coefficient must be positive, got {self.Mdot_coefficient}")
+        if self.Cooling_Factor < 0:
+            raise ValueError(f"Cooling_Factor must be non-negative, got {self.Cooling_Factor}")
             
         # Cloud injection
         if self.v_cloud_init < 0:
@@ -209,24 +244,7 @@ class WindConfig:
         if not hasattr(cls, '_custom_defaults'):
             cls._custom_defaults = {}
         
-        # Validate that keys are valid parameter names
-        valid_params = {
-            'mu', 'Z_hot_over_Z_solar', 'metallicity', 'redshift',
-            'cooling_backend', 'topaz_cooling_table_path',
-            'half_opening_angle', 'M_cloud_min', 'CoolingAreaChiPower',
-            'ColdTurbulenceChiPower', 'TurbulentVelocityChiPower',
-            'geometric_factor', 'Mdot_coefficient', 'Cooling_Factor',
-            'drag_coeff', 'f_turb0', 'cold_cloud_injection_radial_power',
-            'cold_cloud_injection_radial_extent_frac', 'v_cloud_init',
-            'v_cloud_min', 'cloud_radial_offset', 'Z_cloud_over_Z_solar',
-            'T_cl', 'E_SN', 'mstar', 'sonic_point_offset',
-            'sonic_transition_tolerance', 'solver_max_step_kpc',
-            'solver_first_step_kpc'
-        }
-        
-        for key, value in kwargs.items():
-            if key not in valid_params:
-                raise ValueError(f"Unknown parameter: {key}")
+        for key, value in cls._normalize_kwargs(kwargs).items():
             cls._custom_defaults[key] = value
 
 

@@ -66,7 +66,7 @@ def test_single_species_column_density_is_ordered_and_finite():
         eta_M=0.2,
         eta_M_cold=0.05,
         eta_E=1.0,
-        cloud_mass_range=(1e4, 1e4),
+        cloud_mass_range=(1e4, 1e5),
         N_cloud_species=1,
         r_max_kpc=10.0,
         rtol=1e-6,
@@ -83,4 +83,3 @@ def test_single_species_column_density_is_ordered_and_finite():
     assert np.all(np.diff(v_cloud) > 0.0)
     assert np.all(np.isfinite(dN_dv))
     assert np.all(dN_dv >= 0.0)
-

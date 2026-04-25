@@ -99,12 +99,7 @@ def test_parameter_viability():
     SFR = 3.0  # M☉/yr
     v_circ = 0.001  # km/s
     
-    config = WindConfig(
-        N_cloud_species=5,
-        cooling_factor=0.0,
-        rtol=1e-6,
-        atol=1e-8
-    )
+    config = WindConfig(cooling_factor=0.0)
     
     # Test viable parameters (should succeed)
     model_viable = WindModel(
@@ -114,6 +109,9 @@ def test_parameter_viability():
         eta_M=1.0,
         eta_M_cold=0.1,
         eta_E=2.0,
+        N_cloud_species=5,
+        rtol=1e-6,
+        atol=1e-8,
         r_max_kpc=10.0
     )
     
@@ -128,6 +126,9 @@ def test_parameter_viability():
         eta_M=0.1,
         eta_M_cold=1.0,  # Too much cold
         eta_E=0.1,  # Too little energy
+        N_cloud_species=5,
+        rtol=1e-6,
+        atol=1e-8,
         r_max_kpc=10.0
     )
     
@@ -144,12 +145,7 @@ def test_known_parameter_outcomes():
     from multiphasegalacticwind import WindModel, WindConfig
     
     # Configuration for tests
-    config = WindConfig(
-        N_cloud_species=5,
-        cooling_factor=0.0,
-        rtol=1e-4,  # Relaxed for faster testing
-        atol=1e-6
-    )
+    config = WindConfig(cooling_factor=0.0)
     
     # Known good parameters for J0021+0052
     # These were shown to work in our diagnostics
@@ -160,6 +156,9 @@ def test_known_parameter_outcomes():
         eta_M=1.0,
         eta_M_cold=0.1,
         eta_E=2.0,
+        N_cloud_species=5,
+        rtol=1e-4,  # Relaxed for faster testing
+        atol=1e-6,
         r_max_kpc=5.0  # Short for testing
     )
     

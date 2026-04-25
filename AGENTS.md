@@ -50,6 +50,7 @@ Notebook guidance:
   - Physical constants and unit conversions (CGS-centered).
 - `multiphasegalacticwind/config.py`
   - `WindConfig`: runtime physics/numerical parameters.
+  - Unknown config kwargs raise `ValueError`; documented legacy aliases include `metallicity -> Z_hot_over_Z_solar` and `cooling_factor -> Cooling_Factor`.
 - `multiphasegalacticwind/core_physics.py`
   - ODE right-hand sides for multiphase and hot-only winds.
   - Cloud mass distribution setup.
@@ -63,7 +64,9 @@ Notebook guidance:
   - Post-processing into observational quantities (notably `dN/dv`).
 - `multiphasegalacticwind/inference.py`
   - JAX MAP+HMC/NUTS inference for wind parameters.
+  - Currently fits only `eta_M`, `eta_M_cold`, and `eta_E`.
   - Supports observable modes: `m0_m1_m2`, `logm0_mean_sigma_skew_kurt`, and optional `dndv_binned` (20-30 bin style likelihoods).
+  - Do not add deeper TRML/cloud-wind inferred parameters before prior predictive, synthetic recovery, and sensitivity studies described in `docs/inference_validation_agent_workplan.md`.
 - `multiphasegalacticwind/analysis_helpers.py`
   - Diagnostics and derived-quantity helpers.
 - `multiphasegalacticwind/plotting.py`, `multiphasegalacticwind/plotting_helpers.py`
@@ -72,6 +75,16 @@ Notebook guidance:
 ### Data files
 - `multiphasegalacticwind/data/Lambda_tab_redshifts.npz`
   - Cooling lookup table consumed by `cooling.py`.
+
+### Planning and documentation files
+- `docs/windconfig_parameters.md`
+  - Current accepted `WindConfig` parameters, aliases, units, and validation behavior.
+- `docs/inference_validation_roadmap.md`
+  - Landing page for the inference validation planning documents.
+- `docs/inference_validation_for_physicists.md`
+  - Human-facing explanation of inference validation for physicists, especially inference novices.
+- `docs/inference_validation_agent_workplan.md`
+  - Agent-facing staged execution plan for prior predictive checks, synthetic recovery, TRML sensitivity screens, and eventual expanded inference.
 
 ---
 
@@ -128,6 +141,8 @@ The total cold mass loading `eta_M_cold_tot` is partitioned across bins and conv
 - species mass fluxes `Mdot_cold0[i]`
 - number injection rates `Ndot_cloud0[i] = Mdot_cold0[i] / M_cloud0[i]`
 
+`WindModel` validates `N_cloud_species >= 1` and finite, strictly positive, increasing `cloud_mass_range` values before any logarithms are taken.
+
 ## 3) Thermodynamics and potentials (`Wind_Evo`)
 - `c_s^2 = gamma * P / rho`
 - `Mach^2 = v^2 / c_s^2`
@@ -178,7 +193,10 @@ Volumetric source terms include SN source inside `r0`, cloud exchange, and cooli
 - `dedt = Edot_SN - Σ(n_cloud * (e_dot_transfer + p_dot_ram * v_wind)) + e_dot_cool`
 
 Cooling term in wind evolution:
-- `e_dot_cool = -(rho_wind/(muH*m_p))^2 * Lambda_P_rho((Pressure, rho_wind))`
+- `e_dot_cool = -Cooling_Factor * (rho_wind/(muH*m_p))^2 * Lambda_P_rho((Pressure, rho_wind))`
+
+Cloud thermal enthalpy in the cloud Bernoulli term uses:
+- `h_cloud = cs_cl^2 / (gamma - 1)`, with `cs_cl^2 = gamma*k_B*T_cloud/(mu*m_p)`
 
 ## 9) Wind gradients and sonic regularization
 Gradient denominator:
@@ -233,6 +251,8 @@ Any new stiff term must include:
 
 ## Testing Map
 Current tests live in `tests/`:
+- `tests/conftest.py`
+  - forces CPU JAX backend for deterministic local pytest runs on Apple Silicon.
 - `tests/test_ode_convergence.py`
   - full-vs-hot ODE consistency as `eta_M_cold -> 0`
   - viability behavior checks
@@ -247,12 +267,14 @@ Current tests live in `tests/`:
   - configuration and cooling regression checks
 - `tests/test_jax_solver.py`
   - JAX solver/Jacobian shape and finiteness checks
+- `tests/test_physics_regressions.py`
+  - focused regression checks for cooling-factor scaling and cloud enthalpy.
 - `tests/test_inference.py`
   - MAP/HMC/NUTS regression checks for all supported inference observable sets
   - runtime/status callback and covariance-shape contracts
 
 Run tests:
-- `PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider`
+- `JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider`
 
 ---
 
@@ -298,6 +320,16 @@ Run tests:
 3. Implement fallback for known pathological cases (e.g., negative gradients).
 4. Validate against simple synthetic states.
 
+## Inference roadmap discipline
+Current inference is a validated three-parameter surface over `eta_M`, `eta_M_cold`, and `eta_E`. Future inference work must follow the staged plan in `docs/inference_validation_agent_workplan.md`:
+1. Build a current three-parameter prior predictive atlas.
+2. Run synthetic input recovery for the current three-parameter model.
+3. Run one-at-a-time sensitivity screens for TRML/cloud-wind parameters.
+4. Choose one effective added parameter only after sensitivity and recovery justify it.
+5. Expand inference one parameter at a time and repeat prior predictive, recovery, and posterior predictive checks.
+
+Do not jump directly to fitting all TRML closure knobs. Parameters such as `f_turb0`, `Mdot_coefficient`, `geometric_factor`, `drag_coeff`, `CoolingAreaChiPower`, `ColdTurbulenceChiPower`, and `TurbulentVelocityChiPower` are likely degenerate. Prefer an effective first expansion such as an `A_mix` amplitude only after the baseline recovery studies pass.
+
 ---
 
 ## Common Pitfalls to Avoid
@@ -309,6 +341,8 @@ Run tests:
 - Adding magic constants without context.
 - Swallowing NaNs silently without a corresponding truncation condition or diagnostic.
 - Using non-JAX compatibility paths as canonical inference code.
+- Treating binned `dN/dv` covariance as diagonal without a documented observational justification.
+- Interpreting posterior samples for added TRML parameters before synthetic input recovery demonstrates identifiability.
 
 ---
 

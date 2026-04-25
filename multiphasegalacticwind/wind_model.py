@@ -179,12 +179,27 @@ class WindModel:
         elif r_star_kpc is None:
             r_star_kpc = 0.3  # default
 
+        if not isinstance(N_cloud_species, (int, np.integer)) or N_cloud_species < 1:
+            raise ValueError(f"N_cloud_species must be an integer >= 1, got {N_cloud_species}")
+        N_cloud_species = int(N_cloud_species)
+
         # Handle cloud mass range
         if cloud_mass_range is None:
             if log_M_cloud_min is not None and log_M_cloud_max is not None:
                 cloud_mass_range = (10**log_M_cloud_min, 10**log_M_cloud_max)
             else:
                 cloud_mass_range = (1, 1e5)  # default
+        if len(cloud_mass_range) != 2:
+            raise ValueError("cloud_mass_range must contain exactly two masses: (min, max)")
+        cloud_mass_range = (float(cloud_mass_range[0]), float(cloud_mass_range[1]))
+        if not np.all(np.isfinite(cloud_mass_range)):
+            raise ValueError(f"cloud_mass_range entries must be finite, got {cloud_mass_range}")
+        if cloud_mass_range[0] <= 0 or cloud_mass_range[1] <= 0:
+            raise ValueError(f"cloud_mass_range entries must be positive, got {cloud_mass_range}")
+        if cloud_mass_range[1] <= cloud_mass_range[0]:
+            raise ValueError(
+                f"cloud_mass_range maximum must be greater than minimum, got {cloud_mass_range}"
+            )
 
         # Set up configuration
         if config is None:
@@ -197,9 +212,10 @@ class WindModel:
             config = WindConfig(**config_kwargs)
         else:
             # Override any parameters passed as kwargs
-            for key, value in config_kwargs.items():
-                if hasattr(config, key):
-                    setattr(config, key, value)
+            for key, value in WindConfig._normalize_kwargs(config_kwargs).items():
+                setattr(config, key, value)
+                if key == 'Z_hot_over_Z_solar':
+                    config.metallicity = value
             # Also set redshift on config if provided
             if redshift != config.redshift:
                 config.redshift = redshift
@@ -288,6 +304,8 @@ class WindModel:
             raise ValueError(f"r_max_kpc must be greater than r_star_kpc, got {self.r_max_kpc} <= {self.r_star_kpc}")
         
         # Cloud mass range checks
+        if not np.all(np.isfinite(self.M_cloud0)):
+            raise ValueError("Cloud masses must be finite")
         if self.M_cloud0[0] <= 0:
             raise ValueError(f"Minimum cloud mass must be positive")
         if self.N_cloud_species > 1 and self.M_cloud0[-1] <= self.M_cloud0[0]:

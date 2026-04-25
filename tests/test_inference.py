@@ -180,6 +180,48 @@ def test_shape_observable_mode_predicts_and_fits():
     assert fit.hmc.samples_theta.shape == (10, 3)
 
 
+def test_exact_shape5_map_objective_prefers_truth_over_offset():
+    model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=3.0,
+        step_kpc=0.20,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        cloud_alpha=2.0,
+        observable_set="logm0_mean_sigma_skew_kurt",
+    )
+
+    theta_true = np.array([0.20, 0.20, 0.80], dtype=float)
+    theta_offset = np.array([0.28, 0.15, 0.67], dtype=float)
+    obs_true = model.predict_observables(theta_true)
+
+    sigma = np.array(
+        [
+            np.log1p(0.10),
+            0.10 * abs(obs_true[1]),
+            0.10 * abs(obs_true[2]),
+            0.20,
+            0.40,
+        ],
+        dtype=float,
+    )
+    covariance = build_covariance(sigma, np.eye(5))
+    nlp = model.make_negative_log_posterior(
+        observed_moments=obs_true,
+        covariance_moments=covariance,
+        prior_mean_log=np.log(np.array([0.20, 0.20, 0.70], dtype=float)),
+        prior_sigma_log=(1.4, 1.4, 0.45),
+        include_transform_jacobian=False,
+    )
+
+    truth_u = model._unconstrained_from_theta_numpy(theta_true)
+    offset_u = model._unconstrained_from_theta_numpy(theta_offset)
+
+    assert float(nlp(truth_u)) < float(nlp(offset_u))
+
+
 def test_dndv_binned_observable_mode_predicts_and_fits():
     model = MomentInferenceModel(
         sfr=3.0,

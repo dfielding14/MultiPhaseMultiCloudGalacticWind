@@ -652,9 +652,13 @@ class MomentInferenceModel:
             v_scale = jnp.maximum(jnp.abs(y0[0]), 1.0)
             rho_scale = jnp.maximum(jnp.abs(y0[1]), 1e-30)
             p_scale = jnp.maximum(jnp.abs(y0[2]), 1e-30)
-            soft_neg_v = jax.nn.softplus(-v_wind / v_scale)
-            soft_neg_rho = jax.nn.softplus(-rho_wind / rho_scale)
-            soft_neg_p = jax.nn.softplus(-pressure / p_scale)
+            def nonpositive_barrier(values, scale):
+                rel = jnp.nan_to_num(values / scale, nan=-1.0, posinf=1e6, neginf=-1e6)
+                return jnp.where(rel > 0.0, 0.0, jax.nn.softplus(-rel))
+
+            soft_neg_v = nonpositive_barrier(v_wind, v_scale)
+            soft_neg_rho = nonpositive_barrier(rho_wind, rho_scale)
+            soft_neg_p = nonpositive_barrier(pressure, p_scale)
             finite_violation = jnp.mean(jnp.where(finite_matrix, 0.0, 1.0))
 
             barrier_value = (
@@ -707,12 +711,16 @@ class MomentInferenceModel:
         prior_mean_log: Sequence[float] | None = None,
         prior_sigma_log: Sequence[float] = (1.5, 1.5, 0.8),
         invalid_penalty: float = 1e6,
+        include_transform_jacobian: bool = True,
     ):
         """
         Create JAX-jitted negative log posterior over unconstrained parameters.
 
-        The prior is defined in log(theta) space and transformed to the
-        unconstrained manifold using an explicit Jacobian correction term.
+        The prior is defined in log(theta) space. Set
+        ``include_transform_jacobian=True`` when sampling in unconstrained
+        variables so the transformed target preserves the log(theta) posterior
+        measure. Use ``False`` for coordinate-independent MAP reporting in
+        log(theta) space.
         """
         y_obs = jnp.asarray(observed_moments, dtype=jnp.float64)
         if y_obs.shape != (self.observable_dim,):
@@ -749,6 +757,7 @@ class MomentInferenceModel:
             chi2 = resid @ cov_inv @ resid
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
             log_jacobian = jnp.sum(jnp.log(jnp.maximum(jnp.abs(dlog_du), 1e-300)))
+            transform_term = -log_jacobian if include_transform_jacobian else 0.0
             smooth_penalty = 100.0 * barrier_value
             early_fail_penalty = jnp.where(
                 valid > 0.5,
@@ -756,7 +765,13 @@ class MomentInferenceModel:
                 10.0 * jax.nn.softplus((r_max_cgs - first_invalid_r) / jnp.maximum(r_max_cgs, 1e-30)),
             )
             hard_penalty = jnp.where(valid > 0.5, 0.0, invalid_penalty)
-            return 0.5 * (chi2 + prior_chi2) - log_jacobian + smooth_penalty + early_fail_penalty + hard_penalty
+            return (
+                0.5 * (chi2 + prior_chi2)
+                + transform_term
+                + smooth_penalty
+                + early_fail_penalty
+                + hard_penalty
+            )
 
         return nlp
 
@@ -1016,12 +1031,13 @@ class MomentInferenceModel:
         map_num_starts: int = 4,
         seed: int = 0,
     ) -> MAPFitResult:
-        """Fit MAP estimate with multi-start damped-Newton iterations."""
+        """Fit the log-parameter MAP estimate with multi-start damped-Newton iterations."""
         nlp = self.make_negative_log_posterior(
             observed_moments=observed_moments,
             covariance_moments=covariance_moments,
             prior_mean_log=prior_mean_log,
             prior_sigma_log=prior_sigma_log,
+            include_transform_jacobian=False,
         )
         return self._fit_map_from_nlp(
             nlp=nlp,
@@ -1365,20 +1381,28 @@ class MomentInferenceModel:
         """Run MAP + posterior sampling workflow for configured observables."""
         total_start = time.perf_counter()
         if status_callback is not None:
-            status_callback("Building negative log-posterior.")
+            status_callback("Building MAP and sampler negative log-posteriors.")
 
-        nlp = self.make_negative_log_posterior(
+        nlp_map = self.make_negative_log_posterior(
             observed_moments=observed_moments,
             covariance_moments=covariance_moments,
             prior_mean_log=prior_mean_log,
             prior_sigma_log=prior_sigma_log,
+            include_transform_jacobian=False,
+        )
+        nlp_sampler = self.make_negative_log_posterior(
+            observed_moments=observed_moments,
+            covariance_moments=covariance_moments,
+            prior_mean_log=prior_mean_log,
+            prior_sigma_log=prior_sigma_log,
+            include_transform_jacobian=True,
         )
 
         if status_callback is not None:
             status_callback("Starting MAP optimization.")
         map_start = time.perf_counter()
         map_result = self._fit_map_from_nlp(
-            nlp=nlp,
+            nlp=nlp_map,
             observed_moments=np.asarray(observed_moments, dtype=float),
             covariance_moments=np.asarray(covariance_moments, dtype=float),
             initial_theta=initial_theta,
@@ -1399,7 +1423,7 @@ class MomentInferenceModel:
             )
         sample_start = time.perf_counter()
         hmc_result = self._sample_posterior(
-            nlp=nlp,
+            nlp=nlp_sampler,
             initial_log_theta=map_result.unconstrained_theta_map,
             mass_diag=mass_diag,
             num_warmup=hmc_num_warmup,

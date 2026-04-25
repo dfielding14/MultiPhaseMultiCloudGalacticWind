@@ -92,6 +92,55 @@ def test_recovery_metric_summary_intervals_and_biases():
     assert np.all(metrics["posterior_width"] > 0.0)
 
 
+def test_make_diagnostic_plots_writes_corner_and_observable_fit(tmp_path):
+    harness = load_harness_module()
+
+    class FakeModel:
+        observable_set = "logm0_mean_sigma_skew_kurt"
+        observable_names = ("logM0", "mean_v", "sigma_v", "skewness", "kurtosis")
+        default_observable_yscale = "linear"
+
+    rng = np.random.default_rng(11)
+    theta_true = np.array([0.2, 0.15, 0.9], dtype=float)
+    samples_theta = rng.normal(theta_true, [0.02, 0.01, 0.05], size=(128, 3))
+    observed = np.array([44.0, 300.0, 90.0, 0.1, 3.0], dtype=float)
+    posterior_predictive = rng.normal(observed, [0.1, 10.0, 5.0, 0.05, 0.1], size=(64, 5))
+
+    result = harness.RealizationResult(
+        truth_case="fiducial",
+        realization_id=0,
+        theta_true=theta_true,
+        true_observables=observed,
+        true_raw_moments=np.ones(5, dtype=float),
+        observed=observed,
+        sigma=np.ones(5, dtype=float),
+        covariance=np.eye(5, dtype=float),
+        truth_valid=True,
+        first_invalid_r_kpc=6.0,
+        success=True,
+        error="",
+        map_success=True,
+        map_message="ok",
+        theta_map=np.array([0.21, 0.14, 0.85], dtype=float),
+        map_predicted_observables=observed * np.array([1.0, 0.98, 1.02, 1.0, 1.0]),
+        chi2=1.0,
+        nlp=2.0,
+        samples_theta=samples_theta,
+        samples_log=np.log(samples_theta),
+        posterior_predictive=posterior_predictive,
+        metrics=harness.summarize_recovery_metrics(theta_true, np.array([0.21, 0.14, 0.85]), samples_theta),
+        diagnostics={"correlation_theta": np.eye(3), "acceptance_rate": 0.8, "num_divergent": 0},
+        runtime_seconds={"total": 0.0},
+    )
+
+    paths = harness.make_diagnostic_plots(str(tmp_path), FakeModel(), [result])
+
+    assert len(paths["corner_plots"]) == 1
+    assert len(paths["observable_fit_plots"]) == 1
+    assert Path(paths["corner_plots"][0]).exists()
+    assert Path(paths["observable_fit_plots"][0]).exists()
+
+
 def test_synthetic_recovery_smoke_writes_outputs(tmp_path):
     harness = load_harness_module()
     output_dir = tmp_path / "synthetic_recovery"
@@ -140,6 +189,7 @@ def test_synthetic_recovery_smoke_writes_outputs(tmp_path):
     assert npz_path.exists()
     assert csv_path.exists()
     assert metadata_path.exists()
+    assert (output_dir / "diagnostic_plots" / "fiducial_realization_000_observable_fit.png").exists()
 
     data = np.load(npz_path)
     assert data["theta_true"].shape == (1, 3)
@@ -149,6 +199,7 @@ def test_synthetic_recovery_smoke_writes_outputs(tmp_path):
     assert data["theta_map"].shape == (1, 3)
     assert data["samples_theta"].shape[0] == 1
     assert data["posterior_predictive"].shape[0] == 1
+    assert data["posterior_q50"].shape == (1, 3)
 
     with open(csv_path, newline="", encoding="ascii") as fh:
         rows = list(csv.DictReader(fh))

@@ -66,6 +66,7 @@ Notebook guidance:
   - JAX MAP+HMC/NUTS inference for wind parameters.
   - Currently fits only `eta_M`, `eta_M_cold`, and `eta_E`.
   - Supports observable modes: `m0_m1_m2`, `logm0_mean_sigma_skew_kurt`, and optional `dndv_binned` (20-30 bin style likelihoods).
+  - Reported MAP estimates optimize the posterior density in log-parameter space; HMC/NUTS targets include the unconstrained-transform Jacobian.
   - Do not add deeper TRML/cloud-wind inferred parameters before prior predictive, synthetic recovery, and sensitivity studies described in `docs/inference_validation_agent_workplan.md`.
 - `multiphasegalacticwind/analysis_helpers.py`
   - Diagnostics and derived-quantity helpers.

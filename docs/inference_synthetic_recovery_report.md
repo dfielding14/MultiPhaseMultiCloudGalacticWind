@@ -8,6 +8,17 @@ This report summarizes the first CPU-scale synthetic input-recovery run for the 
 
 No turbulent radiative mixing-layer or cloud-wind parameters were added.
 
+## Status Update
+
+The first recovery run below exposed a real inference-diagnostic problem and should be treated as superseded for scientific decisions. Follow-up exact-data checks found two objective-level issues:
+
+- the reported MAP used the unconstrained-coordinate posterior, including the softplus/sigmoid transform Jacobian, making MAP recovery coordinate dependent;
+- the smooth validity barrier charged ordinary valid trajectories and could dominate the likelihood residuals.
+
+The code now reports MAP estimates from the log-parameter posterior while keeping the transform Jacobian in the HMC/NUTS target, and the validity barrier is dormant for positive finite wind states. The synthetic recovery harness also writes per-realization corner plots and observable-fit plots by default, so future recovery reports can inspect the same posterior geometry that previously had to be checked by hand.
+
+Baseline recovery must be rerun with these fixes before proceeding to TRML inference expansion or using the pilot numbers below in Paper 2.
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:
@@ -127,12 +138,11 @@ The `narrow_profile` case showed the largest single correlation, with `eta_M` an
 
 ## Recommendation
 
-The baseline three-parameter inference path is operational, but this pilot does not yet justify expanding the inferred parameter set. The immediate next scientific step should be a production-scale baseline recovery run with:
+The baseline three-parameter inference path is operational, but the pilot above was affected by the MAP-objective and validity-barrier bugs described in the status update. The immediate next scientific step should be a corrected baseline recovery run with:
 
 - more noise realizations per truth case,
 - longer HMC or NUTS chains,
 - the intended radial range and cloud-species resolution,
 - and a narrowed set of truth cases that are valid under the production forward model.
 
-It is reasonable to proceed to the TRML/cloud-parameter sensitivity screen as a forward-model study, because that does not modify the inference internals. It is not yet reasonable to add an inferred TRML parameter such as `A_mix`; the baseline recovery needs stronger evidence that `eta_M`, `eta_M_cold`, and `eta_E` are reliably recoverable first.
-
+Do not proceed to the TRML/cloud-parameter sensitivity screen as the active next task until the corrected synthetic recovery run has been inspected. It is not yet reasonable to add an inferred TRML parameter such as `A_mix`; the baseline recovery needs stronger evidence that `eta_M`, `eta_M_cold`, and `eta_E` are reliably recoverable first.

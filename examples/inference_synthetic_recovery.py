@@ -11,6 +11,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+import matplotlib
+
+matplotlib.use("Agg")
 import numpy as np
 
 
@@ -121,6 +124,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--truth-case", choices=truth_choices, default="fiducial")
     parser.add_argument("--observable-set", choices=OBSERVABLE_SETS, default="logm0_mean_sigma_skew_kurt")
     parser.add_argument("--noise-fraction", type=float, default=0.10)
+    parser.add_argument(
+        "--use-truth-observables",
+        action="store_true",
+        help="Use exact truth observables instead of drawing a noisy realization.",
+    )
     parser.add_argument("--num-noise-realizations", type=int, default=3)
     parser.add_argument("--num-samples", type=int, default=200, help="Posterior samples per realization")
     parser.add_argument("--num-warmup", type=int, default=200, help="Posterior warmup steps per realization")
@@ -163,6 +171,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hmc-leapfrog-steps", type=int, default=12)
     parser.add_argument("--hmc-target-accept", type=float, default=0.70)
     parser.add_argument("--posterior-predictive-samples", type=int, default=256)
+    parser.add_argument(
+        "--no-diagnostic-plots",
+        action="store_true",
+        help="Skip per-realization corner and observable-fit diagnostic plots.",
+    )
 
     parser.add_argument("--initial-eta-m", type=float, default=0.20)
     parser.add_argument("--initial-eta-m-cold", type=float, default=0.20)
@@ -440,7 +453,10 @@ def run_realization(
         dndv_sigma_floor_frac=args.dndv_sigma_floor_frac,
         dndv_bin_corr=args.dndv_bin_corr,
     )
-    observed = draw_synthetic_observation(rng, model, true_observables, covariance)
+    if args.use_truth_observables:
+        observed = np.asarray(true_observables, dtype=float).copy()
+    else:
+        observed = draw_synthetic_observation(rng, model, true_observables, covariance)
 
     if not truth_valid:
         return _empty_result(
@@ -647,6 +663,11 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         posterior_predictive=_pad_stack([r.posterior_predictive for r in results], (model.observable_dim,)),
         truth_in_68pct_interval=np.vstack([r.metrics["truth_in_68pct_interval"] for r in results]),
         truth_in_95pct_interval=np.vstack([r.metrics["truth_in_95pct_interval"] for r in results]),
+        posterior_q16=np.vstack([r.metrics["q16"] for r in results]),
+        posterior_q50=np.vstack([r.metrics["q50"] for r in results]),
+        posterior_q84=np.vstack([r.metrics["q84"] for r in results]),
+        posterior_q025=np.vstack([r.metrics["q025"] for r in results]),
+        posterior_q975=np.vstack([r.metrics["q975"] for r in results]),
         posterior_mean_bias=np.vstack([r.metrics["posterior_mean_bias"] for r in results]),
         posterior_median_bias=np.vstack([r.metrics["posterior_median_bias"] for r in results]),
         posterior_width=np.vstack([r.metrics["posterior_width"] for r in results]),
@@ -720,12 +741,70 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
     return path
 
 
+def _diagnostic_slug(result: RealizationResult) -> str:
+    return f"{result.truth_case}_realization_{result.realization_id:03d}"
+
+
+def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[RealizationResult]) -> dict[str, list[str]]:
+    """Write per-realization corner and observable-fit diagnostics."""
+    from multiphasegalacticwind.inference import plot_corner, plot_dndv_fit, plot_observable_fit
+
+    plot_dir = os.path.join(output_dir, "diagnostic_plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    corner_paths: list[str] = []
+    fit_paths: list[str] = []
+    for result in results:
+        if not result.success:
+            continue
+
+        slug = _diagnostic_slug(result)
+        if result.samples_theta.size > 0:
+            corner_path = os.path.join(plot_dir, f"{slug}_corner.png")
+            plot_corner(
+                result.samples_theta,
+                labels=PARAM_NAMES,
+                output_path=corner_path,
+                truths=result.theta_true,
+                map_theta=result.theta_map,
+            )
+            corner_paths.append(corner_path)
+
+        fit_path = os.path.join(plot_dir, f"{slug}_observable_fit.png")
+        if model.observable_set == "dndv_binned":
+            plot_dndv_fit(
+                velocity_bins_kms=model.get_dndv_velocity_bins(),
+                observed_dndv=result.observed,
+                covariance_dndv=result.covariance,
+                map_dndv=result.map_predicted_observables,
+                posterior_dndv_samples=result.posterior_predictive
+                if result.posterior_predictive.size > 0
+                else None,
+                output_path=fit_path,
+            )
+        else:
+            plot_observable_fit(
+                observed_values=result.observed,
+                covariance_values=result.covariance,
+                map_values=result.map_predicted_observables,
+                posterior_samples=result.posterior_predictive
+                if result.posterior_predictive.size > 0
+                else None,
+                labels=model.observable_names,
+                output_path=fit_path,
+                yscale=model.default_observable_yscale,
+            )
+        fit_paths.append(fit_path)
+
+    return {"corner_plots": corner_paths, "observable_fit_plots": fit_paths}
+
+
 def write_metadata(
     output_dir: str,
     args: argparse.Namespace,
     model: Any,
     results: Sequence[RealizationResult],
-    output_files: dict[str, str],
+    output_files: dict[str, Any],
     runtime_seconds: float,
 ) -> str:
     """Write run metadata and truth-case documentation."""
@@ -748,6 +827,9 @@ def write_metadata(
             "Fitted parameters are fixed to eta_M, eta_M_cold, and eta_E.",
             "Failures are retained as rows with success=false and NaN posterior arrays.",
             "sampler=none runs MAP only and leaves posterior interval metrics as NaN/false.",
+            "Diagnostic corner plots use green dashed truth lines and red MAP lines.",
+            "--use-truth-observables disables the random noise draw but keeps the configured covariance.",
+            "Reported MAP values optimize the log-parameter posterior; posterior samplers include the unconstrained-transform Jacobian.",
         ],
     }
     path = os.path.join(output_dir, "run_metadata.json")
@@ -784,9 +866,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 print(f"  error: {result.error}", flush=True)
             realization_counter += 1
 
-    output_files: dict[str, str] = {}
+    output_files: dict[str, Any] = {}
     output_files["npz"] = write_npz(args.output, model, results)
     output_files["csv"] = write_csv_summary(args.output, results)
+    if not args.no_diagnostic_plots:
+        output_files.update(make_diagnostic_plots(args.output, model, results))
     output_files["metadata"] = write_metadata(
         args.output,
         args,

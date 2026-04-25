@@ -813,6 +813,7 @@ JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 pytest -q -p n
 Watch for:
 
 - posterior equal to prior,
+- exact-data MAP offset from truth because coordinate transforms, priors, or validity barriers dominate the likelihood,
 - sampler divergences,
 - very low effective sample size,
 - strong parameter correlations near absolute value 1,
@@ -827,18 +828,18 @@ Watch for:
 The next implementation task should be:
 
 ```text
-Create examples/trml_sensitivity_screen.py and docs/trml_sensitivity_report.md.
+Rerun corrected baseline synthetic recovery and update docs/inference_synthetic_recovery_report.md.
 ```
 
-Do not add new fitted parameters in that task.
+Do not add new fitted parameters or start TRML sensitivity work in that task.
 
 Minimum scope:
 
-- vary fixed cloud-wind and TRML parameters one at a time around a fiducial wind,
-- record validity, observable vectors, and derived summaries for each scan point,
-- compute leverage metrics such as changes in `M0`, mean velocity, velocity width, and profile distance,
-- rank parameters by observable leverage and invalid-region behavior,
-- write the sensitivity report under `docs/`,
-- keep generated scan outputs and plots out of version control unless explicitly requested.
+- run at least one exact-observable fiducial recovery with NUTS,
+- run a noise-realized baseline sweep over the valid truth cases,
+- inspect the per-realization corner plots and observable-fit plots,
+- compare MAP errors, posterior medians, interval inclusion, sampler diagnostics, and parameter correlations against the pre-fix pilot,
+- update the recovery report and Paper 2 synthetic-recovery section with corrected conclusions,
+- keep generated sampler chains and diagnostic plot outputs out of version control unless explicitly requested.
 
-Only after the TRML sensitivity report should agents choose one effective added parameter and modify inference internals.
+Only after corrected baseline recovery is scientifically acceptable should agents proceed to the TRML sensitivity report, choose one effective added parameter, or modify inference internals further.

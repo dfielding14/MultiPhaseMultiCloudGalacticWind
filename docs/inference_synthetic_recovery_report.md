@@ -19,6 +19,81 @@ The code now reports MAP estimates from the log-parameter posterior while keepin
 
 Baseline recovery must be rerun with these fixes before proceeding to TRML inference expansion or using the pilot numbers below in Paper 2.
 
+## Corrected Recovery Roadmap
+
+The next phase is a corrected synthetic-recovery campaign, not TRML sensitivity. The goal is to separate machinery bugs, sampler geometry, true parameter degeneracies, and noise-realization scatter.
+
+1. Run exact-observable recovery first.
+   Use `--use-truth-observables` so the synthetic observation is the forward model output at the known truth. This should be the first gate because a noiseless recovery failure points to inference machinery, sampler geometry, priors, or identifiability rather than random noise.
+
+2. Tune NUTS on the exact fiducial case.
+   Require `chi2` near zero at the MAP, truth inside the posterior intervals, no serious divergences, `Rhat <= 1.05`, and enough effective samples for the corner plot to be interpretable. The short corrected diagnostic improved the MAP but still showed broad `eta_E` and a few NUTS divergences, so production runs should use longer warmup/sampling and a higher target acceptance such as 0.90--0.95.
+
+3. Run exact-observable recovery across the valid truth cases.
+   Apply the no-noise test to each truth case that produces valid forward-model observables. This tells us whether each truth case is identifiable under the chosen observables and covariance before adding stochastic scatter.
+
+4. Run the noisy recovery sweep only after exact recovery is acceptable.
+   Use multiple noise realizations per valid truth case. Summarize MAP relative error, posterior median bias, posterior widths, 68 and 95 percent truth inclusion, sampler diagnostics, and parameter correlations.
+
+5. Inspect the corner plots and observable-fit plots for every case.
+   Treat the corner plots as first-class recovery diagnostics. If `eta_E` remains broad or biased while sampler diagnostics are clean, that is likely a real observable degeneracy. If divergences, low ESS, or unstable contours persist, fix sampler/covariance geometry before interpreting the physics.
+
+6. Update this report and the Paper 2 synthetic-recovery section with corrected results.
+   The old pilot figures should remain disabled until replaced by corrected figures. Only after corrected baseline recovery is scientifically acceptable should the project return to TRML/cloud-parameter sensitivity work or add any inferred parameter.
+
+## Corrected Fiducial Exact-Data Gate
+
+A first corrected exact-observable fiducial gate was run on April 25, 2026:
+
+```bash
+JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 \
+python examples/inference_synthetic_recovery.py \
+  --truth-case fiducial \
+  --observable-set logm0_mean_sigma_skew_kurt \
+  --use-truth-observables \
+  --num-noise-realizations 1 \
+  --num-samples 256 \
+  --num-warmup 512 \
+  --seed 20260425 \
+  --output examples/outputs/inference_synthetic_recovery/fiducial_shape5_exact_nuts_gate_20260425 \
+  --r-max-kpc 6.0 \
+  --step-kpc 0.08 \
+  --n-cloud-species 4 \
+  --cloud-mass-min 10.0 \
+  --cloud-mass-max 1.0e4 \
+  --sampler nuts \
+  --num-chains 2 \
+  --nuts-chain-method vectorized \
+  --map-max-iter 24 \
+  --map-num-starts 4 \
+  --hmc-step-size 0.02 \
+  --hmc-target-accept 0.95 \
+  --jax-platform cpu
+```
+
+This run used the reduced CPU diagnostic settings from the pilot so the corrected objective could be compared cleanly to the pre-fix behavior.
+
+Results:
+
+| Quantity | Value |
+|---|---:|
+| Truth `eta_M`, `eta_M_cold`, `eta_E` | 0.200, 0.200, 0.800 |
+| MAP `eta_M`, `eta_M_cold`, `eta_E` | 0.195, 0.195, 0.756 |
+| MAP relative error | 2.7 percent, 2.5 percent, 5.5 percent |
+| MAP `chi2` | 0.0208 |
+| NUTS acceptance rate | 0.948 |
+| NUTS divergences | 1 |
+| Maximum `Rhat` | 1.000 |
+| Minimum bulk ESS | 150 |
+
+The truth lies inside all 68 percent and 95 percent marginal posterior intervals. The posterior medians are `(0.184, 0.186, 0.689)`, and the 68 percent intervals are `(0.136, 0.252)`, `(0.152, 0.218)`, and `(0.526, 0.872)` for `eta_M`, `eta_M_cold`, and `eta_E`, respectively. The strongest posterior correlation is `eta_M_cold`--`eta_E` at about +0.52.
+
+Interpretation:
+
+- The corrected MAP and observable-fit machinery pass the noiseless fiducial gate.
+- The posterior still leaves `eta_E` broad and biased low in the median, even though the true value is inside the central intervals.
+- The single NUTS divergence means this is not yet a clean production setting. Before running all truth cases, the next step is to tune the exact fiducial NUTS run further or adjust posterior geometry until divergences are removed.
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:

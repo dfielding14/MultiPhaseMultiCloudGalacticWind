@@ -627,6 +627,36 @@ class Solution:
         v_cloud, dN_dv = self.calculate_column_density_distribution(**kwargs)
         return calculate_velocity_moments(v_cloud, dN_dv)
 
+    def calculate_radiative_cooling_losses(
+        self,
+        r_min_kpc: Optional[float] = None,
+        r_max_kpc: Optional[float] = None,
+        include_interface: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Calculate hot-phase and interface radiative cooling-loss diagnostics.
+
+        Parameters
+        ----------
+        r_min_kpc, r_max_kpc : float, optional
+            Radius window in kpc. Defaults to the full solved domain.
+        include_interface : bool, optional
+            If True, include interface cooling from cloud-growth energy loss.
+
+        Returns
+        -------
+        losses : dict
+            Cooling-loss profiles and integrated luminosities in CGS units.
+        """
+        from .analysis_helpers import calculate_radiative_cooling_losses
+
+        return calculate_radiative_cooling_losses(
+            self,
+            r_min_kpc=r_min_kpc,
+            r_max_kpc=r_max_kpc,
+            include_interface=include_interface,
+        )
+
     def calculate_column_density_distribution(self, **kwargs: Any) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate column density distribution dN/dv in cm^-2 / (km/s).

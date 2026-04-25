@@ -16,7 +16,8 @@ from .observables import (calculate_velocity_moments,
                          calculate_column_density_by_species)
 from .analysis_helpers import (Field_Length, Field_Length_mix, cloud_radius, cloud_ksi,
                              Cooling_and_Acceleration, Gradient_Components,
-                             calculate_cloud_moments, get_cloud_mass_spectrum)
+                             calculate_cloud_moments, get_cloud_mass_spectrum,
+                             calculate_radiative_cooling_losses)
 from .inference import (
     MomentInferenceModel,
     MAPFitResult,
@@ -31,9 +32,11 @@ from .inference import (
 from .classy_observations import (
     ClassyObservation,
     BinnedDndvObservation,
+    ClassyInferenceInputs,
     load_classy_observations,
     get_classy_observation,
     build_binned_dndv_observation,
+    build_classy_inference_inputs,
 )
 
 __version__ = "0.1.0"
@@ -42,8 +45,10 @@ __all__ = ["WindModel", "WindConfig", "get_default_config", "setup_plotting_styl
            "calculate_velocity_moments", 
            "calculate_mass_weighted_velocity", "calculate_column_density_distribution",
            "calculate_column_density_by_species",
+           "calculate_radiative_cooling_losses",
            "MomentInferenceModel", "MAPFitResult", "HMCResult", "PosteriorFitResult",
            "build_covariance", "covariance_to_correlation", "summarize_parameter_degeneracies",
            "plot_corner", "plot_moment_fit",
-           "ClassyObservation", "BinnedDndvObservation", "load_classy_observations",
-           "get_classy_observation", "build_binned_dndv_observation"]
+           "ClassyObservation", "BinnedDndvObservation", "ClassyInferenceInputs",
+           "load_classy_observations", "get_classy_observation",
+           "build_binned_dndv_observation", "build_classy_inference_inputs"]

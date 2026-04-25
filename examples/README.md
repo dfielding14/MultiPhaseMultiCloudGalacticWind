@@ -73,6 +73,11 @@ Planned inference-validation scripts are documented in [`docs/inference_validati
   - Default likelihood uses transformed observables: `logM0`, mean velocity, dispersion, skewness, kurtosis
   - Optional full-shape mode uses binned `dN/dv` likelihood (`--observable-set dndv_binned`, typically 20-30 bins)
 
+- **`classy_batch_inference.py`** - Batch inference over processed CLASSY galaxies
+  - Loads the 43-galaxy processed CLASSY set and builds per-object inference inputs automatically
+  - Wires per-object `SFR`, radius-choice (`r_gal_kpc`/`r50_kpc`/`r_star_kpc`), and per-object `v_circ`
+  - Supports `m0_m1_m2`, shape-5, and binned `dN/dv` likelihood modes with status logging and per-object summaries
+
 - **`inference_case_study.py`** - SFR/size case-study inference sweep
   - Runs multiple far-ranging galaxy scenarios (dwarf to high-SFR extended systems)
   - Generates per-case corner plots and degeneracy summaries
@@ -127,6 +132,7 @@ python examples/autodiff_sensitivity_analysis.py
 python examples/fit_observational_moments.py --help
 python examples/m82_publication_inference.py --help
 python examples/inference_prior_predictive.py --help
+python examples/classy_batch_inference.py --help
 python examples/inference_case_study.py --quick
 python examples/cooling_backend_comparison.py
 

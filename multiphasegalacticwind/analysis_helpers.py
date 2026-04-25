@@ -12,6 +12,301 @@ from scipy import interpolate
 from .constants import *
 from .config import WindConfig
 from .cooling import get_tcool_min_interpolators, tcool_P
+from .topaz_cooling import load_cooling_table, lambda_total_cgs, tcool_P_topaz
+
+_FOUR_PI_OVER_THREE = 4.0 * np.pi / 3.0
+
+
+def _interp_profile_at_radius(
+    radius_cm: np.ndarray,
+    values: np.ndarray,
+    radius_new_cm: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate a 1D or species-by-radius profile onto a new radius grid."""
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim == 1:
+        return np.interp(radius_new_cm, radius_cm, arr)
+    if arr.ndim == 2:
+        if arr.shape[0] == 0:
+            return np.zeros((0, radius_new_cm.size), dtype=float)
+        return np.vstack([np.interp(radius_new_cm, radius_cm, row) for row in arr])
+    raise ValueError(f"Expected 1D or 2D profile array, got shape={arr.shape}")
+
+
+def _restrict_profiles_to_radius_window(
+    radius_cm: np.ndarray,
+    profiles: Dict[str, np.ndarray],
+    r_min_cm: float,
+    r_max_cm: float,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """
+    Restrict profiles to a radius window and insert exact boundary points.
+
+    Parameters
+    ----------
+    radius_cm : array
+        Monotonic radius grid in cm.
+    profiles : dict
+        Mapping from profile names to 1D or 2D arrays sampled on ``radius_cm``.
+    r_min_cm, r_max_cm : float
+        Radius limits in cm.
+    """
+    radius_cm = np.asarray(radius_cm, dtype=float)
+    if radius_cm.ndim != 1 or radius_cm.size < 2:
+        raise ValueError("radius grid must be a 1D array with at least 2 points")
+    if not np.all(np.diff(radius_cm) > 0.0):
+        raise ValueError("radius grid must be strictly increasing")
+    if r_min_cm > r_max_cm:
+        raise ValueError("r_min_kpc must be <= r_max_kpc")
+    tol = 1e-10 * max(1.0, abs(radius_cm[0]), abs(radius_cm[-1]))
+    if r_min_cm < radius_cm[0] - tol or r_max_cm > radius_cm[-1] + tol:
+        raise ValueError(
+            "Requested radius window is outside the solved domain: "
+            f"[{r_min_cm / kpc:.6g}, {r_max_cm / kpc:.6g}] kpc not in "
+            f"[{radius_cm[0] / kpc:.6g}, {radius_cm[-1] / kpc:.6g}] kpc."
+        )
+    r_min_cm = float(np.clip(r_min_cm, radius_cm[0], radius_cm[-1]))
+    r_max_cm = float(np.clip(r_max_cm, radius_cm[0], radius_cm[-1]))
+
+    if abs(r_max_cm - r_min_cm) <= tol:
+        radius_window = np.array([float(r_min_cm)], dtype=float)
+    else:
+        interior = radius_cm[(radius_cm > r_min_cm) & (radius_cm < r_max_cm)]
+        radius_window = np.concatenate(([r_min_cm], interior, [r_max_cm]))
+
+    profiles_window = {}
+    for key, profile in profiles.items():
+        profiles_window[key] = _interp_profile_at_radius(radius_cm, profile, radius_window)
+    return radius_window, profiles_window
+
+
+def _cumulative_trapezoid(radius_cm: np.ndarray, profile: np.ndarray) -> np.ndarray:
+    """Return cumulative trapezoidal integral of ``profile`` over ``radius_cm``."""
+    radius_cm = np.asarray(radius_cm, dtype=float)
+    profile = np.asarray(profile, dtype=float)
+    cumulative = np.zeros_like(profile)
+    if profile.size > 1:
+        cumulative[1:] = np.cumsum(0.5 * (profile[1:] + profile[:-1]) * np.diff(radius_cm))
+    return cumulative
+
+
+def calculate_radiative_cooling_losses(
+    solution: Any,
+    r_min_kpc: Optional[float] = None,
+    r_max_kpc: Optional[float] = None,
+    include_interface: bool = True,
+) -> Dict[str, Any]:
+    """
+    Compute radiative cooling-loss magnitudes from a solved wind trajectory.
+
+    This diagnostic is post-processing only and does not modify ODE evolution.
+    All returned losses are positive magnitudes.
+
+    Parameters
+    ----------
+    solution : Solution
+        Output from ``WindModel.run()``.
+    r_min_kpc, r_max_kpc : float, optional
+        Radius window in kpc. Defaults to the full solved domain.
+    include_interface : bool, optional
+        If True, include interface cooling from cloud-growth energy loss.
+
+    Returns
+    -------
+    losses : dict
+        Dictionary with emissivity profiles, luminosity profiles, and integrals.
+    """
+    model = solution.model
+    config = model.config
+    if config.cooling_backend != "topaz":
+        raise ValueError(
+            "calculate_radiative_cooling_losses currently supports only cooling_backend='topaz'. "
+            f"Got {config.cooling_backend!r}."
+        )
+
+    radius_full_cm = np.asarray(solution.sol.t, dtype=float)
+    state = np.asarray(solution.sol.y, dtype=float)
+    n_species = int(model.N_cloud_species)
+    expected_rows = 4 + 3 * n_species
+    if state.shape[0] != expected_rows:
+        raise ValueError(
+            f"State vector has {state.shape[0]} rows, expected {expected_rows} for {n_species} species."
+        )
+
+    if r_min_kpc is None:
+        r_min_cm = float(radius_full_cm[0])
+    else:
+        r_min_cm = float(r_min_kpc) * kpc
+
+    if r_max_kpc is None:
+        r_max_cm = float(radius_full_cm[-1])
+    else:
+        r_max_cm = float(r_max_kpc) * kpc
+
+    v_wind = state[0]
+    rho_wind = state[1]
+    pressure = state[2]
+    rhoz_wind = state[3]
+
+    safe_rho_wind = np.maximum(rho_wind, 1e-60)
+    hot_valid = (rho_wind > 0.0) & (pressure > 0.0)
+    temperature_hot = np.where(
+        hot_valid,
+        (pressure / kb) * (config.mu * mp / safe_rho_wind),
+        1.0,
+    )
+
+    topaz_table = load_cooling_table(config.topaz_cooling_table_path)
+    lambda_hot = np.asarray(
+        lambda_total_cgs(
+            temperature_hot,
+            config.Z_hot_over_Z_solar,
+            table=topaz_table,
+        ),
+        dtype=float,
+    )
+    cooling_factor = max(float(config.Cooling_Factor), 0.0)
+    q_hot_full = cooling_factor * (safe_rho_wind / (muH * mp)) ** 2 * lambda_hot
+    q_hot_full = np.where(hot_valid & np.isfinite(q_hot_full) & (q_hot_full > 0.0), q_hot_full, 0.0)
+
+    if include_interface:
+        M_cloud = state[4 : 4 + n_species]
+        v_cloud = state[4 + n_species : 4 + 2 * n_species]
+        Z_cloud = state[4 + 2 * n_species : 4 + 3 * n_species]
+
+        safe_r = np.maximum(radius_full_cm, 1e-30)
+        rho_cloud = pressure * (config.mu * mp) / (kb * config.T_cl)
+        chi_safe = np.maximum(rho_cloud / safe_rho_wind, 1e-30)
+
+        z_wind = rhoz_wind / safe_rho_wind
+        t_wind = (pressure / kb) * (config.mu * mp / safe_rho_wind)
+        t_mix = np.sqrt(np.maximum(t_wind[None, :] * config.T_cl, 1e-30))
+        z_mix = np.sqrt(np.maximum(z_wind[None, :] * Z_cloud, 0.0))
+
+        t_cool_layer = np.asarray(
+            tcool_P_topaz(
+                t_mix,
+                pressure / kb,
+                z_mix / Z_solar,
+                config.mu,
+                table=topaz_table,
+            ),
+            dtype=float,
+        )
+        t_cool_layer = np.broadcast_to(t_cool_layer, (n_species, radius_full_cm.size)).copy()
+        t_cool_layer = np.where(t_cool_layer < 0.0, 1e10 * Myr, t_cool_layer)
+
+        r0 = model.r_star_kpc * kpc
+        injection_radius = config.cold_cloud_injection_radial_extent_frac * r0
+        injection_factor = np.where(
+            radius_full_cm < injection_radius,
+            np.power(np.maximum(safe_r / max(injection_radius, 1e-30), 0.0), config.cold_cloud_injection_radial_power),
+            1.0,
+        )
+        Ndot_cloud = np.asarray(model.Ndot_cloud0, dtype=float)[:, None] * injection_factor[None, :]
+
+        v_cloud_floor = max(config.v_cloud_min * 1e5, 1e-10)
+        v_cloud_safe = np.maximum(v_cloud, v_cloud_floor)
+        number_density_cloud = Ndot_cloud / (config.Omwind * safe_r[None, :] * safe_r[None, :] * v_cloud_safe)
+
+        rho_cloud_safe = np.maximum(rho_cloud, 1e-60)
+        r_cloud = np.where(
+            M_cloud > 0.0,
+            np.power(np.maximum(M_cloud / (_FOUR_PI_OVER_THREE * rho_cloud_safe[None, :]), 0.0), 1.0 / 3.0),
+            0.0,
+        )
+        r_cloud_safe = np.where(r_cloud > 0.0, r_cloud, np.inf)
+
+        v_rel = v_wind[None, :] - v_cloud
+        v_turb = (
+            config.f_turb0
+            * np.abs(v_rel)
+            * np.power(chi_safe[None, :], config.TurbulentVelocityChiPower)
+        )
+        ksi = r_cloud / (np.maximum(v_turb, 1e-10) * np.maximum(t_cool_layer, 1e-30))
+        area_boost = config.geometric_factor * np.power(chi_safe[None, :], config.CoolingAreaChiPower)
+        ksi_factor = np.where(
+            ksi < 1.0,
+            np.power(np.maximum(ksi, 0.0), 0.5),
+            np.power(np.maximum(ksi, 0.0), 0.25),
+        )
+        cloud_active = M_cloud > config.M_cloud_min
+        Mdot_grow = np.where(
+            cloud_active,
+            config.Mdot_coefficient
+            * 3.0
+            * M_cloud
+            * v_turb
+            * area_boost
+            / (r_cloud_safe * chi_safe[None, :])
+            * ksi_factor,
+            0.0,
+        )
+
+        cs_sq_wind = gamma * pressure / safe_rho_wind
+        cs_cl_sq = gamma * kb * config.T_cl / (config.mu * mp)
+        delta_e = (cs_sq_wind[None, :] - cs_cl_sq) / (gamma - 1.0) + 0.5 * v_rel * v_rel
+        delta_e = np.maximum(delta_e, 0.0)
+
+        q_interface_species_full = number_density_cloud * Mdot_grow * delta_e
+        q_interface_species_full = np.where(
+            np.isfinite(q_interface_species_full) & (q_interface_species_full > 0.0),
+            q_interface_species_full,
+            0.0,
+        )
+        q_interface_full = np.sum(q_interface_species_full, axis=0)
+    else:
+        q_interface_species_full = np.zeros((n_species, radius_full_cm.size), dtype=float)
+        q_interface_full = np.zeros(radius_full_cm.size, dtype=float)
+
+    q_total_full = q_hot_full + q_interface_full
+
+    profiles_full = {
+        "q_hot_cgs": q_hot_full,
+        "q_interface_cgs": q_interface_full,
+        "q_total_cgs": q_total_full,
+        "q_interface_species_cgs": q_interface_species_full,
+    }
+    radius_window_cm, profiles_window = _restrict_profiles_to_radius_window(
+        radius_full_cm,
+        profiles_full,
+        r_min_cm=r_min_cm,
+        r_max_cm=r_max_cm,
+    )
+
+    q_hot = profiles_window["q_hot_cgs"]
+    q_interface = profiles_window["q_interface_cgs"]
+    q_total = profiles_window["q_total_cgs"]
+    q_interface_species = profiles_window["q_interface_species_cgs"]
+
+    dLdr_hot = q_hot * config.Omwind * radius_window_cm * radius_window_cm
+    dLdr_interface = q_interface * config.Omwind * radius_window_cm * radius_window_cm
+    dLdr_total = q_total * config.Omwind * radius_window_cm * radius_window_cm
+
+    L_hot_cumulative = _cumulative_trapezoid(radius_window_cm, dLdr_hot)
+    L_interface_cumulative = _cumulative_trapezoid(radius_window_cm, dLdr_interface)
+    L_total_cumulative = _cumulative_trapezoid(radius_window_cm, dLdr_total)
+
+    L_hot = float(L_hot_cumulative[-1])
+    L_interface = float(L_interface_cumulative[-1])
+    L_total = float(L_total_cumulative[-1])
+
+    return {
+        "r_kpc": radius_window_cm / kpc,
+        "q_hot_cgs": q_hot,
+        "q_interface_cgs": q_interface,
+        "q_total_cgs": q_total,
+        "q_interface_species_cgs": q_interface_species,
+        "dLdr_hot_cgs": dLdr_hot,
+        "dLdr_interface_cgs": dLdr_interface,
+        "dLdr_total_cgs": dLdr_total,
+        "L_hot_cgs": L_hot,
+        "L_interface_cgs": L_interface,
+        "L_total_cgs": L_total,
+        "L_hot_cumulative_cgs": L_hot_cumulative,
+        "L_interface_cumulative_cgs": L_interface_cumulative,
+        "L_total_cumulative_cgs": L_total_cumulative,
+    }
 
 
 def Field_Length(state: np.ndarray, config: Optional[WindConfig] = None) -> float:

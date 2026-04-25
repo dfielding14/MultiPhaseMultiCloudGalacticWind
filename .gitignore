@@ -7,3 +7,7 @@ __pycache__/
 
 # Generated example outputs (plots/data artifacts)
 examples/outputs/
+
+# Local legacy notebook exports and manuscript/rendered artifacts
+Multiphase_Wind_Fitting_function_for_Classy.py
+paper/

@@ -221,6 +221,53 @@ Immediate roadmap:
 5. Test whether the observable set is underconstraining high-energy wings by repeating exact high-energy recovery with binned `dN/dv` or an added wing-sensitive summary before changing the production recovery plan.
 6. Only after the high-energy exact cases pass, or after the report explicitly narrows the valid truth grid, proceed to noisy recovery.
 
+## High-Energy Prior And Binned-Profile Diagnostics
+
+The first two roadmap diagnostics were run for `low_eta_m_high_eta_e` and `strong_wings`: a shape-five MAP/objective prior-sensitivity grid and an exact binned-`dN/dv` recovery attempt. The MAP-only prior grid used the same reduced CPU forward model as the exact sweep, `--sampler none`, `--map-max-iter 96`, and `--map-num-starts 16`. The binned runs used 32 velocity bins from 0 to 1600 km/s, exact truth observables, dense NUTS, two sequential chains, `target_accept = 0.99`, 1536 warmup steps, and 512 retained samples per chain.
+
+Shape-five prior sensitivity:
+
+| Case | Prior label | `prior_eta_E` | `sigma_log_eta_E` | MAP `eta_E` | MAP `chi2` | MAP prior `chi2` | MAP objective | Max normalized residual |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `low_eta_m_high_eta_e` | default | 0.70 | 0.45 | 0.766 | 0.0513 | 0.797 | 0.424 | 0.190 |
+| `low_eta_m_high_eta_e` | weak default-centered | 0.70 | 1.20 | 0.929 | 0.0160 | 0.729 | 0.373 | 0.083 |
+| `low_eta_m_high_eta_e` | high-energy centered | 0.90 | 0.45 | 0.932 | 0.0163 | 0.678 | 0.347 | 0.083 |
+| `low_eta_m_high_eta_e` | high-energy weak | 0.90 | 1.20 | 0.999 | 0.0170 | 0.657 | 0.337 | 0.114 |
+| `low_eta_m_high_eta_e` | near-flat diagnostic | 0.90 | 3.00 | 0.999 | 0.0170 | 0.651 | 0.334 | 0.114 |
+| `strong_wings` | default | 0.70 | 0.45 | 0.848 | 0.153 | 0.545 | 0.349 | 0.250 |
+| `strong_wings` | weak default-centered | 0.70 | 1.20 | 0.960 | 0.0328 | 0.409 | 0.221 | 0.112 |
+| `strong_wings` | high-energy centered | 0.90 | 0.45 | 0.951 | 0.0359 | 0.357 | 0.196 | 0.122 |
+| `strong_wings` | high-energy weak | 0.90 | 1.20 | 0.986 | 0.0284 | 0.343 | 0.186 | 0.106 |
+| `strong_wings` | near-flat diagnostic | 0.90 | 3.00 | 0.995 | 0.0290 | 0.337 | 0.183 | 0.120 |
+
+All valid MAP points have zero validity-barrier contribution. The shape-five high-energy bias is therefore not a remaining barrier bug. It is prior-sensitive and weakly identified: small sub-sigma changes in the five observables can move `eta_E` from the default-prior mode to the truth neighborhood, or even to the `eta_E` ceiling for `low_eta_m_high_eta_e` under weak high-energy priors.
+
+Binned-`dN/dv` exact recovery:
+
+| Case | Prior label | MAP `eta_M`, `eta_M_cold`, `eta_E` | `chi2` | Div. | Max `Rhat` | Min ESS | `eta_E` in 95 percent? | MAP `eta_E` relative error | Runtime/status |
+|---|---:|---:|---:|---:|---:|---:|---|---:|---|
+| `low_eta_m_high_eta_e` | default | 0.0707, 0.1175, 0.893 | 0.0862 | 0 | 1.006 | 309 | yes | 6.9 percent | 1051 s, passes |
+| `low_eta_m_high_eta_e` | high-energy weak | 0.0700, 0.1200, 0.958 | 0.000485 | 0 | 1.022 | 112 | yes | 0.23 percent | 1095 s, passes |
+| `strong_wings` | default | -- | -- | -- | -- | -- | -- | -- | exceeded 2.4 h with 16-start MAP, then exceeded 2.0 h with 4-start MAP; terminated |
+| `strong_wings` | high-energy weak | -- | -- | -- | -- | -- | -- | -- | exceeded 2.0 h with 4-start MAP; terminated |
+
+The completed binned `low_eta_m_high_eta_e` runs pass the acceptance criteria. This is important: binned `dN/dv` can recover the low-mass high-energy case cleanly, and the high-energy weak prior nearly recovers the exact truth at the MAP. The diagnostic plots are:
+
+- `examples/outputs/inference_synthetic_recovery/high_energy_dndv_exact_20260425/low_eta_m_high_eta_e_default/diagnostic_plots/low_eta_m_high_eta_e_realization_000_corner.png`
+- `examples/outputs/inference_synthetic_recovery/high_energy_dndv_exact_20260425/low_eta_m_high_eta_e_default/diagnostic_plots/low_eta_m_high_eta_e_realization_000_observable_fit.png`
+- `examples/outputs/inference_synthetic_recovery/high_energy_dndv_exact_20260425/low_eta_m_high_eta_e_high_energy_weak/diagnostic_plots/low_eta_m_high_eta_e_realization_000_corner.png`
+- `examples/outputs/inference_synthetic_recovery/high_energy_dndv_exact_20260425/low_eta_m_high_eta_e_high_energy_weak/diagnostic_plots/low_eta_m_high_eta_e_realization_000_observable_fit.png`
+
+The `strong_wings` binned runs did not produce posterior diagnostics under the planned full NUTS settings. This should be treated as an operational sampler/geometry failure, not as a binned-profile recovery success. The result is still useful: binned `dN/dv` improves the low-mass high-energy case, but it does not yet solve the harder near-boundary `strong_wings` case in a practical CPU workflow.
+
+Updated decision:
+
+- Do not proceed to noisy recovery.
+- Do not add TRML/cloud parameters.
+- Treat the default shape-five high-energy failure as primarily prior sensitivity plus weak summary identifiability.
+- Treat `strong_wings` as an unresolved near-boundary geometry case. The next technical step should be reparameterizing the energy-loading direction, for example sampling a specific-energy proxy such as `eta_E / eta_M` or a launch-speed proxy, before spending more CPU time on full binned NUTS.
+- If a short-term production recovery is needed before reparameterization, restrict the validated exact-recovery grid to cases that pass the current exact tests and explicitly exclude `strong_wings`/near-ceiling `eta_E`.
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:
@@ -340,4 +387,4 @@ The `narrow_profile` case showed the largest single correlation, with `eta_M` an
 
 ## Recommendation
 
-The baseline three-parameter inference path is operational, but exact recovery is not yet scientifically acceptable across the intended truth grid. The active next task is targeted high-energy exact recovery: diagnose whether the `eta_E` failures are dominated by the current prior, by insufficient wing-sensitive observables, by the `eta_E < 0.999` boundary geometry, or by NUTS adaptation. Do not proceed to noisy recovery or TRML/cloud-parameter sensitivity until the high-energy exact cases are either recovered cleanly or removed from the validated baseline truth grid with an explicit physical justification.
+The baseline three-parameter inference path is operational, but exact recovery is not yet scientifically acceptable across the intended truth grid. The high-energy diagnostics show that `eta_E` failures are dominated by prior sensitivity, weak shape-summary identifiability, and unresolved near-boundary sampler geometry for `strong_wings`. Binned `dN/dv` helps the `low_eta_m_high_eta_e` case, but it is not yet a practical solution for `strong_wings`. Do not proceed to noisy recovery or TRML/cloud-parameter sensitivity until the energy-loading direction is reparameterized and the high-energy exact cases are recovered cleanly, or until the validated truth grid is explicitly narrowed with a physical justification.

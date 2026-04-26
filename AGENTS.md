@@ -66,6 +66,7 @@ Notebook guidance:
   - JAX MAP+HMC/NUTS inference for wind parameters.
   - Currently fits only `eta_M`, `eta_M_cold`, and `eta_E`.
   - Default `eta_E` inference remains hard-bounded below 1; optional `eta_e_parameterization="softcap"` is diagnostic only and allows `eta_E > 1` with a smooth penalty above the nominal SN-energy budget.
+  - Optional `energy_coordinate="eta_e_over_eta_m"` is diagnostic only; it samples the positive specific-energy ratio `eta_E/eta_M` while preserving physical priors and public outputs in `(eta_M, eta_M_cold, eta_E)`.
   - Supports observable modes: `m0_m1_m2`, `logm0_mean_sigma_skew_kurt`, and optional `dndv_binned` (20-30 bin style likelihoods).
   - Reported MAP estimates optimize the posterior density in log-parameter space; HMC/NUTS targets include the unconstrained-transform Jacobian.
   - Do not add deeper TRML/cloud-wind inferred parameters before prior predictive, synthetic recovery, and sensitivity studies described in `docs/inference_validation_agent_workplan.md`.
@@ -337,6 +338,8 @@ Current inference is a validated three-parameter surface over `eta_M`, `eta_M_co
 Do not jump directly to fitting all TRML closure knobs. Parameters such as `f_turb0`, `Mdot_coefficient`, `geometric_factor`, `drag_coeff`, `CoolingAreaChiPower`, `ColdTurbulenceChiPower`, and `TurbulentVelocityChiPower` are likely degenerate. Prefer an effective first expansion such as an `A_mix` amplitude only after the baseline recovery studies pass.
 
 The `eta_E` soft-cap parameterization is a diagnostic for near-boundary recovery failures, not a production expansion. If posterior mass above `eta_E = 1` is substantial, interpret `eta_E` as an effective energy-loading parameter and document the physical meaning before using it in Paper 2 claims.
+
+The `energy_coordinate="eta_e_over_eta_m"` mode is likewise diagnostic. It is intended to test whether high-energy synthetic recovery failures are partly caused by sampling the speed-setting direction in poor coordinates. Do not treat it as a production reparameterization until exact recovery passes with acceptable divergences, ESS/Rhat, and coverage for both `eta_E` and `eta_E/eta_M`.
 
 ---
 

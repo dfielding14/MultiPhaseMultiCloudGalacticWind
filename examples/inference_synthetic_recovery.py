@@ -19,6 +19,7 @@ import numpy as np
 
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "inference_synthetic_recovery")
 PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
+ENERGY_COORDINATE_NAMES = ("eta_M", "eta_M_cold", "eta_E_over_eta_M")
 OBSERVABLE_SETS = ("m0_m1_m2", "logm0_mean_sigma_skew_kurt", "dndv_binned")
 ETA_E_MAX = 0.999
 
@@ -159,6 +160,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dndv-bin-corr", type=float, default=0.60)
 
     parser.add_argument("--eta-e-parameterization", choices=["bounded", "softcap"], default="bounded")
+    parser.add_argument("--energy-coordinate", choices=["eta_e", "eta_e_over_eta_m"], default="eta_e")
     parser.add_argument("--eta-e-softcap-center", type=float, default=1.0)
     parser.add_argument("--eta-e-softcap-sigma", type=float, default=0.10)
     parser.add_argument("--eta-e-softcap-transition", type=float, default=0.01)
@@ -213,6 +215,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--eta-e-softcap-sigma must be positive")
     if args.eta_e_softcap_transition <= 0.0:
         parser.error("--eta-e-softcap-transition must be positive")
+    if args.energy_coordinate == "eta_e_over_eta_m" and args.eta_e_parameterization != "softcap":
+        parser.error("--energy-coordinate eta_e_over_eta_m requires --eta-e-parameterization softcap")
     return args
 
 
@@ -247,6 +251,7 @@ def build_model(args: argparse.Namespace):
         dndv_vmax_kms=args.dndv_vmax_kms,
         dndv_kernel_sigma_kms=args.dndv_kernel_sigma_kms,
         eta_e_parameterization=args.eta_e_parameterization,
+        energy_coordinate=args.energy_coordinate,
         eta_e_softcap_center=args.eta_e_softcap_center,
         eta_e_softcap_sigma=args.eta_e_softcap_sigma,
         eta_e_softcap_transition=args.eta_e_softcap_transition,
@@ -397,6 +402,66 @@ def summarize_recovery_metrics(
         "q84": q84,
         "q025": q025,
         "q975": q975,
+    }
+
+
+def _eta_e_over_eta_m(theta: Sequence[float] | np.ndarray) -> np.ndarray:
+    """Return eta_E/eta_M for a theta vector or sample matrix."""
+    theta_arr = np.asarray(theta, dtype=float)
+    return theta_arr[..., 2] / np.maximum(theta_arr[..., 0], 1.0e-300)
+
+
+def _energy_coordinate_names(model: Any) -> tuple[str, str, str]:
+    """Return labels for the model's active unconstrained energy coordinate."""
+    if getattr(model, "energy_coordinate", "eta_e") == "eta_e_over_eta_m":
+        return ENERGY_COORDINATE_NAMES
+    return PARAM_NAMES
+
+
+def summarize_ratio_recovery_metrics(
+    theta_true: Sequence[float],
+    theta_map: Sequence[float],
+    samples_theta: np.ndarray,
+) -> dict[str, float | bool]:
+    """Compute scalar recovery metrics for eta_E/eta_M."""
+    truth = float(_eta_e_over_eta_m(theta_true))
+    map_theta = np.asarray(theta_map, dtype=float)
+    map_value = float(_eta_e_over_eta_m(map_theta)) if map_theta.shape == (3,) else np.nan
+    samples = np.asarray(samples_theta, dtype=float)
+    if samples.ndim != 2 or samples.shape[0] == 0 or samples.shape[1] != 3:
+        return {
+            "truth": truth,
+            "map": map_value,
+            "map_error": abs(map_value - truth) if np.isfinite(map_value) else np.nan,
+            "truth_in_68pct_interval": False,
+            "truth_in_95pct_interval": False,
+            "posterior_mean_bias": np.nan,
+            "posterior_median_bias": np.nan,
+            "posterior_width": np.nan,
+            "q16": np.nan,
+            "q50": np.nan,
+            "q84": np.nan,
+            "q025": np.nan,
+            "q975": np.nan,
+        }
+
+    ratio_samples = _eta_e_over_eta_m(samples)
+    q16, q50, q84 = np.percentile(ratio_samples, [16, 50, 84])
+    q025, q975 = np.percentile(ratio_samples, [2.5, 97.5])
+    return {
+        "truth": truth,
+        "map": map_value,
+        "map_error": abs(map_value - truth),
+        "truth_in_68pct_interval": bool(q16 <= truth <= q84),
+        "truth_in_95pct_interval": bool(q025 <= truth <= q975),
+        "posterior_mean_bias": float(np.mean(ratio_samples) - truth),
+        "posterior_median_bias": float(q50 - truth),
+        "posterior_width": float(q84 - q16),
+        "q16": float(q16),
+        "q50": float(q50),
+        "q84": float(q84),
+        "q025": float(q025),
+        "q975": float(q975),
     }
 
 
@@ -664,6 +729,18 @@ def _pad_stack(arrays: Sequence[np.ndarray], trailing_shape: tuple[int, ...]) ->
 def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult]) -> str:
     """Write machine-readable recovery arrays."""
     path = os.path.join(output_dir, "synthetic_recovery_results.npz")
+    energy_coordinate_names = _energy_coordinate_names(model)
+    ratio_metrics = [summarize_ratio_recovery_metrics(r.theta_true, r.theta_map, r.samples_theta) for r in results]
+    samples_eta_e_over_eta_m = [
+        _eta_e_over_eta_m(r.samples_theta)[:, None] if r.samples_theta.size > 0 else np.empty((0, 1), dtype=float)
+        for r in results
+    ]
+    samples_energy_coordinate = [
+        model.energy_coordinates_from_theta_numpy(r.samples_theta)
+        if r.samples_theta.size > 0
+        else np.empty((0, len(energy_coordinate_names)), dtype=float)
+        for r in results
+    ]
     np.savez(
         path,
         truth_case=np.asarray([r.truth_case for r in results], dtype=str),
@@ -673,21 +750,27 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         first_invalid_r_kpc=np.asarray([r.first_invalid_r_kpc for r in results], dtype=float),
         errors=np.asarray([r.error for r in results], dtype=str),
         theta_names=np.asarray(PARAM_NAMES, dtype=str),
+        energy_coordinate_names=np.asarray(energy_coordinate_names, dtype=str),
         observable_names=np.asarray(model.observable_names, dtype=str),
         observable_set=np.asarray(model.observable_set, dtype=str),
+        energy_coordinate=np.asarray(model.energy_coordinate, dtype=str),
         theta_true=np.vstack([r.theta_true for r in results]),
+        energy_coordinate_true=np.vstack([model.energy_coordinates_from_theta_numpy(r.theta_true) for r in results]),
         true_observables=np.vstack([r.true_observables for r in results]),
         true_raw_moments=np.vstack([r.true_raw_moments for r in results]),
         observed=np.vstack([r.observed for r in results]),
         sigma=np.vstack([r.sigma for r in results]),
         covariance=np.stack([r.covariance for r in results]),
         theta_map=np.vstack([r.theta_map for r in results]),
+        energy_coordinate_map=np.vstack([model.energy_coordinates_from_theta_numpy(r.theta_map) for r in results]),
         map_predicted_observables=np.vstack([r.map_predicted_observables for r in results]),
         chi2=np.asarray([r.chi2 for r in results], dtype=float),
         nlp=np.asarray([r.nlp for r in results], dtype=float),
         map_success=np.asarray([r.map_success for r in results], dtype=bool),
         samples_theta=_pad_stack([r.samples_theta for r in results], (len(PARAM_NAMES),)),
         samples_log=_pad_stack([r.samples_log for r in results], (len(PARAM_NAMES),)),
+        samples_energy_coordinate=_pad_stack(samples_energy_coordinate, (len(ENERGY_COORDINATE_NAMES),)),
+        samples_eta_E_over_eta_M=_pad_stack(samples_eta_e_over_eta_m, (1,)),
         posterior_predictive=_pad_stack([r.posterior_predictive for r in results], (model.observable_dim,)),
         truth_in_68pct_interval=np.vstack([r.metrics["truth_in_68pct_interval"] for r in results]),
         truth_in_95pct_interval=np.vstack([r.metrics["truth_in_95pct_interval"] for r in results]),
@@ -705,6 +788,31 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
             [r.diagnostics.get("posterior_prob_eta_E_gt_1", np.nan) for r in results],
             dtype=float,
         ),
+        true_eta_E_over_eta_M=np.asarray([m["truth"] for m in ratio_metrics], dtype=float),
+        map_eta_E_over_eta_M=np.asarray([m["map"] for m in ratio_metrics], dtype=float),
+        map_error_eta_E_over_eta_M=np.asarray([m["map_error"] for m in ratio_metrics], dtype=float),
+        truth_in_68pct_interval_eta_E_over_eta_M=np.asarray(
+            [m["truth_in_68pct_interval"] for m in ratio_metrics],
+            dtype=bool,
+        ),
+        truth_in_95pct_interval_eta_E_over_eta_M=np.asarray(
+            [m["truth_in_95pct_interval"] for m in ratio_metrics],
+            dtype=bool,
+        ),
+        posterior_q16_eta_E_over_eta_M=np.asarray([m["q16"] for m in ratio_metrics], dtype=float),
+        posterior_q50_eta_E_over_eta_M=np.asarray([m["q50"] for m in ratio_metrics], dtype=float),
+        posterior_q84_eta_E_over_eta_M=np.asarray([m["q84"] for m in ratio_metrics], dtype=float),
+        posterior_q025_eta_E_over_eta_M=np.asarray([m["q025"] for m in ratio_metrics], dtype=float),
+        posterior_q975_eta_E_over_eta_M=np.asarray([m["q975"] for m in ratio_metrics], dtype=float),
+        posterior_mean_bias_eta_E_over_eta_M=np.asarray(
+            [m["posterior_mean_bias"] for m in ratio_metrics],
+            dtype=float,
+        ),
+        posterior_median_bias_eta_E_over_eta_M=np.asarray(
+            [m["posterior_median_bias"] for m in ratio_metrics],
+            dtype=float,
+        ),
+        posterior_width_eta_E_over_eta_M=np.asarray([m["posterior_width"] for m in ratio_metrics], dtype=float),
     )
     return path
 
@@ -727,6 +835,18 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
         "runtime_total_seconds",
         "error",
     ]
+    fieldnames.extend(
+        [
+            "true_eta_E_over_eta_M",
+            "map_eta_E_over_eta_M",
+            "map_error_eta_E_over_eta_M",
+            "posterior_mean_bias_eta_E_over_eta_M",
+            "posterior_median_bias_eta_E_over_eta_M",
+            "posterior_width_eta_E_over_eta_M",
+            "truth_in_68_eta_E_over_eta_M",
+            "truth_in_95_eta_E_over_eta_M",
+        ]
+    )
     for name in PARAM_NAMES:
         fieldnames.extend(
             [
@@ -762,6 +882,19 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
                 "runtime_total_seconds": result.runtime_seconds.get("total", np.nan),
                 "error": result.error,
             }
+            ratio_metrics = summarize_ratio_recovery_metrics(result.theta_true, result.theta_map, result.samples_theta)
+            row.update(
+                {
+                    "true_eta_E_over_eta_M": ratio_metrics["truth"],
+                    "map_eta_E_over_eta_M": ratio_metrics["map"],
+                    "map_error_eta_E_over_eta_M": ratio_metrics["map_error"],
+                    "posterior_mean_bias_eta_E_over_eta_M": ratio_metrics["posterior_mean_bias"],
+                    "posterior_median_bias_eta_E_over_eta_M": ratio_metrics["posterior_median_bias"],
+                    "posterior_width_eta_E_over_eta_M": ratio_metrics["posterior_width"],
+                    "truth_in_68_eta_E_over_eta_M": bool(ratio_metrics["truth_in_68pct_interval"]),
+                    "truth_in_95_eta_E_over_eta_M": bool(ratio_metrics["truth_in_95pct_interval"]),
+                }
+            )
             for idx, name in enumerate(PARAM_NAMES):
                 row[f"true_{name}"] = result.theta_true[idx]
                 row[f"map_{name}"] = result.theta_map[idx]
@@ -787,6 +920,7 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
     os.makedirs(plot_dir, exist_ok=True)
 
     corner_paths: list[str] = []
+    energy_corner_paths: list[str] = []
     fit_paths: list[str] = []
     for result in results:
         if not result.success:
@@ -803,6 +937,16 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
                 map_theta=result.theta_map,
             )
             corner_paths.append(corner_path)
+            if getattr(model, "energy_coordinate", "eta_e") == "eta_e_over_eta_m":
+                energy_corner_path = os.path.join(plot_dir, f"{slug}_energy_coordinate_corner.png")
+                plot_corner(
+                    model.energy_coordinates_from_theta_numpy(result.samples_theta),
+                    labels=ENERGY_COORDINATE_NAMES,
+                    output_path=energy_corner_path,
+                    truths=model.energy_coordinates_from_theta_numpy(result.theta_true),
+                    map_theta=model.energy_coordinates_from_theta_numpy(result.theta_map),
+                )
+                energy_corner_paths.append(energy_corner_path)
 
         fit_path = os.path.join(plot_dir, f"{slug}_observable_fit.png")
         if model.observable_set == "dndv_binned":
@@ -830,7 +974,10 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
             )
         fit_paths.append(fit_path)
 
-    return {"corner_plots": corner_paths, "observable_fit_plots": fit_paths}
+    output = {"corner_plots": corner_paths, "observable_fit_plots": fit_paths}
+    if energy_corner_paths:
+        output["energy_coordinate_corner_plots"] = energy_corner_paths
+    return output
 
 
 def write_metadata(
@@ -854,6 +1001,7 @@ def write_metadata(
         "observable_set": model.observable_set,
         "observable_names": list(model.observable_names),
         "eta_e_parameterization": model.eta_e_parameterization,
+        "energy_coordinate": model.energy_coordinate,
         "eta_e_softcap": {
             "center": model.eta_e_softcap_center,
             "sigma": model.eta_e_softcap_sigma,
@@ -871,6 +1019,7 @@ def write_metadata(
             "--use-truth-observables disables the random noise draw but keeps the configured covariance.",
             "Reported MAP values optimize the log-parameter posterior; posterior samplers include the unconstrained-transform Jacobian.",
             "eta_e_parameterization='softcap' is a diagnostic mode that allows eta_E > 1 with a smooth upper-tail penalty.",
+            "energy_coordinate='eta_e_over_eta_m' is a diagnostic mode that samples eta_E/eta_M but reports physical eta_M, eta_M_cold, and eta_E.",
         ],
     }
     path = os.path.join(output_dir, "run_metadata.json")

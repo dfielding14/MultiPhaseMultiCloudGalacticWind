@@ -256,6 +256,114 @@ def test_eta_e_softcap_transform_and_penalty():
     assert penalties[3] > penalties[2] > penalties[1] >= 0.0
 
 
+def test_ratio_energy_coordinate_transform_roundtrip_and_validation():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        eta_e_parameterization="softcap",
+        energy_coordinate="eta_e_over_eta_m",
+    )
+
+    theta = np.array([0.10, 0.35, 0.98], dtype=float)
+    u = model._unconstrained_from_theta_numpy(theta)
+    theta_roundtrip = model._theta_from_unconstrained_numpy(u)
+    energy_coords = model.energy_coordinates_from_theta_numpy(theta_roundtrip)
+
+    assert np.allclose(theta_roundtrip, theta)
+    assert np.isclose(energy_coords[2], theta[2] / theta[0])
+
+    theta_jax, log_theta_jax, jac_log_u_jax = model._theta_log_and_jac_log_u_jax(u)
+    assert np.allclose(np.asarray(theta_jax), theta)
+    assert np.allclose(np.asarray(log_theta_jax), np.log(theta))
+    assert np.linalg.det(np.asarray(jac_log_u_jax)) > 0.0
+
+    with pytest.raises(ValueError, match="requires eta_e_parameterization='softcap'"):
+        MomentInferenceModel(
+            sfr=2.0,
+            r_star_kpc=0.12,
+            v_circ=100.0,
+            r_max_kpc=2.0,
+            step_kpc=0.2,
+            n_cloud_species=2,
+            cloud_mass_range=(10.0, 1e3),
+            energy_coordinate="eta_e_over_eta_m",
+        )
+
+
+def test_ratio_energy_coordinate_objective_is_finite():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        observable_set="logm0_mean_sigma_skew_kurt",
+        eta_e_parameterization="softcap",
+        energy_coordinate="eta_e_over_eta_m",
+    )
+
+    theta_true = np.array([0.10, 0.25, 0.98], dtype=float)
+    obs_true = model.predict_observables(theta_true)
+    sigma = np.array([np.log1p(0.15), 0.15 * obs_true[1], 0.15 * obs_true[2], 0.25, 0.50], dtype=float)
+    covariance = build_covariance(sigma, np.eye(5))
+    nlp = model.make_negative_log_posterior(
+        observed_moments=obs_true,
+        covariance_moments=covariance,
+        prior_mean_log=np.log(np.array([0.20, 0.20, 0.90], dtype=float)),
+        prior_sigma_log=(1.4, 1.4, 1.2),
+        include_transform_jacobian=True,
+    )
+
+    assert np.isfinite(float(nlp(model._unconstrained_from_theta_numpy(theta_true))))
+
+
+def test_ratio_energy_coordinate_hmc_smoke():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        eta_e_parameterization="softcap",
+        energy_coordinate="eta_e_over_eta_m",
+    )
+
+    theta_true = np.array([0.12, 0.10, 1.05], dtype=float)
+    moments_true = model.predict_moments(theta_true)
+    covariance = build_covariance(0.15 * moments_true, np.eye(3))
+
+    fit = model.fit_posterior(
+        observed_moments=moments_true,
+        covariance_moments=covariance,
+        initial_theta=theta_true,
+        prior_mean_log=np.log(np.array([0.12, 0.10, 0.95], dtype=float)),
+        prior_sigma_log=(1.4, 1.4, 1.2),
+        map_max_iter=4,
+        map_num_starts=1,
+        hmc_num_warmup=4,
+        hmc_num_samples=6,
+        hmc_step_size=0.01,
+        hmc_leapfrog_steps=4,
+        sampler="hmc",
+        seed=19,
+    )
+
+    assert np.all(np.isfinite(fit.map.theta_map))
+    assert np.all(np.isfinite(fit.hmc.samples_theta))
+    ratio_samples = model.energy_coordinates_from_theta_numpy(fit.hmc.samples_theta)[:, 2]
+    assert np.all(np.isfinite(ratio_samples))
+    assert np.all(ratio_samples > 0.0)
+
+
 def test_softcap_posterior_smoke_and_eta_e_tail_probability():
     model = MomentInferenceModel(
         sfr=2.0,

@@ -300,6 +300,52 @@ Updated soft-cap interpretation:
 - If later GPU or reparameterized runs confirm substantial `P(eta_E > 1)`, then `eta_E` must be described as an effective energy-loading parameter rather than a literal SN-budget efficiency.
 - The next technical step is still a better energy-direction parameterization, such as specific energy `eta_E / eta_M` or a launch-speed proxy, before repeating full binned recovery.
 
+## Specific-Energy Ratio Diagnostic
+
+An additional opt-in diagnostic coordinate, `energy_coordinate = eta_e_over_eta_m`, now samples the positive ratio
+
+```text
+q_E = eta_E / eta_M
+```
+
+and derives the physical energy loading as `eta_E = eta_M * q_E`. Priors and public outputs remain defined on the physical parameters `(eta_M, eta_M_cold, eta_E)`. This mode is allowed only with `eta_e_parameterization = softcap`; the default production inference path remains the bounded direct-`eta_E` coordinate.
+
+Exact `strong_wings` recovery was rerun with reduced CPU settings, truth observables, softcap, and the ratio coordinate. The truth is `eta_M = 0.10`, `eta_M_cold = 0.35`, `eta_E = 0.98`, and `eta_E / eta_M = 9.8`.
+
+MAP-only results:
+
+| Observable | Prior label | MAP `eta_M` | MAP `eta_M_cold` | MAP `eta_E` | MAP `eta_E/eta_M` | `chi2` | Runtime |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| shape-five | default | 0.100 | 0.326 | 0.848 | 8.45 | 0.153 | 504 s |
+| shape-five | high-energy weak | 0.110 | 0.346 | 0.982 | 8.96 | 0.0285 | 501 s |
+| binned `dN/dv` | default | 0.101 | 0.347 | 0.972 | 9.63 | 0.0192 | 533 s |
+| binned `dN/dv` | high-energy weak | 0.100 | 0.349 | 0.978 | 9.74 | 0.00213 | 540 s |
+
+Short one-chain NUTS results used 256 warmup steps, 128 posterior samples, dense mass adaptation, `target_accept = 0.90`, and `max_tree_depth = 8`:
+
+| Observable | Prior label | MAP `eta_E` | MAP `eta_E/eta_M` | Div. | Max `Rhat` | Min ESS | `P(eta_E > 1)` | Truth in 95 percent for `eta_E` and ratio? |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| shape-five | default | 0.848 | 8.45 | 60 | 1.088 | 18.6 | 0.070 | yes / yes |
+| shape-five | high-energy weak | 0.982 | 8.96 | 46 | 1.018 | 39.4 | 0.109 | yes / yes |
+| binned `dN/dv` | default | 0.972 | 9.63 | 36 | 1.022 | 36.6 | 0.188 | yes / yes |
+| binned `dN/dv` | high-energy weak | 0.978 | 9.74 | 47 | 1.061 | 20.2 | 0.211 | yes / yes |
+
+The ratio coordinate improves the optimizer behavior, especially for binned `dN/dv`: the exact binned MAP lands within 1 percent of the true `eta_E` under both priors and within 2 percent of the true ratio. However, the short NUTS chains remain sampler-broken. All four short runs have many divergences and low ESS, so the full two-chain NUTS stage was not launched under the pre-set gate. The current conclusion is therefore:
+
+- Coordinate choice matters: the specific-energy coordinate plus binned `dN/dv` can find the high-energy solution at MAP.
+- Coordinate choice alone does not solve the posterior geometry: NUTS still sees difficult curvature or boundary structure near the high-energy ridge.
+- Do not proceed to noisy recovery or production high-energy claims.
+- Next technical work should reparameterize closer to a launch-speed or specific-energy observable, reduce the boundary geometry further, or use a more specialized sampler/metric diagnostic before another expensive recovery sweep.
+
+Generated diagnostic outputs are under `examples/outputs/inference_synthetic_recovery/specific_energy_ratio_strong_wings/`. Useful plots include:
+
+- `short_dndv_default/diagnostic_plots/strong_wings_realization_000_corner.png`
+- `short_dndv_default/diagnostic_plots/strong_wings_realization_000_energy_coordinate_corner.png`
+- `short_dndv_default/diagnostic_plots/strong_wings_realization_000_observable_fit.png`
+- `short_dndv_high_energy_weak/diagnostic_plots/strong_wings_realization_000_corner.png`
+- `short_dndv_high_energy_weak/diagnostic_plots/strong_wings_realization_000_energy_coordinate_corner.png`
+- `short_dndv_high_energy_weak/diagnostic_plots/strong_wings_realization_000_observable_fit.png`
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:

@@ -236,6 +236,7 @@ class MomentInferenceModel:
         dndv_vmax_kms: float = 1200.0,
         dndv_kernel_sigma_kms: float | None = None,
         eta_e_parameterization: str = "bounded",
+        energy_coordinate: str = "eta_e",
         eta_e_softcap_center: float = 1.0,
         eta_e_softcap_sigma: float = 0.10,
         eta_e_softcap_transition: float = 0.01,
@@ -269,6 +270,7 @@ class MomentInferenceModel:
         self.dndv_vmax_kms = float(dndv_vmax_kms)
         self.observable_set = self._resolve_observable_set(observable_set)
         self.eta_e_parameterization = self._resolve_eta_e_parameterization(eta_e_parameterization)
+        self.energy_coordinate = self._resolve_energy_coordinate(energy_coordinate)
         self.eta_e_softcap_center = float(eta_e_softcap_center)
         self.eta_e_softcap_sigma = float(eta_e_softcap_sigma)
         self.eta_e_softcap_transition = float(eta_e_softcap_transition)
@@ -279,6 +281,8 @@ class MomentInferenceModel:
             raise ValueError("dndv_num_bins must be >= 6")
         if self.dndv_vmax_kms <= self.dndv_vmin_kms:
             raise ValueError("dndv_vmax_kms must exceed dndv_vmin_kms")
+        if self.energy_coordinate == "eta_e_over_eta_m" and self.eta_e_parameterization != "softcap":
+            raise ValueError("energy_coordinate='eta_e_over_eta_m' requires eta_e_parameterization='softcap'")
         if self.eta_e_softcap_center <= 0.0:
             raise ValueError("eta_e_softcap_center must be positive")
         if self.eta_e_softcap_sigma <= 0.0:
@@ -395,6 +399,24 @@ class MomentInferenceModel:
         return aliases[key]
 
     @staticmethod
+    def _resolve_energy_coordinate(energy_coordinate: str) -> str:
+        key = energy_coordinate.strip().lower()
+        aliases = {
+            "eta_e": "eta_e",
+            "direct": "eta_e",
+            "direct_eta_e": "eta_e",
+            "eta_e_over_eta_m": "eta_e_over_eta_m",
+            "specific_energy": "eta_e_over_eta_m",
+            "q_e": "eta_e_over_eta_m",
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported energy_coordinate. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{energy_coordinate}'."
+            )
+        return aliases[key]
+
+    @staticmethod
     def _observables_shape5_from_raw_moments(raw_moments):
         """Return [logM0, mean_v, sigma_v, skewness, kurtosis] from raw moments [M0..M4]."""
         raw = jnp.asarray(raw_moments, dtype=jnp.float64)
@@ -431,13 +453,18 @@ class MomentInferenceModel:
         u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
         eta_m = jax.nn.softplus(u[0]) + self._THETA_FLOOR
         eta_m_cold = jax.nn.softplus(u[1]) + self._THETA_FLOOR
+        if self.energy_coordinate == "eta_e_over_eta_m":
+            eta_e_over_eta_m = jax.nn.softplus(u[2]) + self._THETA_FLOOR
+            eta_e = eta_m * eta_e_over_eta_m
+            return jnp.asarray([eta_m, eta_m_cold, eta_e], dtype=jnp.float64)
+
         if self.eta_e_parameterization == "bounded":
             eta_e = self._ETA_E_MAX * jax.nn.sigmoid(u[2]) + self._THETA_FLOOR
         else:
             eta_e = jax.nn.softplus(u[2]) + self._THETA_FLOOR
         return jnp.asarray([eta_m, eta_m_cold, eta_e], dtype=jnp.float64)
 
-    def _theta_log_and_dlog_du_jax(self, unconstrained_theta):
+    def _theta_log_and_jac_log_u_jax(self, unconstrained_theta):
         """
         Return theta, log(theta), and dlog(theta)/du on the unconstrained manifold.
 
@@ -447,6 +474,21 @@ class MomentInferenceModel:
         u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
         sig = jax.nn.sigmoid(u)
         theta = self._theta_from_unconstrained_jax(u)
+        if self.energy_coordinate == "eta_e_over_eta_m":
+            eta_e_over_eta_m = jax.nn.softplus(u[2]) + self._THETA_FLOOR
+            dlog_eta_m_du = sig[0] / jnp.maximum(theta[0], self._THETA_FLOOR)
+            dlog_eta_m_cold_du = sig[1] / jnp.maximum(theta[1], self._THETA_FLOOR)
+            dlog_ratio_du = sig[2] / jnp.maximum(eta_e_over_eta_m, self._THETA_FLOOR)
+            jac_log_u = jnp.asarray(
+                [
+                    [dlog_eta_m_du, 0.0, 0.0],
+                    [0.0, dlog_eta_m_cold_du, 0.0],
+                    [dlog_eta_m_du, 0.0, dlog_ratio_du],
+                ],
+                dtype=jnp.float64,
+            )
+            return theta, jnp.log(theta), jac_log_u
+
         if self.eta_e_parameterization == "bounded":
             deta_e_du = self._ETA_E_MAX * sig[2] * (1.0 - sig[2])
         else:
@@ -462,7 +504,10 @@ class MomentInferenceModel:
         )
         log_theta = jnp.log(theta)
         dlog_du = dtheta_du / jnp.maximum(theta, self._THETA_FLOOR)
-        return theta, log_theta, dlog_du
+        jac_log_u = jnp.diag(dlog_du)
+        return theta, log_theta, jac_log_u
+
+    _theta_log_and_dlog_du_jax = _theta_log_and_jac_log_u_jax
 
     def _unconstrained_from_theta_numpy(self, theta):
         """Inverse map for initializing unconstrained optimization/sampling state."""
@@ -473,6 +518,15 @@ class MomentInferenceModel:
         # Guard against nonphysical values in user-provided initial points.
         eta_m = np.clip(theta_arr[0], self._THETA_FLOOR * 10.0, None)
         eta_m_cold = np.clip(theta_arr[1], self._THETA_FLOOR * 10.0, None)
+        if self.energy_coordinate == "eta_e_over_eta_m":
+            eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, None)
+            eta_e_over_eta_m = np.clip(eta_e / eta_m, self._THETA_FLOOR * 10.0, None)
+            u = np.zeros(3, dtype=float)
+            u[0] = np.log(np.expm1(max(eta_m - self._THETA_FLOOR, 1e-12)))
+            u[1] = np.log(np.expm1(max(eta_m_cold - self._THETA_FLOOR, 1e-12)))
+            u[2] = np.log(np.expm1(max(eta_e_over_eta_m - self._THETA_FLOOR, 1e-12)))
+            return u
+
         if self.eta_e_parameterization == "bounded":
             eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, self._ETA_E_MAX - 1e-9)
         else:
@@ -495,11 +549,29 @@ class MomentInferenceModel:
         sig = 1.0 / (1.0 + np.exp(-u))
         eta_m = np.log1p(np.exp(-np.abs(u[..., 0]))) + np.maximum(u[..., 0], 0.0) + self._THETA_FLOOR
         eta_m_cold = np.log1p(np.exp(-np.abs(u[..., 1]))) + np.maximum(u[..., 1], 0.0) + self._THETA_FLOOR
+        if self.energy_coordinate == "eta_e_over_eta_m":
+            eta_e_over_eta_m = (
+                np.log1p(np.exp(-np.abs(u[..., 2]))) + np.maximum(u[..., 2], 0.0) + self._THETA_FLOOR
+            )
+            eta_e = eta_m * eta_e_over_eta_m
+            return np.stack([eta_m, eta_m_cold, eta_e], axis=-1)
+
         if self.eta_e_parameterization == "bounded":
             eta_e = self._ETA_E_MAX * sig[..., 2] + self._THETA_FLOOR
         else:
             eta_e = np.log1p(np.exp(-np.abs(u[..., 2]))) + np.maximum(u[..., 2], 0.0) + self._THETA_FLOOR
         return np.stack([eta_m, eta_m_cold, eta_e], axis=-1)
+
+    def energy_coordinates_from_theta_numpy(self, theta):
+        """Return reporting coordinates for theta, using eta_E/eta_M in ratio mode."""
+        theta_arr = np.asarray(theta, dtype=float)
+        if theta_arr.shape[-1] != 3:
+            raise ValueError("theta must have length-3 trailing dimension")
+        if self.energy_coordinate != "eta_e_over_eta_m":
+            return np.array(theta_arr, dtype=float, copy=True)
+        out = np.array(theta_arr, dtype=float, copy=True)
+        out[..., 2] = out[..., 2] / np.maximum(out[..., 0], self._THETA_FLOOR)
+        return out
 
     def eta_e_softcap_penalty(self, eta_e: float | np.ndarray) -> np.ndarray:
         """Return the diagnostic soft-cap penalty for eta_E values."""
@@ -811,12 +883,13 @@ class MomentInferenceModel:
 
         @jax.jit
         def nlp(unconstrained_theta):
-            theta, log_theta, dlog_du = self._theta_log_and_dlog_du_jax(unconstrained_theta)
+            theta, log_theta, jac_log_u = self._theta_log_and_jac_log_u_jax(unconstrained_theta)
             observables, _raw_moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
             resid = observables - y_obs
             chi2 = resid @ cov_inv @ resid
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
-            log_jacobian = jnp.sum(jnp.log(jnp.maximum(jnp.abs(dlog_du), 1e-300)))
+            jac_sign, log_jacobian_raw = jnp.linalg.slogdet(jac_log_u)
+            log_jacobian = jnp.where(jac_sign != 0.0, log_jacobian_raw, -jnp.inf)
             transform_term = -log_jacobian if include_transform_jacobian else 0.0
             if use_eta_e_softcap:
                 eta_e_excess = softcap_transition * jax.nn.softplus(
@@ -961,14 +1034,13 @@ class MomentInferenceModel:
         hessian_unconstrained = stabilize_covariance(hessian_unconstrained, min_eig=1e-12)
         covariance_unconstrained = np.linalg.inv(hessian_unconstrained)
 
-        theta_map_jax, log_theta_map_jax, dlog_du_jax = self._theta_log_and_dlog_du_jax(
+        theta_map_jax, log_theta_map_jax, jac_log_u_jax = self._theta_log_and_jac_log_u_jax(
             jnp.asarray(unconstrained_theta, dtype=jnp.float64)
         )
         theta_map = np.asarray(theta_map_jax, dtype=float)
         log_theta_map = np.asarray(log_theta_map_jax, dtype=float)
-        dlog_du = np.asarray(dlog_du_jax, dtype=float)
+        jac_log_u = np.asarray(jac_log_u_jax, dtype=float)
 
-        jac_log_u = np.diag(dlog_du)
         covariance_log = jac_log_u @ covariance_unconstrained @ jac_log_u.T
         covariance_log = stabilize_covariance(covariance_log, min_eig=1e-14)
         hessian_log = np.linalg.inv(covariance_log)

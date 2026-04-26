@@ -147,6 +147,80 @@ Recommended exact-recovery settings for the next sweep:
 - `--num-warmup 1024`
 - at least `--num-samples 256` for the diagnostic sweep, with more samples for final production figures.
 
+## Exact Recovery Across Truth Cases
+
+The tuned dense-NUTS exact-observable sweep was run on April 25, 2026:
+
+```bash
+JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 \
+python examples/inference_synthetic_recovery.py \
+  --truth-case all \
+  --observable-set logm0_mean_sigma_skew_kurt \
+  --use-truth-observables \
+  --num-noise-realizations 1 \
+  --num-samples 256 \
+  --num-warmup 1024 \
+  --seed 20260428 \
+  --output examples/outputs/inference_synthetic_recovery/shape5_exact_all_truth_dense097 \
+  --r-max-kpc 6.0 \
+  --step-kpc 0.08 \
+  --n-cloud-species 4 \
+  --cloud-mass-min 10.0 \
+  --cloud-mass-max 1.0e4 \
+  --sampler nuts \
+  --num-chains 2 \
+  --nuts-chain-method vectorized \
+  --nuts-dense-mass \
+  --nuts-max-tree-depth 12 \
+  --disable-progress-bar \
+  --map-max-iter 24 \
+  --map-num-starts 4 \
+  --hmc-step-size 0.01 \
+  --hmc-target-accept 0.97 \
+  --jax-platform cpu
+```
+
+The run completed in 2036 seconds and wrote corner plots plus observable-fit plots for each successful valid truth case. Three of eight truth cases were invalid before inference because the forward model did not produce valid truth observables in this reduced CPU setup.
+
+Exact-recovery results:
+
+| Case | Truth `eta_M`, `eta_M_cold`, `eta_E` | MAP `eta_M`, `eta_M_cold`, `eta_E` | `chi2` | Div. | Max `Rhat` | Min ESS | 95 percent inclusion | Status |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| `fiducial` | 0.20, 0.20, 0.80 | 0.195, 0.195, 0.756 | 0.0208 | 1 | 1.009 | 80.9 | yes, yes, yes | nearly passes, but one divergence |
+| `low_eta_m_high_eta_e` | 0.07, 0.12, 0.96 | 0.0685, 0.112, 0.766 | 0.0512 | 16 | 1.008 | 133 | yes, yes, yes | high-energy geometry problem |
+| `high_eta_m_low_eta_e` | 0.90, 0.20, 0.25 | invalid | -- | -- | -- | -- | -- | invalid truth observables |
+| `low_eta_m_cold` | 0.22, 0.01, 0.80 | 0.214, 0.0102, 0.786 | 0.0376 | 0 | 1.031 | 56.8 | yes, yes, yes | passes at diagnostic depth |
+| `high_eta_m_cold` | 0.35, 1.00, 0.85 | invalid | -- | -- | -- | -- | -- | invalid truth observables |
+| `near_failure_boundary` | 0.06, 1.50, 0.40 | invalid | -- | -- | -- | -- | -- | invalid truth observables |
+| `strong_wings` | 0.10, 0.35, 0.98 | 0.100, 0.326, 0.848 | 0.153 | 223 | 1.014 | 68.8 | yes, yes, no | fails |
+| `narrow_profile` | 0.70, 0.05, 0.45 | 0.761, 0.0516, 0.514 | 0.167 | 0 | 1.032 | 112.5 | yes, yes, yes | passes at diagnostic depth |
+
+Conclusion: exact recovery does not pass globally. The fiducial, low-cold-loading, and narrow-profile cases are scientifically usable as diagnostic successes, although the fiducial case still recorded one divergence in the all-truth run. The high-energy cases are the blocker. `low_eta_m_high_eta_e` keeps the truth inside the 95 percent intervals but has 16 divergences, a failed MAP convergence flag, and a low-energy MAP. `strong_wings` has 223 divergences and excludes the true `eta_E = 0.98` from the 95 percent marginal interval. No noisy recovery sweep should be run until this is fixed or explicitly reclassified as an observable/prior limitation.
+
+The objective decomposition shows why the high-energy cases move to lower `eta_E` even with exact observations:
+
+| Case | Point | `chi2` | Prior `chi2` | Barrier | MAP-objective value |
+|---|---|---:|---:|---:|---:|
+| `low_eta_m_high_eta_e` | truth | 0.000 | 1.188 | 0.000 | 0.594 |
+| `low_eta_m_high_eta_e` | MAP | 0.051 | 0.797 | 0.000 | 0.424 |
+| `strong_wings` | truth | 0.000 | 0.964 | 0.000 | 0.482 |
+| `strong_wings` | MAP | 0.153 | 0.545 | 0.000 | 0.349 |
+| `fiducial` | truth | 0.000 | 0.088 | 0.000 | 0.044 |
+| `fiducial` | MAP | 0.0208 | 0.0296 | 0.000 | 0.025 |
+| `narrow_profile` | truth | 0.000 | 2.745 | 0.000 | 1.373 |
+| `narrow_profile` | MAP | 0.167 | 2.319 | 0.000 | 1.243 |
+
+This is not a recurrence of the validity-barrier bug: the smooth barrier is zero at both truth and MAP for these valid cases. The exact-data posterior can prefer a lower-energy point because the shape-five covariance allows sub-sigma shifts in all observables while the current log prior prefers lower `eta_E`. For `strong_wings`, that weak-identifiability/prior effect is compounded by severe NUTS geometry near the high-`eta_E` boundary.
+
+Immediate roadmap:
+
+1. Do not run the noisy recovery campaign yet.
+2. Run targeted high-energy exact diagnostics for `low_eta_m_high_eta_e` and `strong_wings`.
+3. Separate prior sensitivity from sampler geometry by comparing the default prior to a wider or high-energy-centered `eta_E` prior, first with MAP/objective checks and then with NUTS only if the objective no longer favors the low-energy mode.
+4. Stress-test NUTS on the high-energy cases with higher target acceptance, longer chains, and sequential chains if vectorized chains keep diverging.
+5. Test whether the observable set is underconstraining high-energy wings by repeating exact high-energy recovery with binned `dN/dv` or an added wing-sensitive summary before changing the production recovery plan.
+6. Only after the high-energy exact cases pass, or after the report explicitly narrows the valid truth grid, proceed to noisy recovery.
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:
@@ -266,11 +340,4 @@ The `narrow_profile` case showed the largest single correlation, with `eta_M` an
 
 ## Recommendation
 
-The baseline three-parameter inference path is operational, but the pilot above was affected by the MAP-objective and validity-barrier bugs described in the status update. The immediate next scientific step should be a corrected baseline recovery run with:
-
-- more noise realizations per truth case,
-- longer HMC or NUTS chains,
-- the intended radial range and cloud-species resolution,
-- and a narrowed set of truth cases that are valid under the production forward model.
-
-Do not proceed to the TRML/cloud-parameter sensitivity screen as the active next task until the corrected synthetic recovery run has been inspected. It is not yet reasonable to add an inferred TRML parameter such as `A_mix`; the baseline recovery needs stronger evidence that `eta_M`, `eta_M_cold`, and `eta_E` are reliably recoverable first.
+The baseline three-parameter inference path is operational, but exact recovery is not yet scientifically acceptable across the intended truth grid. The active next task is targeted high-energy exact recovery: diagnose whether the `eta_E` failures are dominated by the current prior, by insufficient wing-sensitive observables, by the `eta_E < 0.999` boundary geometry, or by NUTS adaptation. Do not proceed to noisy recovery or TRML/cloud-parameter sensitivity until the high-energy exact cases are either recovered cleanly or removed from the validated baseline truth grid with an explicit physical justification.

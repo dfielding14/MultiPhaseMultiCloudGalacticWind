@@ -235,6 +235,10 @@ class MomentInferenceModel:
         dndv_vmin_kms: float = 0.0,
         dndv_vmax_kms: float = 1200.0,
         dndv_kernel_sigma_kms: float | None = None,
+        eta_e_parameterization: str = "bounded",
+        eta_e_softcap_center: float = 1.0,
+        eta_e_softcap_sigma: float = 0.10,
+        eta_e_softcap_transition: float = 0.01,
         config: WindConfig | None = None,
         topaz_cooling_table_path: str | None = None,
     ) -> None:
@@ -264,6 +268,10 @@ class MomentInferenceModel:
         self.dndv_vmin_kms = float(dndv_vmin_kms)
         self.dndv_vmax_kms = float(dndv_vmax_kms)
         self.observable_set = self._resolve_observable_set(observable_set)
+        self.eta_e_parameterization = self._resolve_eta_e_parameterization(eta_e_parameterization)
+        self.eta_e_softcap_center = float(eta_e_softcap_center)
+        self.eta_e_softcap_sigma = float(eta_e_softcap_sigma)
+        self.eta_e_softcap_transition = float(eta_e_softcap_transition)
 
         if self.integrator_mode not in {"rk2", "rk3", "rk4", "tsit5"}:
             raise ValueError("integrator_mode must be one of {'rk2', 'rk3', 'rk4', 'tsit5'}")
@@ -271,6 +279,12 @@ class MomentInferenceModel:
             raise ValueError("dndv_num_bins must be >= 6")
         if self.dndv_vmax_kms <= self.dndv_vmin_kms:
             raise ValueError("dndv_vmax_kms must exceed dndv_vmin_kms")
+        if self.eta_e_softcap_center <= 0.0:
+            raise ValueError("eta_e_softcap_center must be positive")
+        if self.eta_e_softcap_sigma <= 0.0:
+            raise ValueError("eta_e_softcap_sigma must be positive")
+        if self.eta_e_softcap_transition <= 0.0:
+            raise ValueError("eta_e_softcap_transition must be positive")
 
         self.dndv_bin_edges_kms = np.linspace(
             self.dndv_vmin_kms,
@@ -364,6 +378,23 @@ class MomentInferenceModel:
         return aliases[key]
 
     @staticmethod
+    def _resolve_eta_e_parameterization(eta_e_parameterization: str) -> str:
+        key = eta_e_parameterization.strip().lower()
+        aliases = {
+            "bounded": "bounded",
+            "hardcap": "bounded",
+            "sigmoid": "bounded",
+            "softcap": "softcap",
+            "eta_e_softcap": "softcap",
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported eta_e_parameterization. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{eta_e_parameterization}'."
+            )
+        return aliases[key]
+
+    @staticmethod
     def _observables_shape5_from_raw_moments(raw_moments):
         """Return [logM0, mean_v, sigma_v, skewness, kurtosis] from raw moments [M0..M4]."""
         raw = jnp.asarray(raw_moments, dtype=jnp.float64)
@@ -395,17 +426,18 @@ class MomentInferenceModel:
         dndv_species = jnp.trapezoid(n_h_eff[:, :, None] * kernel, r_grid, axis=0)
         return jnp.sum(dndv_species, axis=0)
 
-    @classmethod
-    def _theta_from_unconstrained_jax(cls, unconstrained_theta):
-        """Map unconstrained variables to physical theta with eta_E < 1."""
+    def _theta_from_unconstrained_jax(self, unconstrained_theta):
+        """Map unconstrained variables to physical theta."""
         u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
-        eta_m = jax.nn.softplus(u[0]) + cls._THETA_FLOOR
-        eta_m_cold = jax.nn.softplus(u[1]) + cls._THETA_FLOOR
-        eta_e = cls._ETA_E_MAX * jax.nn.sigmoid(u[2]) + cls._THETA_FLOOR
+        eta_m = jax.nn.softplus(u[0]) + self._THETA_FLOOR
+        eta_m_cold = jax.nn.softplus(u[1]) + self._THETA_FLOOR
+        if self.eta_e_parameterization == "bounded":
+            eta_e = self._ETA_E_MAX * jax.nn.sigmoid(u[2]) + self._THETA_FLOOR
+        else:
+            eta_e = jax.nn.softplus(u[2]) + self._THETA_FLOOR
         return jnp.asarray([eta_m, eta_m_cold, eta_e], dtype=jnp.float64)
 
-    @classmethod
-    def _theta_log_and_dlog_du_jax(cls, unconstrained_theta):
+    def _theta_log_and_dlog_du_jax(self, unconstrained_theta):
         """
         Return theta, log(theta), and dlog(theta)/du on the unconstrained manifold.
 
@@ -414,49 +446,67 @@ class MomentInferenceModel:
         """
         u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
         sig = jax.nn.sigmoid(u)
-        theta = cls._theta_from_unconstrained_jax(u)
+        theta = self._theta_from_unconstrained_jax(u)
+        if self.eta_e_parameterization == "bounded":
+            deta_e_du = self._ETA_E_MAX * sig[2] * (1.0 - sig[2])
+        else:
+            deta_e_du = sig[2]
 
         dtheta_du = jnp.asarray(
             [
                 sig[0],
                 sig[1],
-                cls._ETA_E_MAX * sig[2] * (1.0 - sig[2]),
+                deta_e_du,
             ],
             dtype=jnp.float64,
         )
         log_theta = jnp.log(theta)
-        dlog_du = dtheta_du / jnp.maximum(theta, cls._THETA_FLOOR)
+        dlog_du = dtheta_du / jnp.maximum(theta, self._THETA_FLOOR)
         return theta, log_theta, dlog_du
 
-    @classmethod
-    def _unconstrained_from_theta_numpy(cls, theta):
+    def _unconstrained_from_theta_numpy(self, theta):
         """Inverse map for initializing unconstrained optimization/sampling state."""
         theta_arr = np.asarray(theta, dtype=float)
         if theta_arr.shape != (3,):
             raise ValueError("theta must be length-3")
 
         # Guard against nonphysical values in user-provided initial points.
-        eta_m = np.clip(theta_arr[0], cls._THETA_FLOOR * 10.0, None)
-        eta_m_cold = np.clip(theta_arr[1], cls._THETA_FLOOR * 10.0, None)
-        eta_e = np.clip(theta_arr[2], cls._THETA_FLOOR * 10.0, cls._ETA_E_MAX - 1e-9)
+        eta_m = np.clip(theta_arr[0], self._THETA_FLOOR * 10.0, None)
+        eta_m_cold = np.clip(theta_arr[1], self._THETA_FLOOR * 10.0, None)
+        if self.eta_e_parameterization == "bounded":
+            eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, self._ETA_E_MAX - 1e-9)
+        else:
+            eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, None)
 
         u = np.zeros(3, dtype=float)
-        u[0] = np.log(np.expm1(max(eta_m - cls._THETA_FLOOR, 1e-12)))
-        u[1] = np.log(np.expm1(max(eta_m_cold - cls._THETA_FLOOR, 1e-12)))
+        u[0] = np.log(np.expm1(max(eta_m - self._THETA_FLOOR, 1e-12)))
+        u[1] = np.log(np.expm1(max(eta_m_cold - self._THETA_FLOOR, 1e-12)))
 
-        frac = np.clip((eta_e - cls._THETA_FLOOR) / cls._ETA_E_MAX, 1e-10, 1.0 - 1e-10)
-        u[2] = np.log(frac / (1.0 - frac))
+        if self.eta_e_parameterization == "bounded":
+            frac = np.clip((eta_e - self._THETA_FLOOR) / self._ETA_E_MAX, 1e-10, 1.0 - 1e-10)
+            u[2] = np.log(frac / (1.0 - frac))
+        else:
+            u[2] = np.log(np.expm1(max(eta_e - self._THETA_FLOOR, 1e-12)))
         return u
 
-    @classmethod
-    def _theta_from_unconstrained_numpy(cls, unconstrained_theta):
+    def _theta_from_unconstrained_numpy(self, unconstrained_theta):
         """NumPy helper for reporting and posterior sample conversion."""
         u = np.asarray(unconstrained_theta, dtype=float)
         sig = 1.0 / (1.0 + np.exp(-u))
-        eta_m = np.log1p(np.exp(-np.abs(u[..., 0]))) + np.maximum(u[..., 0], 0.0) + cls._THETA_FLOOR
-        eta_m_cold = np.log1p(np.exp(-np.abs(u[..., 1]))) + np.maximum(u[..., 1], 0.0) + cls._THETA_FLOOR
-        eta_e = cls._ETA_E_MAX * sig[..., 2] + cls._THETA_FLOOR
+        eta_m = np.log1p(np.exp(-np.abs(u[..., 0]))) + np.maximum(u[..., 0], 0.0) + self._THETA_FLOOR
+        eta_m_cold = np.log1p(np.exp(-np.abs(u[..., 1]))) + np.maximum(u[..., 1], 0.0) + self._THETA_FLOOR
+        if self.eta_e_parameterization == "bounded":
+            eta_e = self._ETA_E_MAX * sig[..., 2] + self._THETA_FLOOR
+        else:
+            eta_e = np.log1p(np.exp(-np.abs(u[..., 2]))) + np.maximum(u[..., 2], 0.0) + self._THETA_FLOOR
         return np.stack([eta_m, eta_m_cold, eta_e], axis=-1)
+
+    def eta_e_softcap_penalty(self, eta_e: float | np.ndarray) -> np.ndarray:
+        """Return the diagnostic soft-cap penalty for eta_E values."""
+        eta_e_arr = np.asarray(eta_e, dtype=float)
+        transition = self.eta_e_softcap_transition
+        excess = transition * np.logaddexp(0.0, (eta_e_arr - self.eta_e_softcap_center) / transition)
+        return 0.5 * (excess / self.eta_e_softcap_sigma) ** 2
 
     def _build_predictor(self):
         r_grid = self.r_grid
@@ -476,6 +526,7 @@ class MomentInferenceModel:
         injection_radius = float(config.cold_cloud_injection_radial_extent_frac) * r_star
         injection_power = float(config.cold_cloud_injection_radial_power)
         eta_e_max = self._ETA_E_MAX
+        bounded_eta_e = self.eta_e_parameterization == "bounded"
 
         r_obs_min_kpc = self.r_obs_min_kpc
         r_obs_max_kpc = self.r_max_kpc
@@ -498,7 +549,10 @@ class MomentInferenceModel:
         def build_state_and_params(theta):
             eta_m = jnp.maximum(theta[0], 1e-12)
             eta_m_cold = jnp.maximum(theta[1], 1e-12)
-            eta_e = jnp.clip(theta[2], 1e-12, eta_e_max)
+            if bounded_eta_e:
+                eta_e = jnp.clip(theta[2], 1e-12, eta_e_max)
+            else:
+                eta_e = jnp.maximum(theta[2], 1e-12)
 
             mdot_hot = eta_m * sfr_cgs
             edot_hot = eta_e * (config.E_SN / (config.mstar * Msun)) * sfr_cgs
@@ -748,6 +802,10 @@ class MomentInferenceModel:
         prior_mean_log_jax = jnp.asarray(prior_mean_log_arr, dtype=jnp.float64)
         prior_sigma_log_jax = jnp.asarray(prior_sigma_log_arr, dtype=jnp.float64)
         r_max_cgs = float(self.r_max_kpc * kpc)
+        use_eta_e_softcap = self.eta_e_parameterization == "softcap"
+        softcap_center = jnp.asarray(self.eta_e_softcap_center, dtype=jnp.float64)
+        softcap_sigma = jnp.asarray(self.eta_e_softcap_sigma, dtype=jnp.float64)
+        softcap_transition = jnp.asarray(self.eta_e_softcap_transition, dtype=jnp.float64)
 
         predict_theta_with_valid = self._predict_theta_with_valid_fn
 
@@ -760,6 +818,13 @@ class MomentInferenceModel:
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
             log_jacobian = jnp.sum(jnp.log(jnp.maximum(jnp.abs(dlog_du), 1e-300)))
             transform_term = -log_jacobian if include_transform_jacobian else 0.0
+            if use_eta_e_softcap:
+                eta_e_excess = softcap_transition * jax.nn.softplus(
+                    (theta[2] - softcap_center) / softcap_transition
+                )
+                eta_e_softcap_penalty = 0.5 * (eta_e_excess / softcap_sigma) ** 2
+            else:
+                eta_e_softcap_penalty = 0.0
             smooth_penalty = 100.0 * barrier_value
             early_fail_penalty = jnp.where(
                 valid > 0.5,
@@ -770,6 +835,7 @@ class MomentInferenceModel:
             return (
                 0.5 * (chi2 + prior_chi2)
                 + transform_term
+                + eta_e_softcap_penalty
                 + smooth_penalty
                 + early_fail_penalty
                 + hard_penalty

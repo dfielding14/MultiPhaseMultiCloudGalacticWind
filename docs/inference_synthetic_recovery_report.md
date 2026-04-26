@@ -268,6 +268,38 @@ Updated decision:
 - Treat `strong_wings` as an unresolved near-boundary geometry case. The next technical step should be reparameterizing the energy-loading direction, for example sampling a specific-energy proxy such as `eta_E / eta_M` or a launch-speed proxy, before spending more CPU time on full binned NUTS.
 - If a short-term production recovery is needed before reparameterization, restrict the validated exact-recovery grid to cases that pass the current exact tests and explicitly exclude `strong_wings`/near-ceiling `eta_E`.
 
+## `eta_E` Soft-Cap Diagnostic
+
+An optional diagnostic inference mode, `eta_e_parameterization = softcap`, now replaces the hard bounded transform for `eta_E` with a positive softplus transform and adds a smooth penalty above the nominal `eta_E = 1` energy budget. The default production mode remains bounded below 1. The synthetic-recovery harness records `posterior_prob_eta_E_gt_1` in CSV and NPZ outputs.
+
+The soft-cap penalty used for this diagnostic is:
+
+```text
+excess = transition * softplus((eta_E - center) / transition)
+penalty = 0.5 * (excess / sigma)^2
+```
+
+with `center = 1.0`, `sigma = 0.10`, and `transition = 0.01`.
+
+Full planned CPU/NUTS runs for exact `strong_wings` shape-five recovery used two sequential dense-NUTS chains, 1536 warmup steps, 512 samples, `target_accept = 0.99`, and the reduced CPU forward-model settings. Both the default-prior and high-energy-weak-prior runs exceeded two hours without writing result files and were terminated. The corresponding binned `dN/dv` full runs were not restarted because the earlier bounded binned runs already showed multi-hour non-completion for `strong_wings`.
+
+Short sanity runs were then used only to verify the new soft-cap mode, output fields, and qualitative posterior behavior:
+
+| Observable | Prior label | MAP `eta_E` | `chi2` | Div. | Max `Rhat` | Min ESS | `P(eta_E > 1)` | `eta_E` in 95 percent? | Runtime |
+|---|---:|---:|---:|---:|---:|---:|---:|---|---:|
+| shape-five | default | 0.848 | 0.153 | 59 | 1.073 | 19.6 | 0.055 | yes | 178 s |
+| shape-five | high-energy weak | 0.982 | 0.0285 | 71 | 1.002 | 30.1 | 0.125 | yes | 172 s |
+| binned `dN/dv` | default | 0.972 | 0.0192 | 21 | 1.130 | 12.8 | 0.266 | yes | 161 s |
+| binned `dN/dv` | high-energy weak | 0.978 | 0.00213 | 12 | 1.000 | 31.9 | 0.266 | yes | 167 s |
+
+These short runs are not acceptance-quality posterior samples: all four have divergences and low ESS, and the one-chain diagnostics are not sufficient for final coverage claims. They do show that the soft-cap mode can place the MAP near the true `eta_E = 0.98` for `strong_wings`, especially for binned `dN/dv`, and that the posterior has non-negligible mass above the nominal energy budget (`P(eta_E > 1) ~= 0.06-0.27` in the short runs). Therefore the hard ceiling was hiding part of the near-boundary geometry, but simply replacing it with a soft cap does not make the current CPU NUTS workflow production-ready.
+
+Updated soft-cap interpretation:
+
+- `eta_E_softcap` should remain diagnostic, not the default production model.
+- If later GPU or reparameterized runs confirm substantial `P(eta_E > 1)`, then `eta_E` must be described as an effective energy-loading parameter rather than a literal SN-budget efficiency.
+- The next technical step is still a better energy-direction parameterization, such as specific energy `eta_E / eta_M` or a launch-speed proxy, before repeating full binned recovery.
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:
@@ -387,4 +419,4 @@ The `narrow_profile` case showed the largest single correlation, with `eta_M` an
 
 ## Recommendation
 
-The baseline three-parameter inference path is operational, but exact recovery is not yet scientifically acceptable across the intended truth grid. The high-energy diagnostics show that `eta_E` failures are dominated by prior sensitivity, weak shape-summary identifiability, and unresolved near-boundary sampler geometry for `strong_wings`. Binned `dN/dv` helps the `low_eta_m_high_eta_e` case, but it is not yet a practical solution for `strong_wings`. Do not proceed to noisy recovery or TRML/cloud-parameter sensitivity until the energy-loading direction is reparameterized and the high-energy exact cases are recovered cleanly, or until the validated truth grid is explicitly narrowed with a physical justification.
+The baseline three-parameter inference path is operational, but exact recovery is not yet scientifically acceptable across the intended truth grid. The high-energy diagnostics show that `eta_E` failures are dominated by prior sensitivity, weak shape-summary identifiability, and unresolved near-boundary sampler geometry for `strong_wings`. Binned `dN/dv` helps the `low_eta_m_high_eta_e` case, and soft-cap `eta_E` diagnostics show that the hard ceiling was part of the geometry problem, but neither change is yet a practical production solution for `strong_wings`. Do not proceed to noisy recovery or TRML/cloud-parameter sensitivity until the energy-loading direction is reparameterized and the high-energy exact cases are recovered cleanly, or until the validated truth grid is explicitly narrowed with a physical justification.

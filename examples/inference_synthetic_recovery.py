@@ -158,6 +158,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dndv-sigma-floor-frac", type=float, default=0.03)
     parser.add_argument("--dndv-bin-corr", type=float, default=0.60)
 
+    parser.add_argument("--eta-e-parameterization", choices=["bounded", "softcap"], default="bounded")
+    parser.add_argument("--eta-e-softcap-center", type=float, default=1.0)
+    parser.add_argument("--eta-e-softcap-sigma", type=float, default=0.10)
+    parser.add_argument("--eta-e-softcap-transition", type=float, default=0.01)
+
     parser.add_argument("--shape-skew-sigma", type=float, default=0.20)
     parser.add_argument("--shape-kurt-sigma", type=float, default=0.40)
 
@@ -202,6 +207,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--nuts-max-tree-depth must be >= 1")
     if args.posterior_predictive_samples < 1:
         parser.error("--posterior-predictive-samples must be >= 1")
+    if args.eta_e_softcap_center <= 0.0:
+        parser.error("--eta-e-softcap-center must be positive")
+    if args.eta_e_softcap_sigma <= 0.0:
+        parser.error("--eta-e-softcap-sigma must be positive")
+    if args.eta_e_softcap_transition <= 0.0:
+        parser.error("--eta-e-softcap-transition must be positive")
     return args
 
 
@@ -235,6 +246,10 @@ def build_model(args: argparse.Namespace):
         dndv_vmin_kms=args.dndv_vmin_kms,
         dndv_vmax_kms=args.dndv_vmax_kms,
         dndv_kernel_sigma_kms=args.dndv_kernel_sigma_kms,
+        eta_e_parameterization=args.eta_e_parameterization,
+        eta_e_softcap_center=args.eta_e_softcap_center,
+        eta_e_softcap_sigma=args.eta_e_softcap_sigma,
+        eta_e_softcap_transition=args.eta_e_softcap_transition,
     )
 
 
@@ -432,6 +447,7 @@ def _empty_result(
             "r_hat": None,
             "ess_bulk": None,
             "correlation_theta": np.full((3, 3), np.nan, dtype=float),
+            "posterior_prob_eta_E_gt_1": np.nan,
         },
         runtime_seconds=runtime_seconds or {},
     )
@@ -512,6 +528,7 @@ def run_realization(
                 "r_hat": None,
                 "ess_bulk": None,
                 "correlation_theta": fit_map.correlation_theta,
+                "posterior_prob_eta_E_gt_1": np.nan,
             }
             runtime_fit = {"map": fit_seconds, "posterior_sampling": 0.0, "total": fit_seconds}
         else:
@@ -564,6 +581,9 @@ def run_realization(
                 "bfmi": fit.hmc.bfmi,
                 "bfmi_per_chain": fit.hmc.bfmi_per_chain,
                 "correlation_theta": fit.hmc.correlation_theta,
+                "posterior_prob_eta_E_gt_1": float(np.mean(samples_theta[:, 2] > 1.0))
+                if samples_theta.size > 0
+                else np.nan,
             }
             runtime_fit = fit.runtime_seconds or {"total": fit_seconds}
 
@@ -681,6 +701,10 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         posterior_width=np.vstack([r.metrics["posterior_width"] for r in results]),
         map_error=np.vstack([r.metrics["map_error"] for r in results]),
         parameter_correlation=np.stack([np.asarray(r.diagnostics["correlation_theta"], dtype=float) for r in results]),
+        posterior_prob_eta_E_gt_1=np.asarray(
+            [r.diagnostics.get("posterior_prob_eta_E_gt_1", np.nan) for r in results],
+            dtype=float,
+        ),
     )
     return path
 
@@ -699,6 +723,7 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
         "num_divergent",
         "max_r_hat",
         "min_ess_bulk",
+        "posterior_prob_eta_E_gt_1",
         "runtime_total_seconds",
         "error",
     ]
@@ -733,6 +758,7 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
                 "num_divergent": result.diagnostics.get("num_divergent", np.nan),
                 "max_r_hat": np.nan if r_hat is None else float(np.nanmax(r_hat)),
                 "min_ess_bulk": np.nan if ess is None else float(np.nanmin(ess)),
+                "posterior_prob_eta_E_gt_1": result.diagnostics.get("posterior_prob_eta_E_gt_1", np.nan),
                 "runtime_total_seconds": result.runtime_seconds.get("total", np.nan),
                 "error": result.error,
             }
@@ -827,6 +853,12 @@ def write_metadata(
         },
         "observable_set": model.observable_set,
         "observable_names": list(model.observable_names),
+        "eta_e_parameterization": model.eta_e_parameterization,
+        "eta_e_softcap": {
+            "center": model.eta_e_softcap_center,
+            "sigma": model.eta_e_softcap_sigma,
+            "transition": model.eta_e_softcap_transition,
+        },
         "num_realizations": int(len(results)),
         "num_success": int(np.sum(success)),
         "success_fraction": float(np.mean(success)) if success.size else np.nan,
@@ -838,6 +870,7 @@ def write_metadata(
             "Diagnostic corner plots use green dashed truth lines and red MAP lines.",
             "--use-truth-observables disables the random noise draw but keeps the configured covariance.",
             "Reported MAP values optimize the log-parameter posterior; posterior samplers include the unconstrained-transform Jacobian.",
+            "eta_e_parameterization='softcap' is a diagnostic mode that allows eta_E > 1 with a smooth upper-tail penalty.",
         ],
     }
     path = os.path.join(output_dir, "run_metadata.json")

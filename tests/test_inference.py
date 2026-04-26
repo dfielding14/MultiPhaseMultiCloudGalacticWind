@@ -222,6 +222,78 @@ def test_exact_shape5_map_objective_prefers_truth_over_offset():
     assert float(nlp(truth_u)) < float(nlp(offset_u))
 
 
+def test_eta_e_softcap_transform_and_penalty():
+    model_bounded = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+    )
+    bounded_u = model_bounded._unconstrained_from_theta_numpy(np.array([0.2, 0.1, 1.2], dtype=float))
+    bounded_theta = model_bounded._theta_from_unconstrained_numpy(bounded_u)
+    assert bounded_theta[2] < 1.0
+
+    model_softcap = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        eta_e_parameterization="softcap",
+    )
+    softcap_u = model_softcap._unconstrained_from_theta_numpy(np.array([0.2, 0.1, 1.2], dtype=float))
+    softcap_theta = model_softcap._theta_from_unconstrained_numpy(softcap_u)
+    assert np.isclose(softcap_theta[2], 1.2)
+    assert model_softcap._theta_from_unconstrained_numpy(np.array([0.0, 0.0, 2.0], dtype=float))[2] > 1.0
+
+    penalties = model_softcap.eta_e_softcap_penalty(np.array([0.90, 1.00, 1.10, 1.20], dtype=float))
+    assert penalties[0] < 1e-8
+    assert penalties[3] > penalties[2] > penalties[1] >= 0.0
+
+
+def test_softcap_posterior_smoke_and_eta_e_tail_probability():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        eta_e_parameterization="softcap",
+    )
+
+    theta_true = np.array([0.20, 0.10, 1.05], dtype=float)
+    moments_true = model.predict_moments(theta_true)
+    covariance = build_covariance(0.15 * moments_true, np.eye(3))
+
+    fit = model.fit_posterior(
+        observed_moments=moments_true,
+        covariance_moments=covariance,
+        initial_theta=(0.2, 0.1, 1.05),
+        prior_mean_log=np.log(np.array([0.2, 0.1, 0.95], dtype=float)),
+        prior_sigma_log=(1.4, 1.4, 1.2),
+        map_max_iter=4,
+        map_num_starts=1,
+        hmc_num_warmup=4,
+        hmc_num_samples=6,
+        hmc_step_size=0.01,
+        hmc_leapfrog_steps=4,
+        sampler="hmc",
+        seed=17,
+    )
+
+    assert np.all(np.isfinite(fit.map.theta_map))
+    assert np.all(np.isfinite(fit.hmc.samples_theta))
+    tail_probability = float(np.mean(fit.hmc.samples_theta[:, 2] > 1.0))
+    assert 0.0 <= tail_probability <= 1.0
+
+
 def test_dndv_binned_observable_mode_predicts_and_fits():
     model = MomentInferenceModel(
         sfr=3.0,

@@ -136,6 +136,12 @@ class HMCResult:
     samples_unconstrained: np.ndarray
     samples_log: np.ndarray
     samples_theta: np.ndarray
+    samples_nuts_coordinate: np.ndarray | None
+    sample_diverging: np.ndarray | None
+    sample_accept_prob: np.ndarray | None
+    sample_num_steps: np.ndarray | None
+    sample_energy: np.ndarray | None
+    sample_potential_energy: np.ndarray | None
     sampler: str
     num_chains: int
     acceptance_rate: float
@@ -158,6 +164,7 @@ class HMCResult:
     nuts_chain_method: str | None = None
     nuts_dense_mass: bool | None = None
     nuts_max_tree_depth: int | None = None
+    nuts_coordinate: str | None = None
     num_divergent_per_chain: np.ndarray | None = None
     bfmi_per_chain: np.ndarray | None = None
 
@@ -204,6 +211,19 @@ class MomentInferenceModel:
     """Autodiff-enabled inference model for moment-based dN/dv observables."""
 
     PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
+    POSTERIOR_COMPONENT_NAMES = (
+        "chi2",
+        "prior_chi2",
+        "log_transform_jacobian",
+        "transform_term",
+        "eta_e_softcap_penalty",
+        "validity_barrier",
+        "early_fail_penalty",
+        "hard_invalid_penalty",
+        "total_objective",
+        "valid",
+        "first_invalid_r_kpc",
+    )
     _THETA_FLOOR = 1e-12
     _ETA_E_MAX = 0.999
     _OBS_MOMENTS3 = "m0_m1_m2"
@@ -916,6 +936,98 @@ class MomentInferenceModel:
 
         return nlp
 
+    def make_negative_log_posterior_components(
+        self,
+        observed_moments: Sequence[float],
+        covariance_moments: np.ndarray,
+        prior_mean_log: Sequence[float] | None = None,
+        prior_sigma_log: Sequence[float] = (1.5, 1.5, 0.8),
+        invalid_penalty: float = 1e6,
+        include_transform_jacobian: bool = True,
+    ):
+        """Create a JAX-jitted posterior component evaluator for diagnostics."""
+        y_obs = jnp.asarray(observed_moments, dtype=jnp.float64)
+        if y_obs.shape != (self.observable_dim,):
+            raise ValueError(
+                "observed_moments must match observable_set size "
+                f"{self.observable_dim} ({self.observable_names}), got shape {y_obs.shape}"
+            )
+
+        cov = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
+        cov_inv = jnp.asarray(np.linalg.inv(cov), dtype=jnp.float64)
+
+        if prior_mean_log is None:
+            prior_mean_log_arr = np.log(np.asarray([0.2, 0.2, 0.8], dtype=float))
+        else:
+            prior_mean_log_arr = np.asarray(prior_mean_log, dtype=float)
+        prior_sigma_log_arr = np.asarray(prior_sigma_log, dtype=float)
+
+        if prior_mean_log_arr.shape != (3,) or prior_sigma_log_arr.shape != (3,):
+            raise ValueError("prior_mean_log and prior_sigma_log must be length-3")
+        if np.any(prior_sigma_log_arr <= 0.0):
+            raise ValueError("All prior_sigma_log entries must be positive")
+
+        prior_mean_log_jax = jnp.asarray(prior_mean_log_arr, dtype=jnp.float64)
+        prior_sigma_log_jax = jnp.asarray(prior_sigma_log_arr, dtype=jnp.float64)
+        r_max_cgs = float(self.r_max_kpc * kpc)
+        use_eta_e_softcap = self.eta_e_parameterization == "softcap"
+        softcap_center = jnp.asarray(self.eta_e_softcap_center, dtype=jnp.float64)
+        softcap_sigma = jnp.asarray(self.eta_e_softcap_sigma, dtype=jnp.float64)
+        softcap_transition = jnp.asarray(self.eta_e_softcap_transition, dtype=jnp.float64)
+
+        predict_theta_with_valid = self._predict_theta_with_valid_fn
+
+        @jax.jit
+        def components(unconstrained_theta):
+            theta, log_theta, jac_log_u = self._theta_log_and_jac_log_u_jax(unconstrained_theta)
+            observables, _raw_moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
+            resid = observables - y_obs
+            chi2 = resid @ cov_inv @ resid
+            prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
+            jac_sign, log_jacobian_raw = jnp.linalg.slogdet(jac_log_u)
+            log_jacobian = jnp.where(jac_sign != 0.0, log_jacobian_raw, -jnp.inf)
+            transform_term = -log_jacobian if include_transform_jacobian else 0.0
+            if use_eta_e_softcap:
+                eta_e_excess = softcap_transition * jax.nn.softplus(
+                    (theta[2] - softcap_center) / softcap_transition
+                )
+                eta_e_softcap_penalty = 0.5 * (eta_e_excess / softcap_sigma) ** 2
+            else:
+                eta_e_softcap_penalty = 0.0
+            smooth_penalty = 100.0 * barrier_value
+            early_fail_penalty = jnp.where(
+                valid > 0.5,
+                0.0,
+                10.0 * jax.nn.softplus((r_max_cgs - first_invalid_r) / jnp.maximum(r_max_cgs, 1e-30)),
+            )
+            hard_penalty = jnp.where(valid > 0.5, 0.0, invalid_penalty)
+            total_objective = (
+                0.5 * (chi2 + prior_chi2)
+                + transform_term
+                + eta_e_softcap_penalty
+                + smooth_penalty
+                + early_fail_penalty
+                + hard_penalty
+            )
+            return jnp.asarray(
+                [
+                    chi2,
+                    prior_chi2,
+                    log_jacobian,
+                    transform_term,
+                    eta_e_softcap_penalty,
+                    smooth_penalty,
+                    early_fail_penalty,
+                    hard_penalty,
+                    total_objective,
+                    valid,
+                    first_invalid_r / kpc,
+                ],
+                dtype=jnp.float64,
+            )
+
+        return components
+
     def _fit_map_single_from_nlp(
         self,
         nlp,
@@ -1274,6 +1386,7 @@ class MomentInferenceModel:
         samples_u_arr = np.asarray(samples_log, dtype=float)
         samples_theta = self._theta_from_unconstrained_numpy(samples_u_arr)
         samples_log_arr = np.log(np.maximum(samples_theta, self._THETA_FLOOR))
+        n_kept = int(samples_u_arr.shape[0])
 
         if samples_u_arr.shape[0] > 1:
             covariance_log = stabilize_covariance(np.cov(samples_log_arr.T), min_eig=1e-12)
@@ -1286,6 +1399,12 @@ class MomentInferenceModel:
             samples_unconstrained=samples_u_arr,
             samples_log=samples_log_arr,
             samples_theta=samples_theta,
+            samples_nuts_coordinate=samples_u_arr,
+            sample_diverging=np.zeros((n_kept,), dtype=bool),
+            sample_accept_prob=np.full((n_kept,), np.nan, dtype=float),
+            sample_num_steps=np.full((n_kept,), float(leapfrog_steps), dtype=float),
+            sample_energy=np.full((n_kept,), np.nan, dtype=float),
+            sample_potential_energy=np.full((n_kept,), np.nan, dtype=float),
             sampler="hmc",
             num_chains=1,
             acceptance_rate=float(accepted / max(total_steps, 1)),
@@ -1308,6 +1427,7 @@ class MomentInferenceModel:
             nuts_chain_method="hmc",
             nuts_dense_mass=None,
             nuts_max_tree_depth=None,
+            nuts_coordinate="native",
             num_divergent_per_chain=np.asarray([0], dtype=float),
             bfmi_per_chain=None,
         )
@@ -1316,6 +1436,8 @@ class MomentInferenceModel:
         self,
         nlp,
         initial_log_theta: np.ndarray,
+        whitening_center: np.ndarray,
+        whitening_scale: np.ndarray,
         num_warmup: int,
         num_samples: int,
         step_size: float,
@@ -1325,6 +1447,7 @@ class MomentInferenceModel:
         dense_mass: bool,
         max_tree_depth: int,
         progress_bar: bool,
+        nuts_coordinate: str,
         seed: int,
     ) -> HMCResult:
         """Sample posterior with NumPyro NUTS."""
@@ -1339,9 +1462,20 @@ class MomentInferenceModel:
 
         n_chains = max(1, int(num_chains))
         resolved_chain_method = resolve_nuts_chain_method(n_chains, chain_method)
+        coordinate = nuts_coordinate.strip().lower()
+        if coordinate not in {"native", "map_whitened"}:
+            raise ValueError("nuts_coordinate must be one of {'native', 'map_whitened'}")
+
+        center = jnp.asarray(whitening_center, dtype=jnp.float64)
+        scale = jnp.asarray(whitening_scale, dtype=jnp.float64)
+
+        def coordinate_to_unconstrained(q_theta):
+            if coordinate == "map_whitened":
+                return center + scale @ q_theta
+            return q_theta
 
         def potential_fn(params):
-            return nlp(params["u_theta"])
+            return nlp(coordinate_to_unconstrained(params["q_theta"]))
 
         nuts_kernel = NUTS(
             potential_fn=potential_fn,
@@ -1360,17 +1494,25 @@ class MomentInferenceModel:
         )
         rng_key = jax.random.PRNGKey(int(seed))
         init_log = jnp.asarray(initial_log_theta, dtype=jnp.float64)
+        init_q = jnp.zeros_like(init_log) if coordinate == "map_whitened" else init_log
         if n_chains > 1:
-            init_log = jnp.broadcast_to(init_log, (n_chains, init_log.shape[0]))
+            init_q = jnp.broadcast_to(init_q, (n_chains, init_q.shape[0]))
         mcmc.run(
             rng_key,
-            init_params={"u_theta": init_log},
+            init_params={"q_theta": init_q},
             extra_fields=("accept_prob", "num_steps", "diverging", "energy", "potential_energy"),
         )
 
-        samples_u_by_chain = mcmc.get_samples(group_by_chain=True)["u_theta"]
-        samples_u_by_chain = np.asarray(samples_u_by_chain, dtype=float)
+        samples_q_by_chain = mcmc.get_samples(group_by_chain=True)["q_theta"]
+        samples_q_by_chain = np.asarray(samples_q_by_chain, dtype=float)
+        if coordinate == "map_whitened":
+            center_np = np.asarray(whitening_center, dtype=float)
+            scale_np = np.asarray(whitening_scale, dtype=float)
+            samples_u_by_chain = center_np + np.einsum("csd,ed->cse", samples_q_by_chain, scale_np)
+        else:
+            samples_u_by_chain = samples_q_by_chain
         samples_unconstrained = samples_u_by_chain.reshape(-1, samples_u_by_chain.shape[-1])
+        samples_nuts_coordinate = samples_q_by_chain.reshape(-1, samples_q_by_chain.shape[-1])
         samples_theta = self._theta_from_unconstrained_numpy(samples_unconstrained)
         samples_log = np.log(np.maximum(samples_theta, self._THETA_FLOOR))
 
@@ -1381,6 +1523,13 @@ class MomentInferenceModel:
         energy = np.asarray(extra.get("energy"), dtype=float) if "energy" in extra else np.asarray([])
         potential_energy = (
             np.asarray(extra.get("potential_energy"), dtype=float) if "potential_energy" in extra else np.asarray([])
+        )
+        sample_accept_prob = accept_prob.reshape(-1) if accept_prob.size else np.full((samples_theta.shape[0],), np.nan)
+        sample_diverging = diverging.reshape(-1) if diverging.size else np.zeros((samples_theta.shape[0],), dtype=bool)
+        sample_num_steps = num_steps.reshape(-1) if num_steps.size else np.full((samples_theta.shape[0],), np.nan)
+        sample_energy = energy.reshape(-1) if energy.size else np.full((samples_theta.shape[0],), np.nan)
+        sample_potential_energy = (
+            potential_energy.reshape(-1) if potential_energy.size else np.full((samples_theta.shape[0],), np.nan)
         )
 
         acceptance_rate_per_chain = np.mean(accept_prob, axis=1) if accept_prob.size else np.full((n_chains,), np.nan)
@@ -1396,8 +1545,8 @@ class MomentInferenceModel:
         step_state = getattr(getattr(mcmc.last_state, "adapt_state", None), "step_size", np.nan)
         final_step_size = float(np.mean(np.asarray(step_state, dtype=float)))
 
-        sample_dict = {"u_theta": samples_u_by_chain}
-        diag = numpyro_summary(sample_dict, group_by_chain=True)["u_theta"]
+        sample_dict = {"q_theta": samples_q_by_chain}
+        diag = numpyro_summary(sample_dict, group_by_chain=True)["q_theta"]
         r_hat = np.asarray(diag.get("r_hat"), dtype=float)
         ess_bulk = np.asarray(diag.get("n_eff"), dtype=float)
 
@@ -1433,6 +1582,12 @@ class MomentInferenceModel:
             samples_unconstrained=samples_unconstrained,
             samples_log=samples_log,
             samples_theta=samples_theta,
+            samples_nuts_coordinate=samples_nuts_coordinate,
+            sample_diverging=np.asarray(sample_diverging, dtype=bool),
+            sample_accept_prob=np.asarray(sample_accept_prob, dtype=float),
+            sample_num_steps=np.asarray(sample_num_steps, dtype=float),
+            sample_energy=np.asarray(sample_energy, dtype=float),
+            sample_potential_energy=np.asarray(sample_potential_energy, dtype=float),
             sampler="nuts",
             num_chains=n_chains,
             acceptance_rate=acceptance_rate,
@@ -1455,6 +1610,7 @@ class MomentInferenceModel:
             nuts_chain_method=resolved_chain_method,
             nuts_dense_mass=bool(dense_mass),
             nuts_max_tree_depth=int(max_tree_depth),
+            nuts_coordinate=coordinate,
             num_divergent_per_chain=num_divergent_per_chain,
             bfmi_per_chain=bfmi_chain,
         )
@@ -1464,6 +1620,7 @@ class MomentInferenceModel:
         nlp,
         initial_log_theta: np.ndarray,
         mass_diag: np.ndarray,
+        covariance_unconstrained: np.ndarray,
         num_warmup: int,
         num_samples: int,
         step_size: float,
@@ -1474,15 +1631,20 @@ class MomentInferenceModel:
         nuts_dense_mass: bool,
         nuts_max_tree_depth: int,
         nuts_progress_bar: bool,
+        nuts_coordinate: str,
         seed: int,
         sampler: str,
     ) -> HMCResult:
         """Dispatch posterior sampling backend."""
         sampler_key = sampler.strip().lower()
         if sampler_key == "nuts":
+            covariance_u = stabilize_covariance(np.asarray(covariance_unconstrained, dtype=float), min_eig=1e-10)
+            whitening_scale = np.linalg.cholesky(covariance_u)
             return self._sample_nuts_from_nlp(
                 nlp=nlp,
                 initial_log_theta=initial_log_theta,
+                whitening_center=np.asarray(initial_log_theta, dtype=float),
+                whitening_scale=whitening_scale,
                 num_warmup=num_warmup,
                 num_samples=num_samples,
                 step_size=step_size,
@@ -1492,6 +1654,7 @@ class MomentInferenceModel:
                 dense_mass=bool(nuts_dense_mass),
                 max_tree_depth=int(nuts_max_tree_depth),
                 progress_bar=nuts_progress_bar,
+                nuts_coordinate=nuts_coordinate,
                 seed=seed,
             )
         if sampler_key == "hmc":
@@ -1528,6 +1691,7 @@ class MomentInferenceModel:
         nuts_chain_method: str = "auto",
         nuts_dense_mass: bool = False,
         nuts_max_tree_depth: int = 10,
+        nuts_coordinate: str = "native",
         nuts_progress_bar: bool = False,
         status_callback: Callable[[str], None] | None = None,
         seed: int = 0,
@@ -1535,6 +1699,9 @@ class MomentInferenceModel:
         """Run MAP + posterior sampling workflow for configured observables."""
         if int(nuts_max_tree_depth) < 1:
             raise ValueError("nuts_max_tree_depth must be >= 1")
+        nuts_coordinate_key = nuts_coordinate.strip().lower()
+        if nuts_coordinate_key not in {"native", "map_whitened"}:
+            raise ValueError("nuts_coordinate must be one of {'native', 'map_whitened'}")
         total_start = time.perf_counter()
         if status_callback is not None:
             status_callback("Building MAP and sampler negative log-posteriors.")
@@ -1582,6 +1749,7 @@ class MomentInferenceModel:
             nlp=nlp_sampler,
             initial_log_theta=map_result.unconstrained_theta_map,
             mass_diag=mass_diag,
+            covariance_unconstrained=map_result.covariance_unconstrained,
             num_warmup=hmc_num_warmup,
             num_samples=hmc_num_samples,
             step_size=hmc_step_size,
@@ -1592,6 +1760,7 @@ class MomentInferenceModel:
             nuts_dense_mass=nuts_dense_mass,
             nuts_max_tree_depth=nuts_max_tree_depth,
             nuts_progress_bar=nuts_progress_bar,
+            nuts_coordinate=nuts_coordinate_key,
             seed=seed,
             sampler=sampler,
         )

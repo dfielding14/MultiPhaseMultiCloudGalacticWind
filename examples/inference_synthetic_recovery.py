@@ -14,6 +14,7 @@ from typing import Any, Sequence
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -173,6 +174,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--nuts-chain-method", choices=["auto", "sequential", "parallel", "vectorized"], default="auto")
     parser.add_argument("--nuts-dense-mass", action="store_true", help="Use dense mass-matrix adaptation for NUTS.")
     parser.add_argument("--nuts-max-tree-depth", type=int, default=10)
+    parser.add_argument("--nuts-coordinate", choices=["native", "map_whitened"], default="native")
     parser.add_argument("--disable-progress-bar", action="store_true")
     parser.add_argument("--map-max-iter", type=int, default=25)
     parser.add_argument("--map-num-starts", type=int, default=4)
@@ -465,6 +467,49 @@ def summarize_ratio_recovery_metrics(
     }
 
 
+def evaluate_posterior_components(
+    model: Any,
+    observed: np.ndarray,
+    covariance: np.ndarray,
+    prior_mean_log: np.ndarray,
+    prior_sigma_log: Sequence[float],
+    theta_true: np.ndarray,
+    unconstrained_theta_map: np.ndarray,
+    samples_unconstrained: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Evaluate posterior objective components at truth, MAP, and posterior samples."""
+    import jax
+    import jax.numpy as jnp
+
+    component_fn = model.make_negative_log_posterior_components(
+        observed_moments=observed,
+        covariance_moments=covariance,
+        prior_mean_log=prior_mean_log,
+        prior_sigma_log=prior_sigma_log,
+        include_transform_jacobian=True,
+    )
+    truth_u = model._unconstrained_from_theta_numpy(theta_true)
+    truth_components = np.asarray(component_fn(jnp.asarray(truth_u, dtype=jnp.float64)), dtype=float)
+    map_components = np.asarray(
+        component_fn(jnp.asarray(unconstrained_theta_map, dtype=jnp.float64)),
+        dtype=float,
+    )
+
+    samples_u = np.asarray(samples_unconstrained, dtype=float)
+    if samples_u.ndim == 2 and samples_u.shape[0] > 0:
+        component_batch = jax.jit(jax.vmap(component_fn, in_axes=0))
+        sample_components = np.asarray(component_batch(jnp.asarray(samples_u, dtype=jnp.float64)), dtype=float)
+    else:
+        sample_components = np.empty((0, len(model.POSTERIOR_COMPONENT_NAMES)), dtype=float)
+
+    return {
+        "posterior_component_names": np.asarray(model.POSTERIOR_COMPONENT_NAMES, dtype=str),
+        "posterior_components_truth": truth_components,
+        "posterior_components_map": map_components,
+        "posterior_components_samples": sample_components,
+    }
+
+
 def _empty_result(
     truth_case: TruthCase,
     realization_id: int,
@@ -513,6 +558,34 @@ def _empty_result(
             "ess_bulk": None,
             "correlation_theta": np.full((3, 3), np.nan, dtype=float),
             "posterior_prob_eta_E_gt_1": np.nan,
+            "nuts_coordinate": "",
+            "max_tree_depth_hits": np.nan,
+            "max_tree_depth_fraction": np.nan,
+            "samples_unconstrained": np.empty((0, 3), dtype=float),
+            "samples_nuts_coordinate": np.empty((0, 3), dtype=float),
+            "sample_diverging": np.empty((0,), dtype=bool),
+            "sample_accept_prob": np.empty((0,), dtype=float),
+            "sample_num_steps": np.empty((0,), dtype=float),
+            "sample_energy": np.empty((0,), dtype=float),
+            "sample_potential_energy": np.empty((0,), dtype=float),
+            "posterior_component_names": np.asarray(
+                getattr(model, "POSTERIOR_COMPONENT_NAMES", ()),
+                dtype=str,
+            ),
+            "posterior_components_truth": np.full(
+                (len(getattr(model, "POSTERIOR_COMPONENT_NAMES", ())),),
+                np.nan,
+                dtype=float,
+            ),
+            "posterior_components_map": np.full(
+                (len(getattr(model, "POSTERIOR_COMPONENT_NAMES", ())),),
+                np.nan,
+                dtype=float,
+            ),
+            "posterior_components_samples": np.empty(
+                (0, len(getattr(model, "POSTERIOR_COMPONENT_NAMES", ()))),
+                dtype=float,
+            ),
         },
         runtime_seconds=runtime_seconds or {},
     )
@@ -585,15 +658,43 @@ def run_realization(
             fit_seconds = time.perf_counter() - t_fit
             samples_theta = np.empty((0, 3), dtype=float)
             samples_log = np.empty((0, 3), dtype=float)
+            samples_unconstrained = np.empty((0, 3), dtype=float)
+            samples_nuts_coordinate = np.empty((0, 3), dtype=float)
+            sample_diverging = np.empty((0,), dtype=bool)
+            sample_accept_prob = np.empty((0,), dtype=float)
+            sample_num_steps = np.empty((0,), dtype=float)
+            sample_energy = np.empty((0,), dtype=float)
+            sample_potential_energy = np.empty((0,), dtype=float)
             posterior_predictive = np.empty((0, model.observable_dim), dtype=float)
+            component_diagnostics = evaluate_posterior_components(
+                model=model,
+                observed=observed,
+                covariance=covariance,
+                prior_mean_log=prior_mean_log,
+                prior_sigma_log=prior_sigma_log,
+                theta_true=theta_true,
+                unconstrained_theta_map=fit_map.unconstrained_theta_map,
+                samples_unconstrained=samples_unconstrained,
+            )
             diagnostics = {
                 "sampler": "none",
+                "nuts_coordinate": "none",
                 "acceptance_rate": np.nan,
                 "num_divergent": np.nan,
+                "max_tree_depth_hits": np.nan,
+                "max_tree_depth_fraction": np.nan,
                 "r_hat": None,
                 "ess_bulk": None,
                 "correlation_theta": fit_map.correlation_theta,
                 "posterior_prob_eta_E_gt_1": np.nan,
+                "samples_unconstrained": samples_unconstrained,
+                "samples_nuts_coordinate": samples_nuts_coordinate,
+                "sample_diverging": sample_diverging,
+                "sample_accept_prob": sample_accept_prob,
+                "sample_num_steps": sample_num_steps,
+                "sample_energy": sample_energy,
+                "sample_potential_energy": sample_potential_energy,
+                **component_diagnostics,
             }
             runtime_fit = {"map": fit_seconds, "posterior_sampling": 0.0, "total": fit_seconds}
         else:
@@ -616,6 +717,7 @@ def run_realization(
                 nuts_chain_method=args.nuts_chain_method,
                 nuts_dense_mass=args.nuts_dense_mass,
                 nuts_max_tree_depth=args.nuts_max_tree_depth,
+                nuts_coordinate=args.nuts_coordinate,
                 nuts_progress_bar=not args.disable_progress_bar,
                 seed=args.seed + 1009 * realization_id,
             )
@@ -623,12 +725,63 @@ def run_realization(
             fit_map = fit.map
             samples_theta = fit.hmc.samples_theta
             samples_log = fit.hmc.samples_log
+            samples_unconstrained = fit.hmc.samples_unconstrained
+            samples_nuts_coordinate = (
+                fit.hmc.samples_nuts_coordinate
+                if fit.hmc.samples_nuts_coordinate is not None
+                else fit.hmc.samples_unconstrained
+            )
+            sample_diverging = (
+                fit.hmc.sample_diverging
+                if fit.hmc.sample_diverging is not None
+                else np.zeros((samples_theta.shape[0],), dtype=bool)
+            )
+            sample_accept_prob = (
+                fit.hmc.sample_accept_prob
+                if fit.hmc.sample_accept_prob is not None
+                else np.full((samples_theta.shape[0],), np.nan, dtype=float)
+            )
+            sample_num_steps = (
+                fit.hmc.sample_num_steps
+                if fit.hmc.sample_num_steps is not None
+                else np.full((samples_theta.shape[0],), np.nan, dtype=float)
+            )
+            sample_energy = (
+                fit.hmc.sample_energy
+                if fit.hmc.sample_energy is not None
+                else np.full((samples_theta.shape[0],), np.nan, dtype=float)
+            )
+            sample_potential_energy = (
+                fit.hmc.sample_potential_energy
+                if fit.hmc.sample_potential_energy is not None
+                else np.full((samples_theta.shape[0],), np.nan, dtype=float)
+            )
             posterior_predictive = model.predict_observables_for_log_samples(
                 samples_log,
                 max_samples=args.posterior_predictive_samples,
             )
+            tree_depth_threshold = (
+                (2 ** int(fit.hmc.nuts_max_tree_depth)) - 1
+                if fit.hmc.nuts_max_tree_depth is not None
+                else np.inf
+            )
+            max_tree_depth_hits = int(np.sum(sample_num_steps >= tree_depth_threshold))
+            max_tree_depth_fraction = (
+                float(max_tree_depth_hits / sample_num_steps.size) if sample_num_steps.size > 0 else np.nan
+            )
+            component_diagnostics = evaluate_posterior_components(
+                model=model,
+                observed=observed,
+                covariance=covariance,
+                prior_mean_log=prior_mean_log,
+                prior_sigma_log=prior_sigma_log,
+                theta_true=theta_true,
+                unconstrained_theta_map=fit_map.unconstrained_theta_map,
+                samples_unconstrained=samples_unconstrained,
+            )
             diagnostics = {
                 "sampler": fit.hmc.sampler,
+                "nuts_coordinate": fit.hmc.nuts_coordinate,
                 "num_chains": int(fit.hmc.num_chains),
                 "nuts_chain_method": fit.hmc.nuts_chain_method,
                 "nuts_dense_mass": fit.hmc.nuts_dense_mass,
@@ -641,6 +794,8 @@ def run_realization(
                 "num_divergent_per_chain": None
                 if fit.hmc.num_divergent_per_chain is None
                 else fit.hmc.num_divergent_per_chain,
+                "max_tree_depth_hits": max_tree_depth_hits,
+                "max_tree_depth_fraction": max_tree_depth_fraction,
                 "r_hat": fit.hmc.r_hat,
                 "ess_bulk": fit.hmc.ess_bulk,
                 "bfmi": fit.hmc.bfmi,
@@ -649,6 +804,14 @@ def run_realization(
                 "posterior_prob_eta_E_gt_1": float(np.mean(samples_theta[:, 2] > 1.0))
                 if samples_theta.size > 0
                 else np.nan,
+                "samples_unconstrained": samples_unconstrained,
+                "samples_nuts_coordinate": samples_nuts_coordinate,
+                "sample_diverging": sample_diverging,
+                "sample_accept_prob": sample_accept_prob,
+                "sample_num_steps": sample_num_steps,
+                "sample_energy": sample_energy,
+                "sample_potential_energy": sample_potential_energy,
+                **component_diagnostics,
             }
             runtime_fit = fit.runtime_seconds or {"total": fit_seconds}
 
@@ -726,6 +889,17 @@ def _pad_stack(arrays: Sequence[np.ndarray], trailing_shape: tuple[int, ...]) ->
     return out
 
 
+def _pad_stack_bool(arrays: Sequence[np.ndarray]) -> np.ndarray:
+    max_len = max((arr.shape[0] for arr in arrays), default=0)
+    out = np.zeros((len(arrays), max_len), dtype=bool)
+    for i, arr in enumerate(arrays):
+        arr = np.asarray(arr, dtype=bool)
+        if arr.size == 0:
+            continue
+        out[i, : arr.shape[0]] = arr
+    return out
+
+
 def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult]) -> str:
     """Write machine-readable recovery arrays."""
     path = os.path.join(output_dir, "synthetic_recovery_results.npz")
@@ -754,6 +928,7 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         observable_names=np.asarray(model.observable_names, dtype=str),
         observable_set=np.asarray(model.observable_set, dtype=str),
         energy_coordinate=np.asarray(model.energy_coordinate, dtype=str),
+        nuts_coordinate=np.asarray([r.diagnostics.get("nuts_coordinate", "") for r in results], dtype=str),
         theta_true=np.vstack([r.theta_true for r in results]),
         energy_coordinate_true=np.vstack([model.energy_coordinates_from_theta_numpy(r.theta_true) for r in results]),
         true_observables=np.vstack([r.true_observables for r in results]),
@@ -769,9 +944,77 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         map_success=np.asarray([r.map_success for r in results], dtype=bool),
         samples_theta=_pad_stack([r.samples_theta for r in results], (len(PARAM_NAMES),)),
         samples_log=_pad_stack([r.samples_log for r in results], (len(PARAM_NAMES),)),
+        samples_unconstrained=_pad_stack(
+            [np.asarray(r.diagnostics.get("samples_unconstrained", np.empty((0, 3))), dtype=float) for r in results],
+            (len(PARAM_NAMES),),
+        ),
+        samples_nuts_coordinate=_pad_stack(
+            [
+                np.asarray(r.diagnostics.get("samples_nuts_coordinate", np.empty((0, 3))), dtype=float)
+                for r in results
+            ],
+            (len(PARAM_NAMES),),
+        ),
         samples_energy_coordinate=_pad_stack(samples_energy_coordinate, (len(ENERGY_COORDINATE_NAMES),)),
         samples_eta_E_over_eta_M=_pad_stack(samples_eta_e_over_eta_m, (1,)),
+        sample_diverging=_pad_stack_bool(
+            [np.asarray(r.diagnostics.get("sample_diverging", np.empty((0,), dtype=bool))) for r in results]
+        ),
+        sample_accept_prob=_pad_stack(
+            [np.asarray(r.diagnostics.get("sample_accept_prob", np.empty((0,))), dtype=float) for r in results],
+            (),
+        ),
+        sample_num_steps=_pad_stack(
+            [np.asarray(r.diagnostics.get("sample_num_steps", np.empty((0,))), dtype=float) for r in results],
+            (),
+        ),
+        sample_energy=_pad_stack(
+            [np.asarray(r.diagnostics.get("sample_energy", np.empty((0,))), dtype=float) for r in results],
+            (),
+        ),
+        sample_potential_energy=_pad_stack(
+            [np.asarray(r.diagnostics.get("sample_potential_energy", np.empty((0,))), dtype=float) for r in results],
+            (),
+        ),
         posterior_predictive=_pad_stack([r.posterior_predictive for r in results], (model.observable_dim,)),
+        posterior_component_names=np.asarray(model.POSTERIOR_COMPONENT_NAMES, dtype=str),
+        posterior_components_truth=np.vstack(
+            [
+                np.asarray(
+                    r.diagnostics.get(
+                        "posterior_components_truth",
+                        np.full((len(model.POSTERIOR_COMPONENT_NAMES),), np.nan),
+                    ),
+                    dtype=float,
+                )
+                for r in results
+            ]
+        ),
+        posterior_components_map=np.vstack(
+            [
+                np.asarray(
+                    r.diagnostics.get(
+                        "posterior_components_map",
+                        np.full((len(model.POSTERIOR_COMPONENT_NAMES),), np.nan),
+                    ),
+                    dtype=float,
+                )
+                for r in results
+            ]
+        ),
+        posterior_components_samples=_pad_stack(
+            [
+                np.asarray(
+                    r.diagnostics.get(
+                        "posterior_components_samples",
+                        np.empty((0, len(model.POSTERIOR_COMPONENT_NAMES))),
+                    ),
+                    dtype=float,
+                )
+                for r in results
+            ],
+            (len(model.POSTERIOR_COMPONENT_NAMES),),
+        ),
         truth_in_68pct_interval=np.vstack([r.metrics["truth_in_68pct_interval"] for r in results]),
         truth_in_95pct_interval=np.vstack([r.metrics["truth_in_95pct_interval"] for r in results]),
         posterior_q16=np.vstack([r.metrics["q16"] for r in results]),
@@ -786,6 +1029,11 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         parameter_correlation=np.stack([np.asarray(r.diagnostics["correlation_theta"], dtype=float) for r in results]),
         posterior_prob_eta_E_gt_1=np.asarray(
             [r.diagnostics.get("posterior_prob_eta_E_gt_1", np.nan) for r in results],
+            dtype=float,
+        ),
+        max_tree_depth_hits=np.asarray([r.diagnostics.get("max_tree_depth_hits", np.nan) for r in results], dtype=float),
+        max_tree_depth_fraction=np.asarray(
+            [r.diagnostics.get("max_tree_depth_fraction", np.nan) for r in results],
             dtype=float,
         ),
         true_eta_E_over_eta_M=np.asarray([m["truth"] for m in ratio_metrics], dtype=float),
@@ -827,8 +1075,11 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
         "success",
         "map_success",
         "chi2",
+        "nuts_coordinate",
         "acceptance_rate",
         "num_divergent",
+        "max_tree_depth_hits",
+        "max_tree_depth_fraction",
         "max_r_hat",
         "min_ess_bulk",
         "posterior_prob_eta_E_gt_1",
@@ -874,8 +1125,11 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
                 "success": result.success,
                 "map_success": result.map_success,
                 "chi2": result.chi2,
+                "nuts_coordinate": result.diagnostics.get("nuts_coordinate", ""),
                 "acceptance_rate": result.diagnostics.get("acceptance_rate", np.nan),
                 "num_divergent": result.diagnostics.get("num_divergent", np.nan),
+                "max_tree_depth_hits": result.diagnostics.get("max_tree_depth_hits", np.nan),
+                "max_tree_depth_fraction": result.diagnostics.get("max_tree_depth_fraction", np.nan),
                 "max_r_hat": np.nan if r_hat is None else float(np.nanmax(r_hat)),
                 "min_ess_bulk": np.nan if ess is None else float(np.nanmin(ess)),
                 "posterior_prob_eta_E_gt_1": result.diagnostics.get("posterior_prob_eta_E_gt_1", np.nan),
@@ -912,6 +1166,67 @@ def _diagnostic_slug(result: RealizationResult) -> str:
     return f"{result.truth_case}_realization_{result.realization_id:03d}"
 
 
+def plot_divergent_overlay_corner(
+    samples: np.ndarray,
+    divergent: np.ndarray,
+    labels: Sequence[str],
+    output_path: str,
+    truths: Sequence[float] | None = None,
+    map_theta: Sequence[float] | None = None,
+) -> None:
+    """Plot posterior samples with divergent transitions highlighted."""
+    x = np.asarray(samples, dtype=float)
+    div = np.asarray(divergent, dtype=bool)
+    if x.ndim != 2 or x.shape[1] != len(labels):
+        raise ValueError("samples must have shape (N, D) matching labels")
+    if div.shape != (x.shape[0],):
+        raise ValueError("divergent must be a length-N boolean mask")
+
+    d = x.shape[1]
+    truths_arr = None if truths is None else np.asarray(truths, dtype=float)
+    map_arr = None if map_theta is None else np.asarray(map_theta, dtype=float)
+    fig, axes = plt.subplots(d, d, figsize=(3.1 * d, 3.1 * d), constrained_layout=True)
+    nondiv = ~div
+
+    for i in range(d):
+        for j in range(d):
+            ax = axes[i, j]
+            if i < j:
+                ax.axis("off")
+                continue
+            if i == j:
+                if np.any(nondiv):
+                    ax.hist(x[nondiv, j], bins=45, color="tab:blue", alpha=0.70, density=True, label="non-div.")
+                if np.any(div):
+                    ax.hist(x[div, j], bins=25, color="tab:red", alpha=0.65, density=True, label="div.")
+                if truths_arr is not None:
+                    ax.axvline(truths_arr[j], color="tab:green", lw=1.5, ls="--")
+                if map_arr is not None:
+                    ax.axvline(map_arr[j], color="black", lw=1.5)
+                if i == 0 and j == 0:
+                    ax.legend(fontsize=7, frameon=False)
+            else:
+                if np.any(nondiv):
+                    ax.scatter(x[nondiv, j], x[nondiv, i], s=5, alpha=0.12, color="tab:blue", edgecolors="none")
+                if np.any(div):
+                    ax.scatter(x[div, j], x[div, i], s=12, alpha=0.75, color="tab:red", marker="x")
+                if truths_arr is not None:
+                    ax.plot(truths_arr[j], truths_arr[i], marker="x", color="tab:green", ms=7, mew=1.5)
+                if map_arr is not None:
+                    ax.plot(map_arr[j], map_arr[i], marker="o", color="black", ms=4)
+            if i == d - 1:
+                ax.set_xlabel(labels[j])
+            else:
+                ax.set_xticklabels([])
+            if j == 0 and i > 0:
+                ax.set_ylabel(labels[i])
+            elif j > 0:
+                ax.set_yticklabels([])
+
+    fig.savefig(output_path, dpi=220)
+    plt.close(fig)
+
+
 def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[RealizationResult]) -> dict[str, list[str]]:
     """Write per-realization corner and observable-fit diagnostics."""
     from multiphasegalacticwind.inference import plot_corner, plot_dndv_fit, plot_observable_fit
@@ -921,6 +1236,8 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
 
     corner_paths: list[str] = []
     energy_corner_paths: list[str] = []
+    divergent_corner_paths: list[str] = []
+    divergent_energy_corner_paths: list[str] = []
     fit_paths: list[str] = []
     for result in results:
         if not result.success:
@@ -937,16 +1254,45 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
                 map_theta=result.theta_map,
             )
             corner_paths.append(corner_path)
+            divergent = np.asarray(result.diagnostics.get("sample_diverging", np.empty((0,), dtype=bool)), dtype=bool)
+            if divergent.shape == (result.samples_theta.shape[0],):
+                divergent_corner_path = os.path.join(plot_dir, f"{slug}_divergent_overlay_corner.png")
+                plot_divergent_overlay_corner(
+                    result.samples_theta,
+                    divergent,
+                    labels=PARAM_NAMES,
+                    output_path=divergent_corner_path,
+                    truths=result.theta_true,
+                    map_theta=result.theta_map,
+                )
+                divergent_corner_paths.append(divergent_corner_path)
             if getattr(model, "energy_coordinate", "eta_e") == "eta_e_over_eta_m":
                 energy_corner_path = os.path.join(plot_dir, f"{slug}_energy_coordinate_corner.png")
+                samples_energy = model.energy_coordinates_from_theta_numpy(result.samples_theta)
+                truth_energy = model.energy_coordinates_from_theta_numpy(result.theta_true)
+                map_energy = model.energy_coordinates_from_theta_numpy(result.theta_map)
                 plot_corner(
-                    model.energy_coordinates_from_theta_numpy(result.samples_theta),
+                    samples_energy,
                     labels=ENERGY_COORDINATE_NAMES,
                     output_path=energy_corner_path,
-                    truths=model.energy_coordinates_from_theta_numpy(result.theta_true),
-                    map_theta=model.energy_coordinates_from_theta_numpy(result.theta_map),
+                    truths=truth_energy,
+                    map_theta=map_energy,
                 )
                 energy_corner_paths.append(energy_corner_path)
+                if divergent.shape == (result.samples_theta.shape[0],):
+                    divergent_energy_corner_path = os.path.join(
+                        plot_dir,
+                        f"{slug}_energy_coordinate_divergent_overlay_corner.png",
+                    )
+                    plot_divergent_overlay_corner(
+                        samples_energy,
+                        divergent,
+                        labels=ENERGY_COORDINATE_NAMES,
+                        output_path=divergent_energy_corner_path,
+                        truths=truth_energy,
+                        map_theta=map_energy,
+                    )
+                    divergent_energy_corner_paths.append(divergent_energy_corner_path)
 
         fit_path = os.path.join(plot_dir, f"{slug}_observable_fit.png")
         if model.observable_set == "dndv_binned":
@@ -977,6 +1323,10 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
     output = {"corner_plots": corner_paths, "observable_fit_plots": fit_paths}
     if energy_corner_paths:
         output["energy_coordinate_corner_plots"] = energy_corner_paths
+    if divergent_corner_paths:
+        output["divergent_overlay_corner_plots"] = divergent_corner_paths
+    if divergent_energy_corner_paths:
+        output["energy_coordinate_divergent_overlay_corner_plots"] = divergent_energy_corner_paths
     return output
 
 
@@ -1002,6 +1352,7 @@ def write_metadata(
         "observable_names": list(model.observable_names),
         "eta_e_parameterization": model.eta_e_parameterization,
         "energy_coordinate": model.energy_coordinate,
+        "nuts_coordinate": args.nuts_coordinate,
         "eta_e_softcap": {
             "center": model.eta_e_softcap_center,
             "sigma": model.eta_e_softcap_sigma,
@@ -1020,6 +1371,7 @@ def write_metadata(
             "Reported MAP values optimize the log-parameter posterior; posterior samplers include the unconstrained-transform Jacobian.",
             "eta_e_parameterization='softcap' is a diagnostic mode that allows eta_E > 1 with a smooth upper-tail penalty.",
             "energy_coordinate='eta_e_over_eta_m' is a diagnostic mode that samples eta_E/eta_M but reports physical eta_M, eta_M_cold, and eta_E.",
+            "nuts_coordinate='map_whitened' samples local MAP-whitened coordinates and maps them back to physical outputs.",
         ],
     }
     path = os.path.join(output_dir, "run_metadata.json")

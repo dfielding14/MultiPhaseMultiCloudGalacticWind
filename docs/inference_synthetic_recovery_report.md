@@ -346,6 +346,37 @@ Generated diagnostic outputs are under `examples/outputs/inference_synthetic_rec
 - `short_dndv_high_energy_weak/diagnostic_plots/strong_wings_realization_000_energy_coordinate_corner.png`
 - `short_dndv_high_energy_weak/diagnostic_plots/strong_wings_realization_000_observable_fit.png`
 
+## Short-NUTS Geometry Repair
+
+The next diagnostic made NUTS failures inspectable and added `nuts_coordinate = map_whitened`, which samples a local MAP-whitened coordinate `z` and maps it back to the native unconstrained coordinate before each posterior evaluation. Public outputs remain physical. The harness now writes per-sample NUTS diagnostics (`diverging`, `accept_prob`, `num_steps`, `energy`, `potential_energy`, native unconstrained coordinates, and active NUTS coordinates), divergent-sample overlay corner plots, and posterior objective components at truth, MAP, and samples.
+
+Exact `strong_wings` binned `dN/dv` was rerun with 512 warmup steps, 256 posterior samples, dense mass adaptation, `target_accept = 0.99`, and `max_tree_depth = 12`.
+
+| Prior label | NUTS coordinate | MAP `eta_E` | MAP `eta_E/eta_M` | Div. | Tree-depth hits | Max `Rhat` | Min ESS | `P(eta_E > 1)` | Truth in 95 percent for `eta_E` and ratio? |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| default | native | 0.972 | 9.63 | 53 | 0 | 1.007 | 42.8 | 0.273 | yes / yes |
+| high-energy weak | native | 0.978 | 9.74 | 44 | 0 | 1.008 | 105 | 0.207 | yes / yes |
+| default | MAP-whitened | 0.972 | 9.63 | 34 | 0 | 1.027 | 118 | 0.195 | yes / yes |
+| high-energy weak | MAP-whitened | 0.978 | 9.74 | 58 | 0 | 0.997 | 56.9 | 0.277 | yes / yes |
+
+Posterior component checks show that the exact truth and MAP are both valid and have zero validity barrier. The binned likelihood is excellent: truth has `chi2 ~= 0`, while the MAP has `chi2 = 0.0192` under the default prior and `chi2 = 0.00213` under the high-energy weak prior. The soft-cap penalty is tiny at both truth and MAP (`< 1e-4`). Therefore this is not a validity-barrier failure, not a tree-depth saturation failure, and not a failure to find the high-energy optimum.
+
+The short gate still fails because divergences remain common in every run. MAP whitening improves ESS and reduces divergences for the default prior, but it does not make the high-energy weak run acceptable and does not remove the geometry problem. Divergent samples are not explained solely by exceeding `eta_E = 1`: in the high-energy weak native run, divergent and non-divergent samples have nearly the same `eta_E > 1` fraction, while in the MAP-whitened runs divergences are somewhat enriched in the above-budget tail. The current evidence points to a curved high-energy/specific-energy ridge with residual soft-cap interaction, not just poor local covariance scaling.
+
+Decision:
+
+- Do not launch full NUTS.
+- Do not proceed to noisy recovery.
+- Do not treat MAP-whitened NUTS as a sufficient fix.
+- Next technical step should be a stronger geometry change: either a launch-speed/specific-energy physical proxy that aligns directly with wind speed, or a gentler effective-energy prior/soft-cap diagnostic that removes the sharp near-budget curvature before another NUTS sweep.
+
+Generated outputs are under `examples/outputs/inference_synthetic_recovery/short_nuts_geometry_fix_strong_wings/`. The most useful plots are:
+
+- `native_high_energy_weak/diagnostic_plots/strong_wings_realization_000_divergent_overlay_corner.png`
+- `native_high_energy_weak/diagnostic_plots/strong_wings_realization_000_energy_coordinate_divergent_overlay_corner.png`
+- `map_whitened_high_energy_weak/diagnostic_plots/strong_wings_realization_000_divergent_overlay_corner.png`
+- `map_whitened_high_energy_weak/diagnostic_plots/strong_wings_realization_000_energy_coordinate_divergent_overlay_corner.png`
+
 ## Setup
 
 The main run used `examples/inference_synthetic_recovery.py` with all eight baseline truth cases and the transformed five-component observable set:

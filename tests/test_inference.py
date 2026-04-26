@@ -1,7 +1,10 @@
 """Tests for inference utilities and MAP/HMC fitting path."""
 
+import importlib.util
 import numpy as np
 import pytest
+import sys
+from pathlib import Path
 
 from multiphasegalacticwind.inference import (
     MomentInferenceModel,
@@ -364,6 +367,157 @@ def test_ratio_energy_coordinate_hmc_smoke():
     assert np.all(ratio_samples > 0.0)
 
 
+def test_map_whitened_nuts_smoke_components_and_npz_diagnostics(tmp_path):
+    pytest.importorskip("numpyro")
+
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        eta_e_parameterization="softcap",
+        energy_coordinate="eta_e_over_eta_m",
+    )
+
+    theta_true = np.array([0.12, 0.10, 1.02], dtype=float)
+    moments_true = model.predict_moments(theta_true)
+    covariance = build_covariance(0.18 * moments_true, np.eye(3))
+    prior_mean_log = np.log(np.array([0.12, 0.10, 0.95], dtype=float))
+    prior_sigma_log = (1.4, 1.4, 1.2)
+
+    fit = model.fit_posterior(
+        observed_moments=moments_true,
+        covariance_moments=covariance,
+        initial_theta=theta_true,
+        prior_mean_log=prior_mean_log,
+        prior_sigma_log=prior_sigma_log,
+        map_max_iter=4,
+        map_num_starts=1,
+        hmc_num_warmup=4,
+        hmc_num_samples=6,
+        hmc_step_size=0.01,
+        hmc_target_accept=0.8,
+        sampler="nuts",
+        nuts_coordinate="map_whitened",
+        nuts_dense_mass=True,
+        nuts_max_tree_depth=5,
+        seed=23,
+    )
+
+    assert fit.hmc.sampler == "nuts"
+    assert fit.hmc.nuts_coordinate == "map_whitened"
+    assert fit.hmc.samples_theta.shape == (6, 3)
+    assert fit.hmc.samples_unconstrained.shape == (6, 3)
+    assert fit.hmc.samples_nuts_coordinate is not None
+    assert fit.hmc.samples_nuts_coordinate.shape == (6, 3)
+    assert fit.hmc.sample_diverging is not None
+    assert fit.hmc.sample_diverging.shape == (6,)
+    assert fit.hmc.sample_accept_prob is not None
+    assert fit.hmc.sample_accept_prob.shape == (6,)
+    assert np.all(np.isfinite(fit.hmc.samples_theta))
+
+    component_fn = model.make_negative_log_posterior_components(
+        observed_moments=moments_true,
+        covariance_moments=covariance,
+        prior_mean_log=prior_mean_log,
+        prior_sigma_log=prior_sigma_log,
+        include_transform_jacobian=True,
+    )
+    truth_components = np.asarray(component_fn(model._unconstrained_from_theta_numpy(theta_true)), dtype=float)
+    map_components = np.asarray(component_fn(fit.map.unconstrained_theta_map), dtype=float)
+    sample_components = np.asarray(component_fn(fit.hmc.samples_unconstrained[0]), dtype=float)
+    assert truth_components.shape == (len(model.POSTERIOR_COMPONENT_NAMES),)
+    assert np.all(np.isfinite(truth_components))
+    assert np.all(np.isfinite(map_components))
+    assert np.all(np.isfinite(sample_components))
+
+    recovery_path = Path(__file__).resolve().parents[1] / "examples" / "inference_synthetic_recovery.py"
+    spec = importlib.util.spec_from_file_location("local_inference_synthetic_recovery", recovery_path)
+    assert spec is not None and spec.loader is not None
+    recovery = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = recovery
+    spec.loader.exec_module(recovery)
+
+    posterior_components = recovery.evaluate_posterior_components(
+        model=model,
+        observed=moments_true,
+        covariance=covariance,
+        prior_mean_log=prior_mean_log,
+        prior_sigma_log=prior_sigma_log,
+        theta_true=theta_true,
+        unconstrained_theta_map=fit.map.unconstrained_theta_map,
+        samples_unconstrained=fit.hmc.samples_unconstrained,
+    )
+    diagnostics = {
+        "sampler": fit.hmc.sampler,
+        "nuts_coordinate": fit.hmc.nuts_coordinate,
+        "acceptance_rate": fit.hmc.acceptance_rate,
+        "num_divergent": fit.hmc.num_divergent,
+        "max_tree_depth_hits": 0,
+        "max_tree_depth_fraction": 0.0,
+        "r_hat": fit.hmc.r_hat,
+        "ess_bulk": fit.hmc.ess_bulk,
+        "correlation_theta": fit.hmc.correlation_theta,
+        "posterior_prob_eta_E_gt_1": float(np.mean(fit.hmc.samples_theta[:, 2] > 1.0)),
+        "samples_unconstrained": fit.hmc.samples_unconstrained,
+        "samples_nuts_coordinate": fit.hmc.samples_nuts_coordinate,
+        "sample_diverging": fit.hmc.sample_diverging,
+        "sample_accept_prob": fit.hmc.sample_accept_prob,
+        "sample_num_steps": fit.hmc.sample_num_steps,
+        "sample_energy": fit.hmc.sample_energy,
+        "sample_potential_energy": fit.hmc.sample_potential_energy,
+        **posterior_components,
+    }
+    metrics = recovery.summarize_recovery_metrics(theta_true, fit.map.theta_map, fit.hmc.samples_theta)
+    result = recovery.RealizationResult(
+        truth_case="unit",
+        realization_id=0,
+        theta_true=theta_true,
+        true_observables=moments_true,
+        true_raw_moments=model.predict_raw_moments(theta_true),
+        observed=moments_true,
+        sigma=np.sqrt(np.diag(covariance)),
+        covariance=covariance,
+        truth_valid=True,
+        first_invalid_r_kpc=np.nan,
+        success=True,
+        error="",
+        map_success=fit.map.success,
+        map_message=fit.map.message,
+        theta_map=fit.map.theta_map,
+        map_predicted_observables=fit.map.predicted_moments,
+        chi2=fit.map.chi2,
+        nlp=fit.map.nlp,
+        samples_theta=fit.hmc.samples_theta,
+        samples_log=fit.hmc.samples_log,
+        posterior_predictive=np.empty((0, model.observable_dim), dtype=float),
+        metrics=metrics,
+        diagnostics=diagnostics,
+        runtime_seconds={"total": 0.0},
+    )
+    npz_path = recovery.write_npz(str(tmp_path), model, [result])
+    with np.load(npz_path, allow_pickle=True) as data:
+        for key in (
+            "samples_unconstrained",
+            "samples_nuts_coordinate",
+            "sample_diverging",
+            "sample_accept_prob",
+            "sample_num_steps",
+            "sample_energy",
+            "sample_potential_energy",
+            "posterior_component_names",
+            "posterior_components_truth",
+            "posterior_components_map",
+            "posterior_components_samples",
+        ):
+            assert key in data.files
+        assert data["sample_diverging"].shape == (1, 6)
+        assert data["posterior_components_samples"].shape[2] == len(model.POSTERIOR_COMPONENT_NAMES)
+
+
 def test_softcap_posterior_smoke_and_eta_e_tail_probability():
     model = MomentInferenceModel(
         sfr=2.0,
@@ -492,9 +646,17 @@ def test_map_and_nuts_smoke_on_synthetic_moments():
     )
 
     assert fit.hmc.sampler == "nuts"
+    assert fit.hmc.nuts_coordinate == "native"
     assert fit.hmc.num_chains == 2
     assert fit.hmc.samples_log.shape == (24, 3)
     assert fit.hmc.samples_theta.shape == (24, 3)
+    assert fit.hmc.samples_nuts_coordinate is not None
+    assert fit.hmc.samples_nuts_coordinate.shape == fit.hmc.samples_unconstrained.shape
+    assert np.allclose(fit.hmc.samples_nuts_coordinate, fit.hmc.samples_unconstrained)
+    assert fit.hmc.sample_diverging is not None
+    assert fit.hmc.sample_diverging.shape == (24,)
+    assert fit.hmc.sample_accept_prob is not None
+    assert fit.hmc.sample_accept_prob.shape == (24,)
     assert fit.hmc.acceptance_rate_per_chain is not None
     assert fit.hmc.acceptance_rate_per_chain.shape == (2,)
     assert fit.hmc.nuts_chain_method in {"parallel", "vectorized", "sequential"}

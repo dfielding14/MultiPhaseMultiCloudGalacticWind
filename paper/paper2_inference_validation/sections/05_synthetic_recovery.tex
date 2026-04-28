@@ -1,54 +1,304 @@
 \section{Synthetic Input Recovery}
 \label{sec:synthetic_recovery}
 
-% Outline:
-% - State the question: if we generate fake data from known wind parameters, can the inference recover them?
-% - Define the baseline truth cases used by examples/inference_synthetic_recovery.py:
-%   fiducial, low_eta_m_high_eta_e, high_eta_m_low_eta_e, low_eta_m_cold,
-%   high_eta_m_cold, near_failure_boundary, strong_wings, and narrow_profile.
-% - Use the same three observable modes as the inference code: raw M0-M2 moments,
-%   logM0/mean/sigma/skewness/kurtosis, and binned dN/dv.
-% - Define the synthetic covariance model explicitly: correlated fractional errors
-%   for raw moments, mixed fractional/absolute errors for the transformed shape
-%   moments, and AR(1) bin-to-bin covariance with a profile-amplitude floor for dN/dv.
-% - Present recovery metrics: truth coverage in 68 and 95 percent intervals, posterior
-%   mean and median bias, posterior width, MAP error, chi-square, sampler acceptance,
-%   divergences, R-hat, ESS, and the parameter correlation matrix.
-% - The initial CPU-scale pilot is superseded. Exact-data diagnostics found that
-%   the old reported MAP used the unconstrained-coordinate objective and that the
-%   validity barrier contributed to valid trajectories. Corrected recovery runs
-%   should be reported here before any synthetic-recovery figures are re-enabled.
-% - Table placeholder: truth case, validity, MAP theta, 68/95 percent coverage,
-%   chi-square, acceptance rate, divergences, and strongest parameter correlation.
-% - Compare raw moments, shape-five observables, and binned dN/dv.
-% - Identify the dominant degeneracies among eta_M, eta_M,cold, and eta_E.
-% - Close by stating whether the baseline three-parameter inference is trustworthy enough to apply to real data or extend.
+The prior predictive tests in Section~\ref{sec:prior_predictive} check whether
+the adopted parameter volume generates plausible wind observables.  They do not,
+by themselves, show that the inverse problem is well behaved.  The next
+validation question is therefore more direct: if the forward model generates the
+data at known loading parameters, does the inference recover those parameters?
+This synthetic input recovery test is the central gate between a useful
+inference model and a parameterized forward model that can fit data for the
+wrong reasons.
 
-% Disabled until corrected synthetic recovery is rerun.
-\iffalse
+We apply this test first to the baseline three-parameter problem.  The public
+physical parameters are the hot mass loading $\eta_M$, the cold mass loading
+$\eta_{M,\rm cold}$, and the hot energy loading $\eta_E$.  This is deliberately
+smaller than the full set of cloud-wind and turbulent radiative mixing-layer
+parameters in the forward model.  A clean recovery failure in this restricted
+space would mean that adding more microphysical degrees of freedom is premature.
+Conversely, a useful but imperfect recovery map tells us which directions are
+controlled by the observables and which directions remain prior- or
+geometry-sensitive.
+
+\subsection{Exact recovery setup}
+\label{subsec:synthetic_recovery_setup}
+
+All tests in this section use exact, noiseless synthetic observables.  The data
+vector is evaluated at the truth, and the covariance matrix is used only to
+define the likelihood scale.  This removes noise-realization scatter from the
+validation problem and asks whether the posterior is centered on the model that
+generated the observables.  Unless otherwise stated, the reduced CPU forward
+model uses $r_{\rm max}=6\,{\rm kpc}$, a radial step of $0.08\,{\rm kpc}$, four
+cloud-mass species, and a cloud-mass range of $10$--$10^4\,M_\odot$.  These
+settings are not intended to be the final production resolution; they provide a
+fixed, inexpensive grid on which different likelihood and parameterization
+choices can be compared.
+
+The main recovery sweep uses the five shape observables
+\begin{equation}
+{\bf y}_{\rm shape} =
+    \left(\log M_0,\ \langle v\rangle,\ \sigma_v,\ {\rm skew}_v,\ {\rm kurt}_v\right),
+\end{equation}
+computed from the model $dN/dv$ profile.  The covariance combines fractional
+amplitude errors with velocity-scale and shape errors, including correlations
+among the five entries.  This observable set is a compact summary of the
+profile.  It is useful because it is cheap and robust, but it can discard
+localized information in the wings.  We therefore also run binned-profile tests
+in which the likelihood acts directly on $dN/dv$ or on $\log dN/dv$ with an
+AR(1)-like bin-to-bin covariance and a profile-amplitude floor.
+
+Figure~\ref{fig:synthetic_recovery_exact_shape5_summary} summarizes the exact
+shape-five recovery grid.  Eight truth cases were chosen to span ordinary,
+high-energy, high-cold-loading, near-failure, and narrow-profile regimes.  Three
+of these cases produce invalid truth observables in the reduced forward model:
+their trajectories do not reach the observable radius with finite physical
+states.  We keep those cases in the figure and table because they are part of
+the validation: not every point in a broad phenomenological prior corresponds to
+a usable wind solution.
+
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/synthetic_recovery_shape5_summary.png}
+\includegraphics[width=\textwidth]{figures/synthetic_recovery_exact_shape5_summary.png}
 \caption{
-CPU-scale synthetic recovery pilot for the baseline three-parameter model.
-The left panel shows the truth cases in the plane of hot and cold mass loading.
-Green circles mark truth cases that produced valid observables and completed sampling; red crosses mark truth cases that were invalid for this reduced setup.
-The right panel shows the MAP-to-truth ratio for the five valid shape-moment recoveries.
-The pilot uses $r_{\rm max}=6\,\mathrm{kpc}$, four cloud-mass species, one noise realization per truth case, and short HMC chains.
-It is therefore a validation of the recovery harness and a first degeneracy diagnostic, not a final coverage study.
+Exact synthetic input recovery for the baseline shape-five observable set.
+The left panel shows the truth grid in the plane of hot and cold mass loading.
+Green circles mark truth cases with finite observables in the reduced CPU model;
+red crosses mark truth cases that are invalid before inference.  The right panel
+shows the MAP-to-truth ratio for the valid cases using the exact, noiseless
+shape-five data vector.  Ordinary cases recover the input loadings at the level
+needed for this validation stage, whereas the high-energy \texttt{strong\_wings}
+case recovers $\eta_M$ and $\eta_{M,\rm cold}$ but pulls $\eta_E$ low under the
+default shape-summary likelihood.  All runs use $r_{\rm max}=6\,{\rm kpc}$,
+$\Delta r=0.08\,{\rm kpc}$, four cloud species, and cloud masses
+$10$--$10^4\,M_\odot$.
 }
-\label{fig:synthetic_recovery_shape5_summary}
+\label{fig:synthetic_recovery_exact_shape5_summary}
 \end{figure*}
+
+\begin{deluxetable*}{llllll}
+\tabletypesize{\scriptsize}
+\tablecaption{Exact synthetic recovery summary \label{tab:synthetic_recovery_summary}}
+\tablehead{
+\colhead{Truth case} &
+\colhead{Input $(\eta_M,\eta_{M,\rm cold},\eta_E)$} &
+\colhead{Truth status} &
+\colhead{MAP $(\eta_M,\eta_{M,\rm cold},\eta_E)$} &
+\colhead{NUTS div./ESS/$\hat R$} &
+\colhead{Decision}
+}
+\startdata
+\texttt{fiducial} & $(0.20,0.20,0.80)$ & finite &
+$(0.195,0.195,0.756)$ & $1/80.9/1.009$ & diagnostic pass \\
+\texttt{low\_eta\_m\_high\_eta\_e} & $(0.07,0.12,0.96)$ & finite &
+$(0.0685,0.112,0.766)$ & $16/133/1.008$ & shape-summary caveat \\
+\texttt{high\_eta\_m\_low\_eta\_e} & $(0.90,0.20,0.25)$ & invalid &
+-- & -- & invalid truth \\
+\texttt{low\_eta\_m\_cold} & $(0.22,0.01,0.80)$ & finite &
+$(0.214,0.0102,0.786)$ & $0/56.8/1.031$ & diagnostic pass \\
+\texttt{high\_eta\_m\_cold} & $(0.35,1.00,0.85)$ & invalid &
+-- & -- & invalid truth \\
+\texttt{near\_failure\_boundary} & $(0.06,1.50,0.40)$ & invalid &
+-- & -- & invalid truth \\
+\texttt{strong\_wings} & $(0.10,0.35,0.98)$ & finite &
+$(0.100,0.326,0.848)$ & $223/68.8/1.014$ & high-energy stress test \\
+\texttt{narrow\_profile} & $(0.70,0.05,0.45)$ & finite &
+$(0.761,0.0516,0.514)$ & $0/113/1.032$ & diagnostic pass
+\enddata
+\tablecomments{
+The table reports the corrected exact shape-five runs.  The NUTS column gives
+the number of divergent transitions, the minimum bulk effective sample size, and
+the maximum $\hat R$.  ``Diagnostic pass'' means that the truth lies inside the
+95\% marginal interval for all three loadings and that no large systematic MAP
+failure is present.  These are exact-data validation labels, not claims about
+coverage under noisy observations.
+}
+\end{deluxetable*}
+
+\subsection{Baseline recovery results}
+\label{subsec:synthetic_recovery_baseline}
+
+The corrected exact runs show that the baseline inference is operational, but
+not uniformly clean.  The fiducial, low-cold-loading, and narrow-profile cases
+all recover the truth within the 95\% marginal intervals, with MAP points close
+to the input parameters.  Their posterior widths are not negligible, especially
+in $\eta_E$, but that is an identifiability statement rather than a code failure:
+the shape observables constrain combinations of mass loading, cold loading, and
+specific energy more tightly than each parameter independently.
+
+The high-energy cases expose the limiting direction.  For
+\texttt{low\_eta\_m\_high\_eta\_e}, the shape-five posterior still contains the
+truth but the default MAP is pulled to $\eta_E\simeq 0.77$ for a truth value of
+$0.96$.  For \texttt{strong\_wings}, the shape-five MAP is close in
+$\eta_M$ and $\eta_{M,\rm cold}$ but gives $\eta_E\simeq 0.85$ for a truth value
+of $0.98$, and the true $\eta_E$ is outside the 95\% interval in that initial
+shape-summary run.  Objective decompositions show that this is not a hidden
+validity-barrier bug.  At the truth and at the MAP, the validity barrier is zero
+for the finite high-energy cases.  The default posterior can move to lower
+$\eta_E$ because sub-sigma changes in the shape observables trade off against
+the prior preference for more ordinary energy loading.
+
+This motivates the profile-level diagnostics in
+Figure~\ref{fig:synthetic_recovery_high_energy_diagnostics}.  When the shape-five
+MAP is recomputed under weaker or high-energy-centered priors, both high-energy
+cases move toward the truth with small normalized residuals.  For
+\texttt{strong\_wings}, for example, the default-prior shape-five MAP has
+$\eta_E=0.848$, while the high-energy weak prior gives $\eta_E=0.986$.  The
+observable residuals remain small in both cases.  Thus the shape-five failure is
+best interpreted as weak high-energy identifiability plus prior sensitivity, not
+as a failed forward solution.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/synthetic_recovery_mode_and_correlations.png}
+\includegraphics[width=\textwidth]{figures/synthetic_recovery_high_energy_diagnostics.png}
 \caption{
-Observable-mode and parameter-degeneracy diagnostics from the baseline synthetic recovery pilot.
-The left panel compares fiducial MAP recovery for raw moments, transformed shape moments, and binned $dN/dv$ using the same reduced forward-model settings.
-The right panel shows posterior parameter correlations for the successful shape-moment truth cases.
-The narrow-profile case has a strong $\eta_M$--$\eta_E$ correlation, illustrating that some synthetic data constrain combinations of hot mass loading and hot energy loading more strongly than either parameter alone.
+High-energy synthetic recovery diagnostics.  The left panel shows shape-five MAP
+$\eta_E$ for \texttt{low\_eta\_m\_high\_eta\_e} and
+\texttt{strong\_wings} under a small grid of energy-loading priors; dashed lines
+mark the truth values.  The MAP moves toward the truth when the energy prior is
+weakened or centered closer to the high-energy regime, while the likelihood
+residuals remain sub-sigma.  The right panel shows profile-level recovery.  The
+exact binned $dN/dv$ likelihood cleanly recovers
+\texttt{low\_eta\_m\_high\_eta\_e} under both the default and high-energy weak
+priors, with no divergences and acceptable ESS and $\hat R$.  The
+\texttt{strong\_wings} bar is the best current observed-window diagnostic rather
+than a production-quality full recovery: it recovers the MAP and contains the
+truth, but retains a small number of divergences and marginal ESS.
 }
-\label{fig:synthetic_recovery_mode_correlations}
+\label{fig:synthetic_recovery_high_energy_diagnostics}
 \end{figure*}
-\fi
+
+The direct binned profile likelihood resolves one of the high-energy concerns.
+For \texttt{low\_eta\_m\_high\_eta\_e}, the exact binned $dN/dv$ run has zero
+divergences under both the default and high-energy weak priors.  The default
+profile MAP gives $\eta_E=0.893$ for a truth value of $0.96$, while the
+high-energy weak prior gives $\eta_E=0.958$.  In both runs the true energy
+loading is inside the 95\% interval.  This is an important positive result:
+profile information can recover a low-mass, high-energy wind that is only weakly
+identified by the five shape summaries.
+
+The same conclusion does not hold cleanly for \texttt{strong\_wings}.  The full
+wide-profile binned runs were computationally difficult, and short diagnostic
+runs showed that the original pathologies were not simply due to a bad optimizer
+or a hidden failed trajectory.  The case remains useful precisely because it
+presses on the hardest direction: very high specific energy, broad wings, and an
+energy loading near the nominal supernova budget.
+
+\subsection{High-energy diagnostic refinements}
+\label{subsec:synthetic_recovery_high_energy}
+
+Several changes were introduced to classify, rather than hide, the
+\texttt{strong\_wings} problem.  First, the hard upper transform
+$\eta_E<1$ was replaced in diagnostic runs by a soft-cap parameterization.  The
+soft cap allows $\eta_E>1$ but adds a smooth penalty above the nominal energy
+budget.  This is not a new production prior; it is a diagnostic for asking
+whether the posterior wants to pile up against the boundary.  The resulting
+quantity $P(\eta_E>1)$ is reported as part of the recovery summary.
+
+Second, failed or stalled winds are treated as finite inference outcomes rather
+than hard numerical cliffs.  If a trajectory stalls before the required radius,
+the inference layer computes observables from the finite, alive part of the
+trajectory and applies a smooth reach-radius penalty.  This turns the statement
+``the sampler hit a cliff'' into the physical statement ``these parameters
+produce a wind that does not reach the observable radius and are therefore
+unlikely.''  In the best current \texttt{strong\_wings} observed-window run, the
+MAP and posterior samples used in the summary have normal trajectory status and
+zero stall and numerical-failure penalties.  The remaining divergences are
+therefore posterior-geometry problems, not hidden failed-wind cliffs.
+
+Third, the sampler coordinates were changed for the difficult high-energy
+diagnostic.  The reported parameters remain
+$(\eta_M,\eta_{M,\rm cold},\eta_E)$, but the sampler is run in loading-ratio
+coordinates,
+\begin{equation}
+\left(\eta_M,\ q_{\rm cold},\ q_E\right)
+=
+\left(\eta_M,\ \frac{\eta_{M,\rm cold}}{\eta_M},\
+\frac{\eta_E}{\eta_M}\right).
+\end{equation}
+This coordinate is physically motivated.  The hot wind speed is controlled more
+directly by the specific energy $\eta_E/\eta_M$ than by $\eta_E$ alone, while
+the cool-column budget depends on how much cold material is loaded relative to
+the hot flow.  In these coordinates the \texttt{strong\_wings} MAP lands very
+close to the truth: $\eta_E=0.977$ for a truth value of $0.98$, and
+$\eta_E/\eta_M=9.74$ for a truth value of $9.8$ in the best observed-window
+diagnostic.
+
+Finally, the velocity edges of the binned profile were treated more carefully.
+The first wide tests used velocity bins extending to $1600\,{\rm km\,s^{-1}}$.
+Inspection of divergent samples showed that some of the highest-velocity bins
+were measuring the far Gaussian kernel tail of material whose modeled terminal
+cloud speed lay hundreds of ${\rm km\,s^{-1}}$ lower.  Tiny changes in the
+terminal velocity then moved these tail bins by one to two likelihood sigma
+without changing the physical wind track in any meaningful way.  This is an
+artificial stress test of the kernel tail, not a realistic absorption-line
+constraint.  The best current diagnostic therefore uses an observed velocity
+window of $100$--$600\,{\rm km\,s^{-1}}$, closer to the range typically used in
+absorption-line measurements.  At the low-velocity edge, bins with only
+negligible modeled signal are treated as smooth upper-limit-like constraints
+rather than precise two-sided log detections.  This keeps unsupported edge bins
+from dominating the posterior curvature while retaining the body of the
+profile.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/synthetic_recovery_strong_wings_corner_fit.png}
+\caption{
+Best current \texttt{strong\_wings} observed-window diagnostic.  The left panel
+shows the loading-ratio posterior in
+$(\eta_M,\eta_{M,\rm cold}/\eta_M,\eta_E/\eta_M)$, with the physical truth
+falling in the recovered ridge.  The right panel shows the exact
+$\log dN/dv$ fit over the observed velocity window, $100$--$600\,{\rm km\,s^{-1}}$.
+Low-signal bins at the low-velocity support edge are treated as censored,
+upper-limit-like constraints, while the very-high-velocity Gaussian tail outside
+the observed window is not used.  This setup recovers the MAP and includes the
+truth for the physical parameters, but it is shown as a geometry and
+identifiability diagnostic because the short chain still has four divergences
+and marginal effective sample size.
+}
+\label{fig:synthetic_recovery_strong_wings_corner_fit}
+\end{figure*}
+
+The resulting \texttt{strong\_wings} run is the most informative stopping point
+for the present paper.  It uses the soft-cap energy parameterization,
+stalled-wind inference policy, MAP-whitened NUTS, loading-ratio coordinates, a
+$100$--$600\,{\rm km\,s^{-1}}$ observed window, and surgical low-signal censoring
+at the lower support edge.  It gives a near-exact MAP
+$(\eta_M,\eta_{M,\rm cold},\eta_E)=(0.100,0.349,0.977)$ for a truth of
+$(0.100,0.350,0.980)$, with the truth inside the 68\% and 95\% intervals for
+all three physical parameters and for $\eta_E/\eta_M$.  The posterior probability
+above the nominal energy budget is $P(\eta_E>1)=0.22$.  However, the one-chain
+short diagnostic still has four divergences out of 256 retained samples and a
+minimum bulk ESS of 63.  This is not a formal production pass.  It is a useful
+classification: the high-energy truth can be recovered when the likelihood and
+coordinates are made physically appropriate, but the posterior remains thin and
+curved enough that precise high-energy claims would require further geometry
+work.
+
+\subsection{Interpretation for the validation program}
+\label{subsec:synthetic_recovery_interpretation}
+
+The synthetic recovery campaign therefore gives a qualified but actionable
+result.  The inference harness, optimizer, posterior evaluation, and diagnostic
+outputs are now working for the baseline three-parameter problem.  Ordinary
+truth cases recover well enough to proceed, and direct profile information
+successfully recovers the clean low-mass, high-energy case.  The difficult
+\texttt{strong\_wings} case has also taught us where the current limitations
+live: near high specific energy, the posterior follows a narrow ridge in
+$(\eta_M,\eta_{M,\rm cold}/\eta_M,\eta_E/\eta_M)$, and profile-edge likelihood
+choices can create artificial curvature if unsupported velocity bins are treated
+as precise detections.
+
+We do not interpret this as a reason to abandon the baseline inference.  We do
+interpret it as a reason to narrow the next claim.  The present validation is
+good enough to move to one-at-a-time sensitivity tests of the fixed cloud-wind
+and mixing-layer parameters, because that stage asks which pieces of the forward
+model affect the observables; it does not add new fitted parameters or require a
+production-quality high-energy posterior.  We do not yet claim noisy synthetic
+coverage or precise production recovery of $\eta_E$ for \texttt{strong\_wings}
+or other near-ceiling high-energy winds.  Any later expanded inference should
+carry this caveat and should revisit the high-energy direction with either a
+more directly physical launch-speed coordinate or an observational likelihood
+that explicitly models velocity masks, upper limits, and profile-edge model
+error.
+
+\clearpage

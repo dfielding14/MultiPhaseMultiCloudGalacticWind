@@ -18,9 +18,15 @@ prediction.  The screen includes the turbulent velocity normalization
 $f_{\rm turb}$, drag coefficient $C_D$, mass-exchange prefactor, geometric area
 factor, cloud mass-spectrum slope, metallicities, hot cooling multiplier, and
 the $\chi$-dependent exponents that control the turbulent velocity and cooling
-area scalings.  The same reduced CPU settings used in the exact recovery tests
-are used here: $r_{\rm max}=6\,{\rm kpc}$, $\Delta r=0.08\,{\rm kpc}$, four
-cloud-mass species, and cloud masses from $10$ to $10^4\,M_\odot$.
+area scalings.  After the first pass, we also include the restricted effective
+coordinates motivated by the screen itself: an amplitude $A_{\rm mix}$ that
+multiplies the cloud mass-exchange terms, and a diagnostic density-contrast
+tilt $\beta_{\chi,\rm mix}$ in
+$A_{\rm mix}(\chi/100)^{\beta_{\chi,\rm mix}}$.  These are still treated as
+fixed forward-model perturbations in this section, not as fitted parameters.
+The same reduced CPU settings used in the exact recovery tests are used here:
+$r_{\rm max}=6\,{\rm kpc}$, $\Delta r=0.08\,{\rm kpc}$, four cloud-mass
+species, and cloud masses from $10$ to $10^4\,M_\odot$.
 
 The screen is run in three stages.  First, all fixed parameters are scanned for
 the five compact shape observables used in the baseline recovery tests.  Second,
@@ -66,10 +72,14 @@ $\chi_{\rm turb}$ & 1.12 & 104 & 0.67 & 0.955 & $2.4\times10^3$ &
 mostly loading-like, risky \\
 $\chi_{\rm area}$ & 1.56 & 102 & 0.60 & 0.955 & $7.1\times10^2$ &
 mostly loading-like, risky \\
+$\beta_{\chi,\rm mix}$ & 0.63 & 91.7 & 0.87 & 0.979 & $1.7\times10^3$ &
+diagnostic chi tilt, risky \\
 $A_{\rm area}$ & 0.56 & 84.9 & 0.90 & 0.998 & $1.6\times10^3$ &
 mostly loading-like, risky \\
+$A_{\rm mix}$ & 0.34 & 74.9 & 0.90 & 0.998 & $1.7\times10^3$ &
+restricted amplitude candidate \\
 $A_{\dot M}$ & 0.34 & 74.9 & 0.90 & 0.998 & $1.7\times10^3$ &
-restricted $A_{\rm mix}$ proxy \\
+direct amplitude proxy \\
 $f_{\rm turb}$ & 0.23 & 72.2 & 0.85 & 0.997 & $1.5\times10^3$ &
 mostly loading-like, risky \\
 $\alpha_{\rm cl}$ & 0.33 & 13.3 & 0.93 & 0.995 & $36$ &
@@ -83,8 +93,10 @@ low leverage \\
 ``Shape max'' is the largest root-mean-square fractional shift in the
 shape-five observable vector across the five truth cases.  ``Profile max'' is
 the largest observed-window root-mean-square log-profile distance for
-parameters included in the profile screen.  ``Min. valid'' is the minimum valid
-fraction across the staged scans.  ``Load frac.'' is the maximum fraction of the
+parameters included in the profile screen.  $A_{\rm mix}$ and $A_{\dot M}$
+are identical in this screen because both multiply the same mass-exchange terms
+when $\beta_{\chi,\rm mix}=0$.  ``Min. valid'' is the minimum valid fraction
+across the staged scans.  ``Load frac.'' is the maximum fraction of the
 covariance-whitened squared displacement explained by the local three-loading
 subspace.  ``Orth. resid.'' is the maximum residual
 $\sqrt{\Delta\chi^2_\perp}$ after projecting out that loading subspace.
@@ -102,11 +114,11 @@ The middle panel shows the maximum observed-window $\log dN/dv$ profile
 distance for the profile-screen shortlist.  The right panel shows the analogous
 linear-profile robustness check for the stable mixing-amplitude shortlist.  The
 largest responses come from the $\chi$-dependent turbulent velocity and area
-exponents and from effective mixing-amplitude parameters such as the
-mass-exchange prefactor, geometric area factor, and $f_{\rm turb}$.  These
-large shifts demonstrate that the microphysics matters for the forward model,
-but they do not by themselves establish that the parameters are independently
-inferable.
+exponents, from the diagnostic $\beta_{\chi,\rm mix}$ tilt, and from effective
+mixing-amplitude parameters such as $A_{\rm mix}$, the mass-exchange prefactor,
+geometric area factor, and $f_{\rm turb}$.  These large shifts demonstrate that
+the microphysics matters for the forward model, but they do not by themselves
+establish that the parameters are independently inferable.
 }
 \label{fig:trml_sensitivity_cross_case_ranking}
 \end{figure*}
@@ -115,12 +127,14 @@ Figure~\ref{fig:trml_sensitivity_cross_case_ranking} shows that the model is
 not insensitive to the fixed microphysics.  The strongest compact-observable
 responses come from the $\chi$-dependent area and turbulent-velocity exponents.
 In the observed-window profile screen these same exponents can move the log
-profile by tens of likelihood-scale units.  The effective amplitude-like
-parameters, especially the mass-exchange prefactor, geometric area factor, and
-$f_{\rm turb}$, also move both the compact summaries and the profile shape.  By
-contrast, the global hot cooling multiplier is nearly inert in this reduced
-screen, and the metallicity variations have lower leverage than the mixing and
-turbulence parameters.
+profile by tens of likelihood-scale units.  The direct chi-tilt
+$\beta_{\chi,\rm mix}$ is also high leverage, which is scientifically
+encouraging but not yet an identifiability result.  The effective
+amplitude-like parameters, especially $A_{\rm mix}$, the mass-exchange
+prefactor, geometric area factor, and $f_{\rm turb}$, also move both the
+compact summaries and the profile shape.  By contrast, the global hot cooling
+multiplier is nearly inert in this reduced screen, and the metallicity
+variations have lower leverage than the mixing and turbulence parameters.
 
 \begin{figure*}[t]
 \centering
@@ -146,7 +160,7 @@ move the model into stalled-wind regimes.  For example, increasing the cooling
 area exponent or changing the turbulent-velocity exponent can cause several
 truth cases to stall before the observable radius.  Stronger mixing-amplitude
 settings also fail in the high-specific-energy cases: large values of the
-mass-exchange prefactor or $f_{\rm turb}$ can stall
+mass-exchange prefactor, $A_{\rm mix}$, or $f_{\rm turb}$ can stall
 \texttt{low\_eta\_m\_high\_eta\_e} or \texttt{strong\_wings}.  This is a
 physically meaningful result.  These parameter values produce winds that do not
 reach the observable radius, and the stalled-wind inference policy reports them
@@ -156,17 +170,18 @@ directions for expanded inference.
 Figure~\ref{fig:trml_sensitivity_per_case_heatmap} also clarifies the role of
 the \texttt{strong\_wings} case.  That case remains a deliberately difficult
 stress test, but it is not the sole source of the result.  The mass-exchange
-prefactor, geometric area factor, and $f_{\rm turb}$ move the observed-window
-profile in the fiducial and low-cold-loading cases as well as in the high-energy
-cases.  The $\chi$-dependent exponents are even more global: one sign of the
-perturbation can suppress mixing enough to remove the wings, while the other
-can over-couple the phases and stall the wind.  Physically, these parameters
-regulate how rapidly cold material exchanges mass, momentum, and energy with
-the hot flow.  When the coupling is too strong, the hot phase can lose enough
-specific energy to fail before $6\,{\rm kpc}$; when it is weaker, the cool
-material survives to different velocities and changes the line-profile shape.
-That is exactly the microphysics we eventually want to understand, but it is
-not yet a stable fourth inference coordinate.
+prefactor, geometric area factor, $A_{\rm mix}$, and $f_{\rm turb}$ move the
+observed-window profile in the fiducial and low-cold-loading cases as well as
+in the high-energy cases.  The $\chi$-dependent exponents and
+$\beta_{\chi,\rm mix}$ are even more global: one sign of the perturbation can
+suppress mixing enough to remove the wings, while the other can over-couple the
+phases and stall the wind.  Physically, these parameters regulate how rapidly
+cold material exchanges mass, momentum, and energy with the hot flow.  When the
+coupling is too strong, the hot phase can lose enough specific energy to fail
+before $6\,{\rm kpc}$; when it is weaker, the cool material survives to
+different velocities and changes the line-profile shape.  That is exactly the
+microphysics we eventually want to understand, but it is not yet a stable
+fourth or fifth inference coordinate.
 
 \begin{figure*}[t]
 \centering
@@ -201,13 +216,18 @@ loadings.
 This does not mean the microphysics is unimportant.  It means that the present
 observable set is not yet sufficient to infer a broad cloud-wind closure model.
 The screen favors a narrow interpretation.  If an expanded parameter is tested
-later, the most physically controlled first candidate is an effective mixing
-amplitude, for example a multiplier on the mass-exchange prefactor.  Even that
-candidate should use a restricted prior, because the high-amplitude end of the
-scan produces stalled winds in the high-energy cases.  The drag coefficient is
-validity-stable and has measurable profile leverage, but its overall response is
-smaller than the mixing-amplitude directions and it is lower priority as a first
-expansion.
+later, the most physically controlled first candidate is the effective mixing
+amplitude $A_{\rm mix}$.  In this screen it reproduces the old
+mass-exchange-prefactor response, which is the intended behavior: it isolates
+the amplitude of the cloud mass-exchange terms without fitting every closure
+coefficient separately.  Even that candidate should use a restricted prior,
+because the high-amplitude end of the scan produces stalled winds in the
+high-energy cases.  The drag coefficient is validity-stable and has measurable
+profile leverage, but its overall response is smaller than the
+mixing-amplitude directions and it is lower priority as a first expansion.  The
+$\beta_{\chi,\rm mix}$ direction is scientifically important because it probes
+the density-contrast dependence directly, but it should remain a second-stage
+diagnostic until the $A_{\rm mix}$-only recovery gate passes.
 
 The result would change in one of three ways.  First, a parameter could remain
 high leverage while avoiding repeated stalled scan points over a physically
@@ -218,12 +238,15 @@ restricted effective parameter such as $A_{\rm mix}$ could pass its own prior
 predictive and synthetic-recovery gate.  None of those conditions is met by the
 present screen.
 
-We therefore stop short of adding a new inferred parameter at this stage.  The
+We therefore stop short of treating any new coordinate as a production
+parameter at this stage.  The
 Step~7 result is negative but useful: the forward model is sensitive to
 cloud-wind microphysics, but the current three-parameter validation does not
-support fitting a broad set of TRML closure knobs.  The next decision should
-focus on a very restricted $A_{\rm mix}$ experiment with its own prior
+support fitting a broad set of TRML closure knobs.  The next validation stage
+should focus on a very restricted $A_{\rm mix}$ experiment with its own prior
 predictive and synthetic-recovery gate, rather than a general expansion of the
-closure model.
+closure model.  Only after that gate passes should the
+$\beta_{\chi,\rm mix}$ density-contrast diagnostic be interpreted as an
+inference target.
 
 \clearpage

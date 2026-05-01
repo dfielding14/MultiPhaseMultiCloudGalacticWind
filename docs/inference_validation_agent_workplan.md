@@ -132,9 +132,11 @@ Current status as of April 30, 2026:
 
 - Steps 3 and 4 are complete at the current diagnostic level.
 - Steps 5 and 6 are complete enough to move on, with an explicit caveat: the baseline three-parameter recovery is operational and informative, but the `strong_wings` high-specific-energy case is not a formal production NUTS pass.
-- Step 7 is complete enough as a forward-model screen: the multi-case TRML/cloud matrix shows strong microphysics leverage. A covariance-whitened loading-subspace projection shows that the leading responses are mostly loading-like, but high-leverage profile perturbations can leave large orthogonal residuals after the best loading refit. The main blockers to broad expansion are validity risk and the absence of an expanded synthetic-recovery pass.
-- Noisy synthetic recovery and expanded inference remain deferred.
-- The next project step is a short expanded-parameter decision/no-go note, not implementation of a new fitted parameter.
+- Step 7 is complete as a forward-model screen: the full multi-case TRML/cloud matrix was rerun after adding direct `A_mix` and `beta_chi_mix` screen directions. The matrix shows strong microphysics leverage. A covariance-whitened loading-subspace projection shows that the leading responses are mostly loading-like, but high-leverage profile perturbations can leave large orthogonal residuals after the best loading refit. The main blockers to broad expansion are validity risk and the absence of an expanded synthetic-recovery pass.
+- Step 8's decision note is complete: the next allowed expansion is restricted `A_mix` first, with `beta_chi_mix` staged as a diagnostic only after `A_mix` passes exact recovery.
+- Step 9's minimal inference parameter support is implemented for `expanded_parameters="a_mix"` and `expanded_parameters="a_mix_beta_chi"`, but neither mode has passed the expanded prior-predictive and recovery gate.
+- Noisy synthetic recovery and real-data expanded inference remain deferred.
+- The next project step is Task 8: run expanded prior predictive and exact synthetic recovery for the restricted `A_mix` model.
 
 ## Parallel Work Streams
 
@@ -436,6 +438,8 @@ Candidate parameters:
 f_turb0
 drag_coeff
 Mdot_coefficient
+A_mix
+beta_chi_mix
 geometric_factor
 CoolingAreaChiPower
 ColdTurbulenceChiPower
@@ -852,18 +856,17 @@ Watch for:
 The next implementation task should be:
 
 ```text
-Write docs/inference_expanded_parameter_decision.md from the Step 7 sensitivity results.
+Run the restricted A_mix expanded prior predictive and exact synthetic-recovery gate.
 ```
 
-Do not add new fitted parameters in that task. The Step 7 result argues against broad immediate expanded inference, but it leaves a deliberately restricted `A_mix` experiment as the plausible next candidate.
+Do not add any broader TRML/cloud closure parameters in that task. The Step 7 result argues against broad immediate expanded inference, but it supports a deliberately restricted `A_mix` experiment as the plausible next candidate.
 
 Minimum scope:
 
-- summarize why the Step 7 matrix does not justify broad TRML/cloud expanded inference,
-- state whether the next action is a no-go/defer decision or a deliberately narrowed `A_mix` experiment,
-- if `A_mix` is retained as a future candidate, define whether it maps to `Mdot_coefficient` alone or to a combined mixing amplitude,
-- specify the prior range that avoids the stalled high-amplitude regime,
-- define the exact expanded synthetic-recovery gate that would be required before any real-data use,
-- update Paper 2 discussion prose if the decision changes the manuscript claim.
+- run a four-parameter `A_mix` prior predictive atlas with the restricted prior,
+- run exact synthetic recovery for ordinary truth cases before treating `strong_wings` as a stress test,
+- compare against the baseline three-parameter recovery,
+- confirm that `A_mix` is not purely prior-dominated and does not simply absorb unresolved high-energy geometry,
+- update `docs/inference_expanded_parameter_decision.md`, `docs/inference_validation_for_physicists.md`, and Paper 2 only after the recovery results exist.
 
 Carry the synthetic-recovery caveat forward: the `strong_wings` high-specific-energy case remains a useful stress test but not a production posterior claim. The TRML screen may use it as a diagnostic case, but it should not rely on noisy `strong_wings` recovery or expanded inference.

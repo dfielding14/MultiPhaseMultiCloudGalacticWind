@@ -392,10 +392,11 @@ Interpretation:
 
 `A_mix` is an effective turbulent mass-exchange amplitude. It asks whether the data prefer stronger or weaker cloud-wind mass exchange than the fiducial closure.
 
-Possible mappings:
+The old sensitivity screen used `Mdot_coefficient` as the closest proxy. The direct rerun now includes `A_mix` itself and confirms that it mirrors `Mdot_coefficient` when `beta_chi_mix=0`, as expected.
+
+Related but deferred mappings:
 
 ```text
-A_mix multiplies Mdot_coefficient
 A_mix multiplies f_turb0
 A_mix multiplies geometric_factor
 ```

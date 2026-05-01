@@ -10,7 +10,7 @@ The goal is to rank which fixed microphysics parameters move the observables eno
 
 ## Status Update
 
-As of April 28, 2026, the Step 7 staged sensitivity screen is complete enough to inform the next inference-validation decision.
+As of April 30, 2026, the Step 7 staged sensitivity screen is complete enough to inform the next inference-validation decision. The full matrices were rerun after adding the restricted effective parameters `A_mix` and `beta_chi_mix` to the forward model, so the screen now includes both the original microphysics knobs and the proposed effective expansion directions.
 
 Main result:
 
@@ -18,7 +18,7 @@ Main result:
 - The strongest levers are not clean broad-expansion parameters, because they either create stalled/invalid winds in several truth cases or have leading responses that are mostly aligned with the existing loading-parameter subspace.
 - The covariance-whitened projection upgrade shows an important nuance: the high-leverage profile displacements are mostly loading-like, but not fully degenerate. After the best local loading refit, the strongest mixing directions still leave large orthogonal residuals under the adopted covariance.
 - No parameter passes the current stability plus identifiability gate for immediate expanded inference.
-- If an expanded model is later forced for scientific reasons, the least-bad first candidate is a restricted effective mixing amplitude tied to `Mdot_coefficient`, not a broad fit of all TRML closure parameters.
+- If an expanded model is later forced for scientific reasons, the least-bad first candidate is the restricted effective mixing amplitude `A_mix`, not a broad fit of all TRML closure parameters. In the screen, `A_mix` exactly mirrors the old `Mdot_coefficient` proxy because both multiply the same mass-exchange terms when `beta_chi_mix = 0`.
 
 Recommendation:
 
@@ -27,7 +27,7 @@ Do not fit a broad microphysics model.
 The only plausible next expansion is a deliberately restricted A_mix experiment with its own validation gate.
 ```
 
-That experiment should specify a deliberately narrow `A_mix` prior that avoids the stalled high-amplitude regime seen here.
+That experiment should specify a deliberately narrow `A_mix` prior that avoids the stalled high-amplitude regime seen here. The `beta_chi_mix` direction has large leverage, but it is still a staged diagnostic because it is risky and mostly loading-like in this one-at-a-time screen.
 
 ## Implementation Status
 
@@ -50,6 +50,15 @@ For each scan point, the script records validity, stalled-wind diagnostics, obse
 - `loading_orthogonal_chi`: the residual `sqrt(Delta chi2_perp)` left after projecting out that loading subspace.
 
 A high subspace fraction means the leading response is loading-like. A large orthogonal residual means the microphysics effect is not fully absorbed by refitting the loadings.
+
+The parameter registry now also includes:
+
+```text
+A_mix = 0.5, 1.0, 2.0, 3.0
+beta_chi_mix = -0.5, 0.0, 0.5
+```
+
+These are still screened as fixed forward-model settings, not inferred in Step 7.
 
 The aggregation and manuscript-figure helper is:
 
@@ -118,7 +127,7 @@ Runtime was about 22 seconds.
 ```bash
 JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 \
 python examples/trml_sensitivity_screen.py \
-  --parameters Mdot_coefficient,geometric_factor,f_turb0,cloud_alpha,CoolingAreaChiPower,TurbulentVelocityChiPower,drag_coeff,Cooling_Factor \
+  --parameters A_mix,Mdot_coefficient,beta_chi_mix,geometric_factor,f_turb0,cloud_alpha,CoolingAreaChiPower,TurbulentVelocityChiPower,drag_coeff,Cooling_Factor \
   --truth-cases fiducial,low_eta_m_cold,low_eta_m_high_eta_e,narrow_profile,strong_wings \
   --observable-set log_dndv_binned \
   --dndv-num-bins 20 \
@@ -145,7 +154,7 @@ Runtime was about 17 seconds. This screen uses the same observed velocity window
 ```bash
 JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu PYTHONDONTWRITEBYTECODE=1 \
 python examples/trml_sensitivity_screen.py \
-  --parameters Mdot_coefficient,geometric_factor,f_turb0,cloud_alpha \
+  --parameters A_mix,Mdot_coefficient,geometric_factor,f_turb0,cloud_alpha \
   --truth-cases fiducial,low_eta_m_cold,low_eta_m_high_eta_e,narrow_profile,strong_wings \
   --observable-set dndv_binned \
   --dndv-num-bins 20 \
@@ -186,18 +195,20 @@ Compact ranking:
 |---:|---|---|---:|---:|---:|---:|---:|
 | 1 | `TurbulentVelocityChiPower` | high leverage but risky | 1.116 | 104.0 | 0.667 | 0.955 | 2398 |
 | 2 | `CoolingAreaChiPower` | high leverage but risky | 1.557 | 101.8 | 0.600 | 0.955 | 714 |
-| 3 | `geometric_factor` | high leverage but risky | 0.562 | 84.9 | 0.900 | 0.998 | 1633 |
-| 4 | `Mdot_coefficient` | high leverage but risky | 0.338 | 74.9 | 0.900 | 0.998 | 1698 |
-| 5 | `f_turb0` | high leverage but risky | 0.234 | 72.2 | 0.850 | 0.997 | 1475 |
-| 6 | `cloud_alpha` | high leverage but risky | 0.335 | 13.3 | 0.933 | 0.995 | 36.1 |
-| 7 | `drag_coeff` | stable high leverage; loading-degenerate | 0.153 | 9.47 | 1.000 | 0.996 | 37.8 |
-| 8 | `ColdTurbulenceChiPower` | high leverage but risky | 0.224 | -- | 0.667 | 0.996 | 3.48 |
-| 9 | `Z_hot_over_Z_solar` | low leverage | 0.142 | -- | 1.000 | 0.999 | 1.05 |
-| 10 | `Z_cloud_over_Z_solar` | low leverage | 0.139 | -- | 1.000 | 0.998 | 1.44 |
-| 11 | `Cooling_Factor` | low leverage | 0.0087 | 0.33 | 1.000 | 0.998 | 0.53 |
-| 12 | `v_cloud_init` | low leverage | 0.045 | -- | 0.750 | 0.949 | 0.75 |
+| 3 | `beta_chi_mix` | high leverage but risky | 0.633 | 91.7 | 0.867 | 0.979 | 1669 |
+| 4 | `geometric_factor` | high leverage but risky | 0.562 | 84.9 | 0.900 | 0.998 | 1633 |
+| 5 | `A_mix` | high leverage but risky | 0.338 | 74.9 | 0.900 | 0.998 | 1698 |
+| 6 | `Mdot_coefficient` | high leverage but risky | 0.338 | 74.9 | 0.900 | 0.998 | 1698 |
+| 7 | `f_turb0` | high leverage but risky | 0.234 | 72.2 | 0.850 | 0.997 | 1475 |
+| 8 | `cloud_alpha` | high leverage but risky | 0.335 | 13.3 | 0.933 | 0.995 | 36.1 |
+| 9 | `drag_coeff` | stable high leverage; loading-degenerate | 0.153 | 9.47 | 1.000 | 0.996 | 37.8 |
+| 10 | `ColdTurbulenceChiPower` | high leverage but risky | 0.224 | -- | 0.667 | 0.996 | 3.48 |
+| 11 | `Z_hot_over_Z_solar` | low leverage | 0.142 | -- | 1.000 | 0.999 | 1.05 |
+| 12 | `Z_cloud_over_Z_solar` | low leverage | 0.139 | -- | 1.000 | 0.998 | 1.44 |
+| 13 | `Cooling_Factor` | low leverage | 0.0087 | 0.33 | 1.000 | 0.998 | 0.53 |
+| 14 | `v_cloud_init` | low leverage | 0.045 | -- | 0.750 | 0.949 | 0.75 |
 
-The highest-leverage parameters are the chi-dependent turbulence/area exponents and the effective mixing-amplitude knobs (`Mdot_coefficient`, `geometric_factor`, and `f_turb0`). However, the exponents create many stalled or invalid solutions. The amplitude knobs are physically cleaner but still produce repeated stalled high-energy solutions at the upper scan values, especially for `strong_wings` and `low_eta_m_high_eta_e`.
+The highest-leverage parameters are the chi-dependent turbulence/area exponents, the effective chi-tilt `beta_chi_mix`, and the effective mixing-amplitude knobs (`A_mix`, `Mdot_coefficient`, `geometric_factor`, and `f_turb0`). However, the exponent and chi-tilt directions create stalled or invalid solutions. The amplitude knobs are physically cleaner but still produce repeated stalled high-energy solutions at the upper scan values, especially for `strong_wings` and `low_eta_m_high_eta_e`.
 
 ## Invalid And Stalled Scan Points
 
@@ -212,6 +223,8 @@ The recurring failure patterns are:
 - `CoolingAreaChiPower = 1.0` stalls several truth cases, including `fiducial`, `narrow_profile`, and `strong_wings`.
 - `CoolingAreaChiPower = 0.0` stalls the high-energy cases.
 - `TurbulentVelocityChiPower = -0.5` stalls the high-energy cases, while `TurbulentVelocityChiPower = 0.5` creates failures in lower-cold or fiducial-like cases.
+- `beta_chi_mix = -0.5` stalls the high-energy cases in the profile screen, while `beta_chi_mix = 0.5` stalls `strong_wings` in the compact screen.
+- `A_mix = 2` stalls `strong_wings`, and `A_mix = 3` stalls `low_eta_m_high_eta_e`.
 - `Mdot_coefficient = 2/3` stalls `strong_wings`, and `Mdot_coefficient = 1` stalls `low_eta_m_high_eta_e`.
 - `geometric_factor = 4` stalls `narrow_profile` and `strong_wings`.
 - `f_turb0 = 0.2` stalls `strong_wings`; `f_turb0 = 0.4` stalls both `low_eta_m_high_eta_e` and `strong_wings`.
@@ -226,8 +239,9 @@ The strongest result is not simply that microphysics matters. It is that most mi
 
 The covariance-whitened projection gives two useful diagnostics:
 
-- `Mdot_coefficient`, `geometric_factor`, `f_turb0`, `cloud_alpha`, and `drag_coeff` have maximum loading-subspace fractions of about `0.995-0.998`. Their leading response is therefore mostly loading-like.
-- The high-leverage profile perturbations still leave large orthogonal residuals after the best loading refit. For `Mdot_coefficient`, `geometric_factor`, and `f_turb0`, the maximum residuals are of order `1e3` in `sqrt(Delta chi2_perp)` under the adopted profile covariance.
+- `A_mix`, `Mdot_coefficient`, `geometric_factor`, `f_turb0`, `cloud_alpha`, and `drag_coeff` have maximum loading-subspace fractions of about `0.995-0.998`. Their leading response is therefore mostly loading-like.
+- `beta_chi_mix` is less perfectly aligned than the pure amplitude knobs, but it is still strongly loading-like, with a maximum loading-subspace fraction of about `0.979`.
+- The high-leverage profile perturbations still leave large orthogonal residuals after the best loading refit. For `A_mix`, `Mdot_coefficient`, `geometric_factor`, and `f_turb0`, the maximum residuals are of order `1e3` in `sqrt(Delta chi2_perp)` under the adopted profile covariance.
 - `Cooling_Factor` is validity-stable but nearly inert in this reduced screen, and its orthogonal residual stays below one.
 
 This means a one-object posterior that adds a broad microphysics parameter would still trade strongly against `eta_M`, `eta_M_cold`, and `eta_E`, but the trade is not exact. A restricted effective mixing-amplitude test is therefore more justified than it looked under the old max-cosine metric, provided it gets its own prior predictive and synthetic-recovery gate.
@@ -259,7 +273,7 @@ The implementation decision is now recorded in `docs/inference_expanded_paramete
 A_chi = A_mix * (chi / 100)^beta_chi_mix
 ```
 
-with `beta_chi_mix=0` in the first `A_mix`-only gate. The `beta_chi_mix` extension is a staged diagnostic for density-contrast dependence and should only be run after the four-parameter `A_mix` model passes exact recovery.
+with `beta_chi_mix=0` in the first `A_mix`-only gate. The rerun supports this staging: `A_mix` reproduces the intended mass-exchange-amplitude response, while `beta_chi_mix` is scientifically interesting but higher leverage, riskier, and still mostly loading-like. The `beta_chi_mix` extension should only be run after the four-parameter `A_mix` model passes exact recovery.
 
 `drag_coeff` is validity-stable and has profile leverage, but it has lower leverage than the effective mixing-amplitude directions and remains lower priority than `A_mix`. The chi exponents are powerful but too risky as first expanded-inference parameters because they change the validity structure of the wind solutions.
 

@@ -32,7 +32,9 @@ STAGE_LABELS = {
     "dndv_window": "linear profile",
 }
 PAPER_PARAM_ORDER = [
+    "A_mix",
     "Mdot_coefficient",
+    "beta_chi_mix",
     "geometric_factor",
     "f_turb0",
     "cloud_alpha",
@@ -53,7 +55,9 @@ TRUTH_CASE_ORDER = [
     "strong_wings",
 ]
 PARAM_LABELS = {
+    "A_mix": r"$A_{\rm mix}$",
     "Mdot_coefficient": r"$A_{\dot M}$",
+    "beta_chi_mix": r"$\beta_{\chi,\rm mix}$",
     "geometric_factor": r"$A_{\rm area}$",
     "f_turb0": r"$f_{\rm turb}$",
     "cloud_alpha": r"$\alpha_{\rm cl}$",
@@ -590,14 +594,14 @@ def make_leverage_degeneracy(summary_rows: list[dict[str, float | str]]) -> Path
 def write_recommendation(summary_rows: list[dict[str, float | str]]) -> Path:
     """Write a machine-readable recommendation summary."""
     by_name = {str(row["parameter_name"]): row for row in summary_rows}
-    shortlist = [name for name in ("Mdot_coefficient", "geometric_factor", "f_turb0") if name in by_name]
-    mdot = by_name.get("Mdot_coefficient")
+    shortlist = [name for name in ("A_mix", "Mdot_coefficient", "geometric_factor", "f_turb0") if name in by_name]
+    candidate = by_name.get("A_mix") or by_name.get("Mdot_coefficient")
     recommend_restricted_amix = False
-    if mdot is not None:
+    if candidate is not None:
         recommend_restricted_amix = (
-            float(mdot.get("min_valid_fraction", 0.0)) >= 0.85
-            and float(mdot.get("ranking_score", 0.0)) >= 0.15
-            and float(mdot.get("max_loading_orthogonal_chi", 0.0)) >= 3.0
+            float(candidate.get("min_valid_fraction", 0.0)) >= 0.85
+            and float(candidate.get("ranking_score", 0.0)) >= 0.15
+            and float(candidate.get("max_loading_orthogonal_chi", 0.0)) >= 3.0
         )
     payload = {
         "recommendation": (
@@ -606,7 +610,7 @@ def write_recommendation(summary_rows: list[dict[str, float | str]]) -> Path:
             else "no_go_for_expanded_inference"
         ),
         "rationale": (
-            "Mdot_coefficient has cross-case leverage and a large covariance-whitened residual after loading refit, but upper scan values stall high-energy cases; a narrow A_mix experiment needs its own validation gate."
+            "A_mix/Mdot_coefficient has cross-case leverage and a large covariance-whitened residual after loading refit, but upper scan values stall high-energy cases; a narrow A_mix experiment needs its own validation gate."
             if recommend_restricted_amix
             else "No candidate met the stability and interpretability checks."
         ),

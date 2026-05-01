@@ -58,6 +58,20 @@ PARAMETER_SPECS: dict[str, ParameterSpec] = {
         (1.0 / 6.0, 1.0 / 3.0, 2.0 / 3.0, 1.0),
         "Mass-growth and destruction prefactor.",
     ),
+    "A_mix": ParameterSpec(
+        "A_mix",
+        "config",
+        1.0,
+        (0.5, 1.0, 2.0, 3.0),
+        "Effective multiplier on TRML/cloud mass exchange.",
+    ),
+    "beta_chi_mix": ParameterSpec(
+        "beta_chi_mix",
+        "config",
+        0.0,
+        (-0.5, 0.0, 0.5),
+        "Effective chi-dependence tilt in the mixing amplitude.",
+    ),
     "geometric_factor": ParameterSpec(
         "geometric_factor",
         "config",

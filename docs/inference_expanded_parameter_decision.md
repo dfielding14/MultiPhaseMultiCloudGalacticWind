@@ -40,9 +40,9 @@ The `A_mix` prior is deliberately narrow because high-amplitude mixing direction
 
 ## Rationale
 
-The covariance-whitened TRML sensitivity screen showed that `Mdot_coefficient`, `geometric_factor`, and `f_turb0` have large profile leverage, but most of their response is aligned with existing loading directions. They still leave nonzero orthogonal residuals after the best loading refit, so a restricted `A_mix` experiment is defensible.
+The covariance-whitened TRML sensitivity screen showed that `A_mix`, `Mdot_coefficient`, `geometric_factor`, and `f_turb0` have large profile leverage, but most of their response is aligned with existing loading directions. `A_mix` exactly mirrors `Mdot_coefficient` in the forward screen when `beta_chi_mix=0`, as intended, because both multiply the same cloud mass-exchange terms. These directions still leave nonzero orthogonal residuals after the best loading refit, so a restricted `A_mix` experiment is defensible.
 
-The chi exponents have very high leverage but are validity-risky when fit directly. A single effective `beta_chi_mix` tests the scientific question of density-contrast dependence without selecting one microscopic exponent or fitting a broad closure model.
+The chi exponents have very high leverage but are validity-risky when fit directly. The direct `beta_chi_mix` screen is also high leverage and scientifically interesting, but still risky and mostly loading-like. A single effective `beta_chi_mix` remains the staged way to test the density-contrast question without selecting one microscopic exponent or fitting a broad closure model.
 
 ## Validation Gate
 

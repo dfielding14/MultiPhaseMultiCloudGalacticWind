@@ -10,36 +10,36 @@ No turbulent radiative mixing-layer or cloud-wind parameters were added.
 
 ## Status Update
 
-The first recovery run below exposed a real inference-diagnostic problem and should be treated as superseded for scientific decisions. Follow-up exact-data checks found two objective-level issues:
+As of April 28, 2026, the synthetic-recovery campaign has reached a useful stopping point. The initial recovery run below is still superseded for scientific decisions, but the follow-up work has now separated three distinct issues:
 
-- the reported MAP used the unconstrained-coordinate posterior, including the softplus/sigmoid transform Jacobian, making MAP recovery coordinate dependent;
-- the smooth validity barrier charged ordinary valid trajectories and could dominate the likelihood residuals.
+- real machinery bugs, which were fixed;
+- stalled-wind cliffs, which were converted into finite low-probability model evaluations;
+- residual high-energy posterior geometry, which remains difficult but is now physically understood.
 
-The code now reports MAP estimates from the log-parameter posterior while keeping the transform Jacobian in the HMC/NUTS target, and the validity barrier is dormant for positive finite wind states. The synthetic recovery harness also writes per-realization corner plots and observable-fit plots by default, so future recovery reports can inspect the same posterior geometry that previously had to be checked by hand.
+The code now reports MAP estimates from the log-parameter posterior while keeping the transform Jacobian in the HMC/NUTS target. The validity barrier is dormant for positive finite wind states. The default inference policy treats stalled winds as finite diagnostics rather than hidden hard cliffs. The synthetic-recovery harness writes corner plots, observable-fit plots, NUTS fields, posterior components, and divergent-sample diagnostics.
 
-Baseline recovery must be rerun with these fixes before proceeding to TRML inference expansion or using the pilot numbers below in Paper 2.
+The remaining `strong_wings` problem is not a known code bug. It is a thin high-specific-energy ridge coupled to support-edge log-profile bins. In the best observed-window diagnostic, the truth is recovered at the MAP and lies inside the 95 percent intervals, but the short NUTS gate still has a few divergences and low-to-marginal ESS. Longer warmup, higher target acceptance, MAP whitening, support-aware kernels, and low-signal censoring each helped some part of the problem but did not produce a robust formal pass.
 
-## Corrected Recovery Roadmap
+Project decision: stop trying to force `strong_wings` through a clean short-NUTS gate before every other milestone. Do not use the current results for noisy high-energy recovery claims or precise production claims about `eta_E` near the energy ceiling. Do use them as the best current baseline diagnostic, with the explicit caveat that high-energy `eta_E` is weakly identified and geometry-sensitive. The next overall project task is the one-at-a-time TRML/cloud microphysics sensitivity screen, not another round of `strong_wings` sampler tuning.
 
-The next phase is a corrected synthetic-recovery campaign, not TRML sensitivity. The goal is to separate machinery bugs, sampler geometry, true parameter degeneracies, and noise-realization scatter.
+## Current Recovery Roadmap
 
-1. Run exact-observable recovery first.
-   Use `--use-truth-observables` so the synthetic observation is the forward model output at the known truth. This should be the first gate because a noiseless recovery failure points to inference machinery, sampler geometry, priors, or identifiability rather than random noise.
+The recovery status now supports a narrowed and caveated path forward.
 
-2. Tune NUTS on the exact fiducial case.
-   Require `chi2` near zero at the MAP, truth inside the posterior intervals, no serious divergences, `Rhat <= 1.05`, and enough effective samples for the corner plot to be interpretable. The short corrected diagnostic improved the MAP but still showed broad `eta_E` and a few NUTS divergences, so production runs should use dense mass-matrix adaptation, longer warmup, and a high target acceptance.
+1. Keep the exact synthetic-recovery results as a baseline diagnostic, not as a global production pass.
+   Fiducial, low-cold-loading, narrow-profile, and binned `low_eta_m_high_eta_e` tests give useful recovery checks. `strong_wings` remains a stress case for high-specific-energy geometry.
 
-3. Run exact-observable recovery across the valid truth cases.
-   Apply the no-noise test to each truth case that produces valid forward-model observables. This tells us whether each truth case is identifiable under the chosen observables and covariance before adding stochastic scatter.
+2. Do not run the noisy synthetic recovery campaign yet.
+   Noise would mix random-realization scatter with an already-known high-energy geometry limitation. Noisy recovery should wait until the observational likelihood and final parameterization are chosen.
 
-4. Run the noisy recovery sweep only after exact recovery is acceptable.
-   Use multiple noise realizations per valid truth case. Summarize MAP relative error, posterior median bias, posterior widths, 68 and 95 percent truth inclusion, sampler diagnostics, and parameter correlations.
+3. If `strong_wings` is revisited, start from the best current diagnostic setup.
+   Use observed-window `log_dndv_binned`, `energy_coordinate = loading_ratios`, `eta_e_parameterization = softcap`, `failure_policy = stalled_wind`, MAP whitening, and surgical low-signal censoring. A more physical next fix would be a launch-speed or terminal-speed coordinate, not another generic NUTS tuning sweep.
 
-5. Inspect the corner plots and observable-fit plots for every case.
-   Treat the corner plots as first-class recovery diagnostics. If `eta_E` remains broad or biased while sampler diagnostics are clean, that is likely a real observable degeneracy. If divergences, low ESS, or unstable contours persist, fix sampler/covariance geometry before interpreting the physics.
+4. Proceed to TRML/cloud sensitivity as a forward-model sensitivity screen.
+   This does not add fitted parameters and does not require claiming that high-energy `eta_E` recovery is solved. It asks which fixed microphysics parameters have observable leverage and which are degenerate, so the later expanded-inference step can be chosen deliberately.
 
-6. Update this report and the Paper 2 synthetic-recovery section with corrected results.
-   The old pilot figures should remain disabled until replaced by corrected figures. Only after corrected baseline recovery is scientifically acceptable should the project return to TRML/cloud-parameter sensitivity work or add any inferred parameter.
+5. Carry the caveat into Paper 2.
+   The paper should state that baseline inference is operational and informative, but high-energy energy loading remains the limiting recovery direction. The next validation stage is sensitivity ranking, not production high-energy posterior claims.
 
 ## Corrected Fiducial Exact-Data Gate
 
@@ -496,4 +496,99 @@ The `narrow_profile` case showed the largest single correlation, with `eta_M` an
 
 ## Recommendation
 
-The baseline three-parameter inference path is operational, but exact recovery is not yet scientifically acceptable across the intended truth grid. The high-energy diagnostics show that `eta_E` failures are dominated by prior sensitivity, weak shape-summary identifiability, and unresolved near-boundary sampler geometry for `strong_wings`. Binned `dN/dv` helps the `low_eta_m_high_eta_e` case, and soft-cap `eta_E` diagnostics show that the hard ceiling was part of the geometry problem, but neither change is yet a practical production solution for `strong_wings`. Do not proceed to noisy recovery or TRML/cloud-parameter sensitivity until the energy-loading direction is reparameterized and the high-energy exact cases are recovered cleanly, or until the validated truth grid is explicitly narrowed with a physical justification.
+The baseline three-parameter inference path is operational, but it is only partially validated. Exact recovery is scientifically useful for the fiducial, low-cold-loading, narrow-profile, and binned `low_eta_m_high_eta_e` cases. It is not a clean production pass across the full truth grid because `strong_wings` remains sampler-sensitive near the high-specific-energy ridge.
+
+The practical recommendation is to narrow the claim rather than keep tuning indefinitely. Do not run noisy recovery or make production claims for high-energy `eta_E` near the ceiling from the current `strong_wings` diagnostics. Do proceed to TRML/cloud microphysics sensitivity as a forward-model ranking exercise, because that step does not add fitted parameters or require the high-energy posterior to be production-ready. Any later expanded inference should carry this caveat and should revisit the high-energy geometry with a launch-speed or terminal-speed coordinate if precise high-energy recovery becomes central to the paper.
+
+## Stalled-Wind Policy Update
+
+The inference model now treats stalled or finite nonphysical hot-wind trajectories as finite model evaluations by default via `failure_policy = stalled_wind`. A finite failed solution is no longer assigned the legacy hard invalid cliff solely because the hot phase crosses a failure condition before the observable radius. Instead, the predictor attenuates observables to the finite/alive prefix and reports stalled-trajectory diagnostics, including `trajectory_status_code`, `soft_reach_radius_kpc`, `min_hot_velocity_kms`, `stall_penalty`, and `numerical_failure_penalty`.
+
+This change is intended to convert the strongest `strong_wings` sampler failure from a numerical cliff into an inferential statement: parameter values that choke before the observable radius are allowed, but receive low posterior probability. The legacy behavior remains available as `failure_policy = hard_invalid` for comparisons. The next validation gate is to rerun the exact `strong_wings` binned `dN/dv`, soft-cap, ratio-coordinate, MAP-whitened short NUTS test and reconstruct the worst transition again. Passing requires no catastrophic Hamiltonian spike from stalled winds, zero or inspectably rare divergences, and unchanged recovery for valid high-energy solutions.
+
+Initial validation of the exact saved divergent leaf now reproduces a finite stalled-wind evaluation at `r = 0.755 kpc`: `trajectory_status_code = 1`, finite observables/components, `stall_penalty > 0`, and no hard-invalid or numerical-failure penalty under the default policy. The legacy `hard_invalid` policy still assigns the `1e6` hard penalty to the same point.
+
+The exact `strong_wings` binned `dN/dv`, soft-cap, ratio-coordinate, MAP-whitened short NUTS gate was rerun in `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_short_nuts/`. The MAP remains close to truth (`eta_E = 0.9776` for truth `0.98`; `eta_E/eta_M = 9.741` for truth `9.8`), and truth is inside the 95 percent intervals for all three physical parameters and for `eta_E/eta_M`. However, the short gate still fails sampler acceptance with `57/256` divergent samples and minimum bulk ESS `84.5`. All posterior samples, including divergent samples, have `trajectory_status_code = 0`, `hard_invalid_penalty = 0`, `stall_penalty = 0`, and `numerical_failure_penalty = 0`, so the remaining blocker should be treated as posterior geometry rather than a hidden stalled-wind cliff.
+
+Follow-up divergent-sample diagnostics are in `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_short_nuts/divergent_sample_diagnostics/`. Divergent samples are valid wind solutions and differ only mildly from nondivergent samples in physical coordinates: median `eta_M` is lower (`0.0985` vs `0.1011`), median `eta_E/eta_M` is higher (`9.93` vs `9.66`), and median launch speed is higher (`1580` vs `1558 km/s`). The largest separation is sampler-side accept probability, not failed-wind diagnostics or observable residuals. This supports the interpretation that divergences live along the curved high-specific-energy ridge rather than at a model-failure boundary.
+
+More aggressive linear-profile NUTS tuning (`target_accept = 0.995`, `step_size = 0.01`, `warmup = 1024`, `max_tree_depth = 14`) was run in `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_short_nuts_ta0995_step001/`. It reduced divergences only from `57/256` to `45/256`, lowered minimum bulk ESS from `84.5` to `55.2`, and increased runtime to about `31 min`. This is not a viable fix by itself.
+
+A diagnostic log-profile likelihood was then added as `observable_set = log_dndv_binned`, using the same binned `dN/dv` forward model but fitting `log(dN/dv)` with a correlated Gaussian covariance. The short MAP-whitened log-profile gate in `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_log_dndv_short_nuts/` reduced divergences to `7/256` and gave a near-exact MAP (`eta_E = 0.9797`, `eta_E/eta_M = 9.791`) with truth inside all 95 percent intervals, but minimum bulk ESS remained low at `18.1`. The aggressive log-profile run in `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_log_dndv_ta0995_step001/` further reduced divergences to `4/256`, with no stalled/numerical/hard-invalid penalties and truth still inside all 95 percent intervals, but minimum bulk ESS remained low at `23.2`. This points to log-profile likelihood as the right direction, but the short gate is still not clean enough to proceed to full/noisy recovery.
+
+The four divergent samples from the aggressive log-profile run were then reconstructed as full wind trajectories and compared to nearest non-divergent samples. The physical tracks are nearly indistinguishable: hot velocity, Mach number, hot temperature, cloud velocities, and cloud survival fractions overlap to sub-km/s or sub-percent levels. The largest visible difference is not a stalled wind or a nonphysical state, but the highest-velocity log-profile residual flipping by roughly one to two sigma between nearly identical tracks. Useful figures are:
+
+- `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_log_dndv_ta0995_step001/divergent_physical_profiles/physical_profiles_div_207_vs_nondiv_58.png`
+- `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_log_dndv_ta0995_step001/divergent_physical_profiles/divergent_cloud_survival_and_residuals.png`
+
+Because the divergent tracks are valid and physically smooth, an additional diagnostic coordinate was added as `energy_coordinate = loading_ratios`. It samples `(eta_M, eta_M_cold / eta_M, eta_E / eta_M)` while preserving priors and public outputs on physical `(eta_M, eta_M_cold, eta_E)`. This is motivated by the divergent samples being enriched at lower `eta_M`, higher cold/hot loading, and higher specific energy.
+
+The exact `strong_wings` log-profile, soft-cap, MAP-whitened, loading-ratio diagnostic was run in `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_log_dndv_loading_ratios_ta0995_step001/`. Three exact repeats all recovered the truth and had no stalled/numerical penalties:
+
+| realization | divergences | max-tree hits | max Rhat | min bulk ESS | `P(eta_E > 1)` | truth in 95 pct for physical params | verdict |
+|---|---:|---:|---:|---:|---:|---|---|
+| 0 | 4/256 | 0 | 1.039 | 17.9 | 0.004 | yes | fails ESS/divergence gate |
+| 1 | 1/256 | 0 | 1.022 | 28.9 | 0.016 | yes | fails ESS gate |
+| 2 | 2/256 | 0 | 1.027 | 68.7 | 0.004 | yes | short-gate borderline pass |
+
+This is a partial improvement, not a production pass. The coordinate makes the physical ridge clearer and one repeat meets the short one-chain divergence/ESS threshold, but the result is not robust across repeats. Divergent samples in loading-ratio space remain concentrated toward lower `eta_M`, higher `eta_M_cold/eta_M`, higher `eta_E/eta_M`, and slightly stronger soft-cap contribution. The next fix should therefore target the ridge geometry itself, not stalled-wind handling. Candidate next steps are a prior/coordinate on launch-speed or cloud terminal-speed proxy, or a likelihood/covariance refinement that reduces the leverage of the final high-velocity bins without discarding them.
+
+Follow-up inspection showed why the highest-velocity log-profile bins were unstable. In the aggressive log-profile run, sample 70 and nearby non-divergent sample 42 have visually indistinguishable full radial tracks, but the fastest cloud terminal velocity differs by only `0.257 km/s`. Because the binned observable used a Gaussian velocity kernel with `sigma = 25 km/s`, bins at `1525-1575 km/s` were measuring the far Gaussian tail of material whose fastest cloud speed was only about `1231 km/s`. The predicted log-profile change from the terminal-velocity shift alone matches the actual top-bin change to within the log-error scale. The diagnostic figure is:
+
+- `examples/outputs/inference_synthetic_recovery/stalled_wind_policy_strong_wings_log_dndv_ta0995_step001/divergent_physical_profiles/top_bin_flip_pair70_vs_42.png`
+
+Two diagnostic remedies were then tested. First, the inference model gained opt-in support-aware kernels for binned `dN/dv`: `dndv_kernel = truncated_gaussian` and `dndv_kernel = compact_cosine`, with default `gaussian` preserved. The wide `0-1600 km/s` exact `strong_wings` run using `truncated_gaussian` recovered the truth but did not improve sampler geometry: it had `13/256` divergences, max `Rhat = 1.002`, and min bulk ESS `51.0`. The hard cutoff also produced 11 floored log-profile bins, so this is not a good production likelihood by itself. The output is:
+
+- `examples/outputs/inference_synthetic_recovery/strong_wings_log_dndv_loading_ratios_truncated_kernel_wide_short_nuts/`
+
+Second, an observed-window diagnostic used the default Gaussian kernel but restricted the log-profile to `100-600 km/s`, closer to realistic observed velocity coverage. This removed most of the artificial far-tail leverage and still recovered the truth, but it broadened the energy posterior and did not fully pass the one-chain short gate: `5/256` divergences, max `Rhat = 1.051`, min bulk ESS `21.9`, and `P(eta_E > 1) = 0.398`. The MAP remained close to truth, `eta_E = 0.9775`, and truth stayed inside the 95 percent intervals for all physical parameters and `eta_E/eta_M`. The output is:
+
+- `examples/outputs/inference_synthetic_recovery/strong_wings_log_dndv_loading_ratios_observed_window_100_600_short_nuts/`
+
+Interpretation: the very-high-velocity Gaussian tail was a real artificial stress test, but removing it exposes the observational limitation: a `100-600 km/s` profile is much less decisive about high-energy loading. The next production-facing direction should be an explicitly observational likelihood: fixed observed velocity window, realistic masks/upper limits for unobserved velocities, and a tail treatment that does not assign high precision to kernel leakage. The support-aware hard cutoff is useful diagnostically, but the first production candidate should be the observed-window likelihood with a defensible covariance/model-error term, not the wide hard-truncated profile.
+
+The `100-600 km/s` observed-window divergences were then inspected sample-by-sample in:
+
+- `examples/outputs/inference_synthetic_recovery/strong_wings_log_dndv_loading_ratios_observed_window_100_600_short_nuts/observed_window_divergence_inspection/`
+
+The five divergent retained samples were all valid wind solutions with `trajectory_status_code = 0`, no stall penalty, no numerical-failure penalty, and no hard-invalid penalty. Their radial wind/cloud tracks were smooth. The remaining instability was instead concentrated near the low-velocity support edge: the `112` and `138 km/s` bins are floored, and the `162 km/s` bin is a tiny Gaussian leakage tail below the real cloud material in the radial window. Treating those bins as precise two-sided log-profile detections with `sigma ~= 0.095` therefore creates artificial curvature, analogous to the previous high-velocity tail problem.
+
+An opt-in low-signal censored likelihood was added for `observable_set = log_dndv_binned`: `log_dndv_low_signal_policy = censored_upper`. It leaves the default Gaussian likelihood unchanged, but bins below `max(log dN/dv) - log_dndv_censor_delta_log` become smooth one-sided upper limits. The likelihood contribution is split into `gaussian_chi2` and `censored_chi2` while keeping total `chi2` for continuity.
+
+Two exact `strong_wings`, `100-600 km/s`, loading-ratio, MAP-whitened short-NUTS diagnostics were run:
+
+| likelihood | censored bins | divergences | max Rhat | min ESS | `P(eta_E > 1)` | truth in 95% | output |
+|---|---:|---:|---:|---:|---:|---|---|
+| Gaussian baseline | 0/20 | 5/256 | 1.051 | 21.9 | 0.398 | yes | `strong_wings_log_dndv_loading_ratios_observed_window_100_600_short_nuts/` |
+| censored, `delta_log = 20` | 7/20 | 6/256 | 1.100 | 27.4 | 0.242 | yes | `strong_wings_log_dndv_loading_ratios_observed_window_100_600_censored_short_nuts/` |
+| censored, `delta_log = 100` | 3/20 | 4/256 | 1.024 | 62.8 | 0.219 | yes | `strong_wings_log_dndv_loading_ratios_observed_window_100_600_censored_delta100_short_nuts/` |
+| censored, `delta_log = 100`, 2048 warmup | 3/20 | 9/256 | 1.060 | 13.2 | 0.344 | yes | `strong_wings_log_dndv_loading_ratios_observed_window_100_600_censored_delta100_warmup2048_short_nuts/` |
+
+The broad censoring pass was too aggressive: censoring through `262 km/s` removed real ramp/body information and worsened the ridge. The surgical `delta_log = 100` pass, censoring only `112`, `138`, and `162 km/s`, is the best short gate so far for this observed-window family. It still is not a production pass because four divergences remain, but it improves Rhat/ESS substantially and keeps the MAP essentially exact (`eta_E = 0.9775`). A longer 2048-warmup rerun did not cure the problem; it produced more divergences clustered at samples `32-45` and lower ESS. The remaining divergent retained samples are again valid winds, concentrated near the same low-`eta_M`, high `eta_M_cold/eta_M` ridge, with the largest residual jumps still often tied to the `162 km/s` low-support edge. This supports a likelihood/geometry interpretation, not a physical failure or insufficient-warmup interpretation.
+
+## Final Disposition And Next Step
+
+This is the stopping point for the current synthetic-recovery push. We have learned enough to avoid both overclaiming and over-tuning.
+
+What is solid:
+
+- the corrected objective and MAP machinery recover ordinary exact truth cases;
+- the stalled-wind policy removes the old catastrophic invalid-cliff failure mode;
+- binned/log-profile information can recover high-energy MAP solutions when the likelihood is well matched to the observable window;
+- `strong_wings` divergent samples are valid wind solutions, not hidden numerical failures;
+- the main remaining pathology is a narrow high-specific-energy ridge whose log-profile residuals are sensitive to support-edge bins.
+
+What is not solid:
+
+- `strong_wings` is not a formal production NUTS pass;
+- current synthetic recovery should not be used to claim precise high-energy `eta_E` constraints near the nominal energy ceiling;
+- the noisy recovery campaign should remain deferred until the final observational likelihood and parameterization are chosen.
+
+Decision:
+
+- stop spending project time on incremental `strong_wings` short-NUTS tuning for now;
+- retain the observed-window, loading-ratio, stalled-wind, low-signal-censored setup as the best available diagnostic baseline;
+- move to the next overall project step: one-at-a-time TRML/cloud microphysics sensitivity screening;
+- treat that next step as forward-model leverage ranking, not as expanded inference.
+
+The next durable deliverable should be `examples/trml_sensitivity_screen.py` plus `docs/trml_sensitivity_report.md`. The report should rank which fixed microphysics parameters move the observables, identify degeneracies with the three loading parameters, and recommend at most one effective parameter for a later expanded-recovery campaign.

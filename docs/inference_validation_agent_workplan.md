@@ -89,6 +89,7 @@ Current observable modes:
 m0_m1_m2
 logm0_mean_sigma_skew_kurt
 dndv_binned
+log_dndv_binned
 ```
 
 Fixed but scientifically important parameters currently enter through `WindConfig` or setup arguments:
@@ -126,6 +127,14 @@ Do these in order.
 11. Fit real data and run posterior predictive checks.
 
 Do not skip steps 3 through 7 before expanding the inferred parameter set.
+
+Current status as of April 30, 2026:
+
+- Steps 3 and 4 are complete at the current diagnostic level.
+- Steps 5 and 6 are complete enough to move on, with an explicit caveat: the baseline three-parameter recovery is operational and informative, but the `strong_wings` high-specific-energy case is not a formal production NUTS pass.
+- Step 7 is complete enough as a forward-model screen: the multi-case TRML/cloud matrix shows strong microphysics leverage. A covariance-whitened loading-subspace projection shows that the leading responses are mostly loading-like, but high-leverage profile perturbations can leave large orthogonal residuals after the best loading refit. The main blockers to broad expansion are validity risk and the absence of an expanded synthetic-recovery pass.
+- Noisy synthetic recovery and expanded inference remain deferred.
+- The next project step is a short expanded-parameter decision/no-go note, not implementation of a new fitted parameter.
 
 ## Parallel Work Streams
 
@@ -502,7 +511,8 @@ A_mix
 Recommended first mapping:
 
 ```text
-A_mix multiplies Mdot_coefficient
+A_mix multiplies the TRML/cloud mass-exchange terms.
+The staged chi diagnostic is A_mix * (chi / 100)^beta_chi_mix.
 ```
 
 Alternative candidates:
@@ -522,7 +532,7 @@ Decision document should state:
 - why this parameter is identifiable enough to try,
 - why other parameters are deferred.
 
-Suggested file:
+Decision file:
 
 ```text
 docs/inference_expanded_parameter_decision.md
@@ -554,11 +564,14 @@ build_state_and_params reads theta[0:3]
 
 Implementation options:
 
-Option A:
+Implemented restricted modes:
 
 ```text
-Add a dedicated 4-parameter mode for A_mix.
+expanded_parameters = "a_mix"
+expanded_parameters = "a_mix_beta_chi"
 ```
+
+The second mode is diagnostic only. It should not be run until the `A_mix` gate is acceptable.
 
 Pros:
 
@@ -588,7 +601,7 @@ Cons:
 
 Recommendation:
 
-Use the smallest design that supports the first added parameter cleanly. Do not build a generic framework until the physics program proves it needs one.
+Use the smallest design that supports `A_mix` and the staged `beta_chi_mix` diagnostic cleanly. Do not build a broad generic TRML-closure framework until recovery proves these restricted directions are identifiable.
 
 Required tests:
 
@@ -597,6 +610,7 @@ Required tests:
 - prior shapes validate,
 - prediction changes when new parameter changes,
 - synthetic smoke recovery runs.
+- `A_mix=1` and `beta_chi_mix=0` preserve the baseline forward model.
 
 Paper 2 update:
 
@@ -617,6 +631,16 @@ eta_E
 A_mix
 ```
 
+Second diagnostic set, only after the first gate:
+
+```text
+eta_M
+eta_M_cold
+eta_E
+A_mix
+beta_chi_mix
+```
+
 Required checks:
 
 - prior predictive atlas for expanded model,
@@ -634,7 +658,7 @@ Acceptance criteria:
 - sampler diagnostics remain acceptable,
 - Paper 2 expanded-inference discussion states whether the added parameter is meaningfully constrained.
 
-Do not add `drag_coeff` or chi exponents until this stage passes.
+Do not add `drag_coeff` or direct chi exponents until this stage passes. `beta_chi_mix` is the only allowed chi-dependence diagnostic, and it remains tied to the effective mixing amplitude rather than to a broad closure fit.
 
 ## Task 9: Real Data Fitting
 
@@ -828,18 +852,18 @@ Watch for:
 The next implementation task should be:
 
 ```text
-Rerun corrected baseline synthetic recovery and update docs/inference_synthetic_recovery_report.md.
+Write docs/inference_expanded_parameter_decision.md from the Step 7 sensitivity results.
 ```
 
-Do not add new fitted parameters or start TRML sensitivity work in that task.
+Do not add new fitted parameters in that task. The Step 7 result argues against broad immediate expanded inference, but it leaves a deliberately restricted `A_mix` experiment as the plausible next candidate.
 
 Minimum scope:
 
-- run at least one exact-observable fiducial recovery with NUTS,
-- run a noise-realized baseline sweep over the valid truth cases,
-- inspect the per-realization corner plots and observable-fit plots,
-- compare MAP errors, posterior medians, interval inclusion, sampler diagnostics, and parameter correlations against the pre-fix pilot,
-- update the recovery report and Paper 2 synthetic-recovery section with corrected conclusions,
-- keep generated sampler chains and diagnostic plot outputs out of version control unless explicitly requested.
+- summarize why the Step 7 matrix does not justify broad TRML/cloud expanded inference,
+- state whether the next action is a no-go/defer decision or a deliberately narrowed `A_mix` experiment,
+- if `A_mix` is retained as a future candidate, define whether it maps to `Mdot_coefficient` alone or to a combined mixing amplitude,
+- specify the prior range that avoids the stalled high-amplitude regime,
+- define the exact expanded synthetic-recovery gate that would be required before any real-data use,
+- update Paper 2 discussion prose if the decision changes the manuscript claim.
 
-Only after corrected baseline recovery is scientifically acceptable should agents proceed to the TRML sensitivity report, choose one effective added parameter, or modify inference internals further.
+Carry the synthetic-recovery caveat forward: the `strong_wings` high-specific-energy case remains a useful stress test but not a production posterior claim. The TRML screen may use it as a diagnostic case, but it should not rely on noisy `strong_wings` recovery or expanded inference.

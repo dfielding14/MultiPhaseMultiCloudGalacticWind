@@ -31,6 +31,9 @@ class JaxWindParams(NamedTuple):
     TurbulentVelocityChiPower: float
     geometric_factor: float
     Mdot_coefficient: float
+    A_mix: float
+    beta_chi_mix: float
+    mixing_chi_pivot: float
     Cooling_Factor: float
     drag_coeff: float
     f_turb0: float
@@ -79,6 +82,9 @@ def build_jax_wind_params(
         TurbulentVelocityChiPower=float(config_dict["TurbulentVelocityChiPower"]),
         geometric_factor=float(config_dict["geometric_factor"]),
         Mdot_coefficient=float(config_dict["Mdot_coefficient"]),
+        A_mix=float(config_dict.get("A_mix", 1.0)),
+        beta_chi_mix=float(config_dict.get("beta_chi_mix", 0.0)),
+        mixing_chi_pivot=float(config_dict.get("mixing_chi_pivot", 100.0)),
         Cooling_Factor=float(config_dict["Cooling_Factor"]),
         drag_coeff=float(config_dict["drag_coeff"]),
         f_turb0=float(config_dict["f_turb0"]),
@@ -179,13 +185,16 @@ def wind_evo_jax(state, r, params: JaxWindParams):
     ksi = r_cloud / (jnp.maximum(v_turb, 1e-10) * jnp.maximum(t_cool_layer, 1e-30))
     area_boost = params.geometric_factor * _safe_power(chi_safe, params.CoolingAreaChiPower)
     v_turb_cold = v_turb * _safe_power(chi_safe, params.ColdTurbulenceChiPower)
+    chi_ratio = jnp.clip(chi_safe / jnp.maximum(params.mixing_chi_pivot, 1.0e-30), 1.0e-6, 1.0e6)
+    mixing_factor = params.A_mix * jnp.exp(params.beta_chi_mix * jnp.log(chi_ratio))
+    mdot_exchange_coefficient = params.Mdot_coefficient * mixing_factor
 
     cloud_active = M_cloud > params.M_cloud_min
     ksi_factor = jnp.where(ksi < 1.0, _safe_power(ksi, 0.5), _safe_power(ksi, 0.25))
 
     Mdot_grow = jnp.where(
         cloud_active,
-        params.Mdot_coefficient
+        mdot_exchange_coefficient
         * 3.0
         * M_cloud
         * v_turb
@@ -196,7 +205,7 @@ def wind_evo_jax(state, r, params: JaxWindParams):
     )
     Mdot_loss = jnp.where(
         cloud_active,
-        params.Mdot_coefficient * 3.0 * (-M_cloud) * v_turb_cold / r_cloud_safe,
+        mdot_exchange_coefficient * 3.0 * (-M_cloud) * v_turb_cold / r_cloud_safe,
         0.0,
     )
     Mdot_cloud = Mdot_grow + Mdot_loss

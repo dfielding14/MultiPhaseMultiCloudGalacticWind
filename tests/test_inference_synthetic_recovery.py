@@ -206,3 +206,54 @@ def test_synthetic_recovery_smoke_writes_outputs(tmp_path):
     assert len(rows) == 1
     assert rows[0]["truth_case"] == "fiducial"
     assert {"true_eta_M", "map_eta_M", "map_error_eta_M", "success"}.issubset(rows[0])
+
+
+def test_synthetic_recovery_expanded_a_mix_outputs(tmp_path):
+    harness = load_harness_module()
+    output_dir = tmp_path / "synthetic_recovery_a_mix"
+
+    harness.main(
+        [
+            "--truth-case",
+            "fiducial",
+            "--observable-set",
+            "logm0_mean_sigma_skew_kurt",
+            "--num-noise-realizations",
+            "1",
+            "--seed",
+            "654",
+            "--output",
+            str(output_dir),
+            "--r-max-kpc",
+            "2.0",
+            "--step-kpc",
+            "0.25",
+            "--n-cloud-species",
+            "2",
+            "--cloud-mass-min",
+            "10.0",
+            "--cloud-mass-max",
+            "1.0e3",
+            "--expanded-parameters",
+            "a_mix",
+            "--sampler",
+            "none",
+            "--map-max-iter",
+            "2",
+            "--map-num-starts",
+            "1",
+            "--jax-platform",
+            "cpu",
+        ]
+    )
+
+    with np.load(output_dir / "synthetic_recovery_results.npz") as data:
+        assert data["theta_true"].shape == (1, 4)
+        assert data["theta_map"].shape == (1, 4)
+        assert data["theta_names"].tolist() == ["eta_M", "eta_M_cold", "eta_E", "A_mix"]
+        assert data["posterior_q50"].shape == (1, 4)
+
+    with open(output_dir / "synthetic_recovery_summary.csv", newline="", encoding="ascii") as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 1
+    assert {"true_A_mix", "map_A_mix", "map_error_A_mix"}.issubset(rows[0])

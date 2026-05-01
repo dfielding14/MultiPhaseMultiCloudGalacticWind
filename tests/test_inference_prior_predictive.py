@@ -36,6 +36,17 @@ def test_sample_prior_shape_and_bounds():
         assert np.all(samples[:, idx] <= hi)
     assert np.all(samples[:, 2] < harness.ETA_E_MAX)
 
+    expanded = harness.sample_prior(
+        rng,
+        64,
+        expanded_parameters="a_mix_beta_chi",
+        beta_chi_max_abs=0.75,
+    )
+    assert expanded.shape == (64, 5)
+    assert np.all(expanded[:, 3] >= harness.DEFAULT_PRIOR_BOUNDS["A_mix"][0])
+    assert np.all(expanded[:, 3] <= harness.DEFAULT_PRIOR_BOUNDS["A_mix"][1])
+    assert np.all(np.abs(expanded[:, 4]) <= 0.75)
+
 
 def test_load_classy_profiles_returns_positive_outflow_speeds():
     harness = load_harness_module()
@@ -77,6 +88,8 @@ def test_prior_predictive_smoke_writes_outputs(tmp_path):
             "1.0e3",
             "--jax-platform",
             "cpu",
+            "--expanded-parameters",
+            "a_mix",
             "--no-usetex",
         ]
     )
@@ -93,7 +106,7 @@ def test_prior_predictive_smoke_writes_outputs(tmp_path):
     assert (output_dir / "prior_predictive_parameter_scatter.png").exists()
 
     data = np.load(npz_path)
-    assert data["theta_samples"].shape == (2, 3)
+    assert data["theta_samples"].shape == (2, 4)
     assert data["observables"].shape[0] == 2
     assert data["raw_moments"].shape == (2, 5)
     assert data["valid"].shape == (2,)
@@ -101,7 +114,7 @@ def test_prior_predictive_smoke_writes_outputs(tmp_path):
     with open(csv_path, newline="", encoding="ascii") as fh:
         rows = list(csv.DictReader(fh))
     assert len(rows) == 2
-    assert {"eta_M", "eta_M_cold", "eta_E", "valid", "logM0", "mean_v", "sigma_v"}.issubset(rows[0])
+    assert {"eta_M", "eta_M_cold", "eta_E", "A_mix", "valid", "logM0", "mean_v", "sigma_v"}.issubset(rows[0])
 
 
 def test_evaluate_sample_records_exception_without_crashing():

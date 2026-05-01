@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic input-recovery harness for the baseline three-parameter model."""
+"""Synthetic input-recovery harness for baseline and restricted expanded inference."""
 
 from __future__ import annotations
 
@@ -21,13 +21,15 @@ import numpy as np
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "inference_synthetic_recovery")
 PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
 ENERGY_COORDINATE_NAMES = ("eta_M", "eta_M_cold", "eta_E_over_eta_M")
-OBSERVABLE_SETS = ("m0_m1_m2", "logm0_mean_sigma_skew_kurt", "dndv_binned")
+LOADING_RATIO_COORDINATE_NAMES = ("eta_M", "eta_M_cold_over_eta_M", "eta_E_over_eta_M")
+EXPANDED_PARAMETER_CHOICES = ("none", "a_mix", "a_mix_beta_chi")
+OBSERVABLE_SETS = ("m0_m1_m2", "logm0_mean_sigma_skew_kurt", "dndv_binned", "log_dndv_binned")
 ETA_E_MAX = 0.999
 
 
 @dataclass(frozen=True)
 class TruthCase:
-    """Named synthetic truth in the current three-parameter inference surface."""
+    """Named synthetic truth in the baseline three-parameter inference surface."""
 
     name: str
     theta: tuple[float, float, float]
@@ -157,14 +159,64 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dndv-vmin-kms", type=float, default=0.0)
     parser.add_argument("--dndv-vmax-kms", type=float, default=1200.0)
     parser.add_argument("--dndv-kernel-sigma-kms", type=float, default=None)
+    parser.add_argument(
+        "--dndv-kernel",
+        choices=["gaussian", "truncated_gaussian", "compact_cosine"],
+        default="gaussian",
+        help="Velocity kernel for binned dN/dv projection.",
+    )
+    parser.add_argument(
+        "--dndv-kernel-truncate-sigma",
+        type=float,
+        default=3.0,
+        help="Finite support |dv| cutoff in sigma units for --dndv-kernel truncated_gaussian.",
+    )
     parser.add_argument("--dndv-sigma-floor-frac", type=float, default=0.03)
     parser.add_argument("--dndv-bin-corr", type=float, default=0.60)
+    parser.add_argument(
+        "--log-dndv-low-signal-policy",
+        choices=["gaussian", "censored_upper"],
+        default="gaussian",
+        help="Likelihood treatment for low-signal log dN/dv bins.",
+    )
+    parser.add_argument(
+        "--log-dndv-censor-delta-log",
+        type=float,
+        default=20.0,
+        help="Censor log-profile bins below max(log dN/dv) minus this value.",
+    )
+    parser.add_argument(
+        "--log-dndv-censor-transition",
+        type=float,
+        default=0.25,
+        help="Softplus transition width in log units for censored upper-limit bins.",
+    )
+    parser.add_argument(
+        "--log-dndv-censor-sigma",
+        type=float,
+        default=0.50,
+        help="One-sided upper-limit sigma in log units for censored bins.",
+    )
+    parser.add_argument(
+        "--log-dndv-censor-upper-margin",
+        type=float,
+        default=1.0,
+        help="Log-unit margin added to observed low-signal bins before applying the upper limit.",
+    )
 
     parser.add_argument("--eta-e-parameterization", choices=["bounded", "softcap"], default="bounded")
-    parser.add_argument("--energy-coordinate", choices=["eta_e", "eta_e_over_eta_m"], default="eta_e")
+    parser.add_argument("--energy-coordinate", choices=["eta_e", "eta_e_over_eta_m", "loading_ratios"], default="eta_e")
+    parser.add_argument("--expanded-parameters", choices=EXPANDED_PARAMETER_CHOICES, default="none")
     parser.add_argument("--eta-e-softcap-center", type=float, default=1.0)
     parser.add_argument("--eta-e-softcap-sigma", type=float, default=0.10)
     parser.add_argument("--eta-e-softcap-transition", type=float, default=0.01)
+    parser.add_argument("--beta-chi-max-abs", type=float, default=0.75)
+    parser.add_argument("--mixing-chi-pivot", type=float, default=100.0)
+    parser.add_argument("--failure-policy", choices=["stalled_wind", "hard_invalid"], default="stalled_wind")
+    parser.add_argument("--stall-velocity-floor-kms", type=float, default=0.0)
+    parser.add_argument("--stall-velocity-transition-kms", type=float, default=50.0)
+    parser.add_argument("--stall-radius-sigma-kpc", type=float, default=0.25)
+    parser.add_argument("--stall-radius-transition-kpc", type=float, default=0.05)
 
     parser.add_argument("--shape-skew-sigma", type=float, default=0.20)
     parser.add_argument("--shape-kurt-sigma", type=float, default=0.40)
@@ -191,12 +243,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--initial-eta-m", type=float, default=0.20)
     parser.add_argument("--initial-eta-m-cold", type=float, default=0.20)
     parser.add_argument("--initial-eta-e", type=float, default=0.80)
+    parser.add_argument("--initial-a-mix", type=float, default=1.0)
+    parser.add_argument("--initial-beta-chi", type=float, default=0.0)
     parser.add_argument("--prior-eta-m", type=float, default=0.20)
     parser.add_argument("--prior-eta-m-cold", type=float, default=0.20)
     parser.add_argument("--prior-eta-e", type=float, default=0.70)
+    parser.add_argument("--prior-a-mix", type=float, default=1.0)
+    parser.add_argument("--prior-beta-chi", type=float, default=0.0)
     parser.add_argument("--prior-sigma-log-eta-m", type=float, default=1.40)
     parser.add_argument("--prior-sigma-log-eta-m-cold", type=float, default=1.40)
     parser.add_argument("--prior-sigma-log-eta-e", type=float, default=0.45)
+    parser.add_argument("--prior-sigma-log-a-mix", type=float, default=0.35)
+    parser.add_argument("--prior-sigma-beta-chi", type=float, default=0.25)
 
     args = parser.parse_args(argv)
     if args.noise_fraction <= 0.0:
@@ -217,8 +275,36 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--eta-e-softcap-sigma must be positive")
     if args.eta_e_softcap_transition <= 0.0:
         parser.error("--eta-e-softcap-transition must be positive")
-    if args.energy_coordinate == "eta_e_over_eta_m" and args.eta_e_parameterization != "softcap":
-        parser.error("--energy-coordinate eta_e_over_eta_m requires --eta-e-parameterization softcap")
+    if args.beta_chi_max_abs <= 0.0:
+        parser.error("--beta-chi-max-abs must be positive")
+    if args.mixing_chi_pivot <= 0.0:
+        parser.error("--mixing-chi-pivot must be positive")
+    if args.initial_a_mix <= 0.0 or args.prior_a_mix <= 0.0:
+        parser.error("--initial-a-mix and --prior-a-mix must be positive")
+    if args.prior_sigma_log_a_mix <= 0.0:
+        parser.error("--prior-sigma-log-a-mix must be positive")
+    if args.prior_sigma_beta_chi <= 0.0:
+        parser.error("--prior-sigma-beta-chi must be positive")
+    if abs(args.initial_beta_chi) >= args.beta_chi_max_abs:
+        parser.error("--initial-beta-chi must lie inside +/- --beta-chi-max-abs")
+    if args.stall_velocity_transition_kms <= 0.0:
+        parser.error("--stall-velocity-transition-kms must be positive")
+    if args.stall_radius_sigma_kpc <= 0.0:
+        parser.error("--stall-radius-sigma-kpc must be positive")
+    if args.stall_radius_transition_kpc <= 0.0:
+        parser.error("--stall-radius-transition-kpc must be positive")
+    if args.dndv_kernel_truncate_sigma <= 0.0:
+        parser.error("--dndv-kernel-truncate-sigma must be positive")
+    if args.log_dndv_censor_delta_log <= 0.0:
+        parser.error("--log-dndv-censor-delta-log must be positive")
+    if args.log_dndv_censor_transition <= 0.0:
+        parser.error("--log-dndv-censor-transition must be positive")
+    if args.log_dndv_censor_sigma <= 0.0:
+        parser.error("--log-dndv-censor-sigma must be positive")
+    if args.log_dndv_censor_upper_margin < 0.0:
+        parser.error("--log-dndv-censor-upper-margin must be non-negative")
+    if args.energy_coordinate in {"eta_e_over_eta_m", "loading_ratios"} and args.eta_e_parameterization != "softcap":
+        parser.error(f"--energy-coordinate {args.energy_coordinate} requires --eta-e-parameterization softcap")
     return args
 
 
@@ -230,7 +316,7 @@ def selected_truth_cases(truth_case: str) -> list[TruthCase]:
 
 
 def build_model(args: argparse.Namespace):
-    """Construct the baseline three-parameter inference model."""
+    """Construct the active inference model."""
     from multiphasegalacticwind.inference import MomentInferenceModel
 
     return MomentInferenceModel(
@@ -252,11 +338,26 @@ def build_model(args: argparse.Namespace):
         dndv_vmin_kms=args.dndv_vmin_kms,
         dndv_vmax_kms=args.dndv_vmax_kms,
         dndv_kernel_sigma_kms=args.dndv_kernel_sigma_kms,
+        dndv_kernel=args.dndv_kernel,
+        dndv_kernel_truncate_sigma=args.dndv_kernel_truncate_sigma,
+        log_dndv_low_signal_policy=args.log_dndv_low_signal_policy,
+        log_dndv_censor_delta_log=args.log_dndv_censor_delta_log,
+        log_dndv_censor_transition=args.log_dndv_censor_transition,
+        log_dndv_censor_sigma=args.log_dndv_censor_sigma,
+        log_dndv_censor_upper_margin=args.log_dndv_censor_upper_margin,
         eta_e_parameterization=args.eta_e_parameterization,
         energy_coordinate=args.energy_coordinate,
+        expanded_parameters=args.expanded_parameters,
         eta_e_softcap_center=args.eta_e_softcap_center,
         eta_e_softcap_sigma=args.eta_e_softcap_sigma,
         eta_e_softcap_transition=args.eta_e_softcap_transition,
+        beta_chi_max_abs=args.beta_chi_max_abs,
+        mixing_chi_pivot=args.mixing_chi_pivot,
+        failure_policy=args.failure_policy,
+        stall_velocity_floor_kms=args.stall_velocity_floor_kms,
+        stall_velocity_transition_kms=args.stall_velocity_transition_kms,
+        stall_radius_sigma_kpc=args.stall_radius_sigma_kpc,
+        stall_radius_transition_kpc=args.stall_radius_transition_kpc,
     )
 
 
@@ -272,9 +373,8 @@ def _predict_with_validity(model: Any, theta: Sequence[float]) -> tuple[np.ndarr
         valid = bool(np.all(np.isfinite(observables)) and np.all(np.isfinite(raw)) and raw[0] > 0.0)
         return observables, raw, valid, np.nan
 
-    observables_jax, raw_jax, valid_jax, _barrier, first_invalid_r = predictor(
-        jnp.asarray(theta_arr, dtype=jnp.float64)
-    )
+    prediction = predictor(jnp.asarray(theta_arr, dtype=jnp.float64))
+    observables_jax, raw_jax, valid_jax, _barrier, first_invalid_r = prediction[:5]
     observables = np.asarray(observables_jax, dtype=float)
     raw = np.asarray(raw_jax, dtype=float)
 
@@ -323,6 +423,13 @@ def build_synthetic_covariance(
         corr = rho ** np.abs(idx[:, None] - idx[None, :])
         return sigma, build_covariance(sigma, corr)
 
+    if model.observable_set == "log_dndv_binned":
+        sigma = np.full(y.size, max(float(np.log1p(frac)), 1.0e-3), dtype=float)
+        rho = float(np.clip(dndv_bin_corr, -0.95, 0.95))
+        idx = np.arange(y.size)
+        corr = rho ** np.abs(idx[:, None] - idx[None, :])
+        return sigma, build_covariance(sigma, corr)
+
     sigma = np.asarray(
         [
             max(np.log1p(frac), 1.0e-6),
@@ -358,6 +465,8 @@ def draw_synthetic_observation(
         observed = np.maximum(observed, 1.0e-24)
     elif model.observable_set == "dndv_binned":
         observed = np.maximum(observed, 1.0e-40)
+    elif model.observable_set == "log_dndv_binned":
+        pass
     else:
         observed[2] = max(float(observed[2]), 1.0e-3)
     return np.asarray(observed, dtype=float)
@@ -413,11 +522,57 @@ def _eta_e_over_eta_m(theta: Sequence[float] | np.ndarray) -> np.ndarray:
     return theta_arr[..., 2] / np.maximum(theta_arr[..., 0], 1.0e-300)
 
 
-def _energy_coordinate_names(model: Any) -> tuple[str, str, str]:
-    """Return labels for the model's active unconstrained energy coordinate."""
-    if getattr(model, "energy_coordinate", "eta_e") == "eta_e_over_eta_m":
-        return ENERGY_COORDINATE_NAMES
+def _parameter_names(model: Any) -> tuple[str, ...]:
+    """Return active physical parameter names for output tables."""
+    if hasattr(model, "parameter_names"):
+        return tuple(model.parameter_names())
     return PARAM_NAMES
+
+
+def _energy_coordinate_names(model: Any) -> tuple[str, ...]:
+    """Return labels for the model's active unconstrained energy coordinate."""
+    if hasattr(model, "energy_coordinate_names"):
+        return tuple(model.energy_coordinate_names())
+    energy_coordinate = getattr(model, "energy_coordinate", "eta_e")
+    if energy_coordinate == "eta_e_over_eta_m":
+        return ENERGY_COORDINATE_NAMES
+    if energy_coordinate == "loading_ratios":
+        return LOADING_RATIO_COORDINATE_NAMES
+    return PARAM_NAMES
+
+
+def _theta_for_model(model: Any, theta: Sequence[float]) -> np.ndarray:
+    """Extend a three-parameter truth/init vector with neutral expanded parameters."""
+    if hasattr(model, "_coerce_theta_numpy"):
+        return np.asarray(model._coerce_theta_numpy(theta), dtype=float)
+    return np.asarray(theta, dtype=float)
+
+
+def _initial_theta_from_args(args: argparse.Namespace, model: Any) -> np.ndarray:
+    """Build active physical initial theta from CLI values."""
+    theta = [args.initial_eta_m, args.initial_eta_m_cold, args.initial_eta_e]
+    if args.expanded_parameters in {"a_mix", "a_mix_beta_chi"}:
+        theta.append(args.initial_a_mix)
+    if args.expanded_parameters == "a_mix_beta_chi":
+        theta.append(args.initial_beta_chi)
+    return _theta_for_model(model, theta)
+
+
+def _prior_coordinate_from_args(args: argparse.Namespace, model: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Build active prior center and width arrays for the mixed prior coordinate."""
+    theta = [args.prior_eta_m, args.prior_eta_m_cold, args.prior_eta_e]
+    sigma = [args.prior_sigma_log_eta_m, args.prior_sigma_log_eta_m_cold, args.prior_sigma_log_eta_e]
+    if args.expanded_parameters in {"a_mix", "a_mix_beta_chi"}:
+        theta.append(args.prior_a_mix)
+        sigma.append(args.prior_sigma_log_a_mix)
+    if args.expanded_parameters == "a_mix_beta_chi":
+        theta.append(args.prior_beta_chi)
+        sigma.append(args.prior_sigma_beta_chi)
+    if hasattr(model, "_prior_coordinate_from_theta_numpy"):
+        prior = model._prior_coordinate_from_theta_numpy(_theta_for_model(model, theta))
+    else:
+        prior = np.log(np.asarray(theta, dtype=float))
+    return np.asarray(prior, dtype=float), np.asarray(sigma, dtype=float)
 
 
 def summarize_ratio_recovery_metrics(
@@ -428,9 +583,9 @@ def summarize_ratio_recovery_metrics(
     """Compute scalar recovery metrics for eta_E/eta_M."""
     truth = float(_eta_e_over_eta_m(theta_true))
     map_theta = np.asarray(theta_map, dtype=float)
-    map_value = float(_eta_e_over_eta_m(map_theta)) if map_theta.shape == (3,) else np.nan
+    map_value = float(_eta_e_over_eta_m(map_theta)) if map_theta.ndim == 1 and map_theta.size >= 3 else np.nan
     samples = np.asarray(samples_theta, dtype=float)
-    if samples.ndim != 2 or samples.shape[0] == 0 or samples.shape[1] != 3:
+    if samples.ndim != 2 or samples.shape[0] == 0 or samples.shape[1] < 3:
         return {
             "truth": truth,
             "map": map_value,
@@ -526,7 +681,8 @@ def _empty_result(
     error: str,
     runtime_seconds: dict[str, float] | None = None,
 ) -> RealizationResult:
-    metrics = summarize_recovery_metrics(theta_true, np.full((3,), np.nan), np.empty((0, 3)))
+    theta_dim = len(_parameter_names(model))
+    metrics = summarize_recovery_metrics(theta_true, np.full((theta_dim,), np.nan), np.empty((0, theta_dim)))
     return RealizationResult(
         truth_case=truth_case.name,
         realization_id=int(realization_id),
@@ -542,27 +698,28 @@ def _empty_result(
         error=error,
         map_success=False,
         map_message="",
-        theta_map=np.full((3,), np.nan, dtype=float),
+        theta_map=np.full((theta_dim,), np.nan, dtype=float),
         map_predicted_observables=np.full((observed_dim,), np.nan, dtype=float),
         chi2=np.nan,
         nlp=np.nan,
-        samples_theta=np.empty((0, 3), dtype=float),
-        samples_log=np.empty((0, 3), dtype=float),
+        samples_theta=np.empty((0, theta_dim), dtype=float),
+        samples_log=np.empty((0, theta_dim), dtype=float),
         posterior_predictive=np.empty((0, observed_dim), dtype=float),
         metrics=metrics,
         diagnostics={
             "sampler": getattr(model, "sampler", ""),
+            "failure_policy": getattr(model, "failure_policy", ""),
             "acceptance_rate": np.nan,
             "num_divergent": np.nan,
             "r_hat": None,
             "ess_bulk": None,
-            "correlation_theta": np.full((3, 3), np.nan, dtype=float),
+            "correlation_theta": np.full((theta_dim, theta_dim), np.nan, dtype=float),
             "posterior_prob_eta_E_gt_1": np.nan,
             "nuts_coordinate": "",
             "max_tree_depth_hits": np.nan,
             "max_tree_depth_fraction": np.nan,
-            "samples_unconstrained": np.empty((0, 3), dtype=float),
-            "samples_nuts_coordinate": np.empty((0, 3), dtype=float),
+            "samples_unconstrained": np.empty((0, theta_dim), dtype=float),
+            "samples_nuts_coordinate": np.empty((0, theta_dim), dtype=float),
             "sample_diverging": np.empty((0,), dtype=bool),
             "sample_accept_prob": np.empty((0,), dtype=float),
             "sample_num_steps": np.empty((0,), dtype=float),
@@ -600,7 +757,7 @@ def run_realization(
 ) -> RealizationResult:
     """Run one noisy synthetic recovery realization."""
     start = time.perf_counter()
-    theta_true = np.asarray(truth_case.theta, dtype=float)
+    theta_true = _theta_for_model(model, truth_case.theta)
     true_observables, true_raw_moments, truth_valid, first_invalid_r_kpc = _predict_with_validity(model, theta_true)
     sigma, covariance = build_synthetic_covariance(
         model=model,
@@ -634,13 +791,9 @@ def run_realization(
             runtime_seconds={"total": time.perf_counter() - start},
         )
 
-    initial_theta = (args.initial_eta_m, args.initial_eta_m_cold, args.initial_eta_e)
-    prior_mean_log = np.log(np.asarray([args.prior_eta_m, args.prior_eta_m_cold, args.prior_eta_e], dtype=float))
-    prior_sigma_log = (
-        args.prior_sigma_log_eta_m,
-        args.prior_sigma_log_eta_m_cold,
-        args.prior_sigma_log_eta_e,
-    )
+    theta_dim = len(_parameter_names(model))
+    initial_theta = _initial_theta_from_args(args, model)
+    prior_mean_log, prior_sigma_log = _prior_coordinate_from_args(args, model)
 
     try:
         if args.sampler == "none":
@@ -656,10 +809,10 @@ def run_realization(
                 seed=args.seed + 1009 * realization_id,
             )
             fit_seconds = time.perf_counter() - t_fit
-            samples_theta = np.empty((0, 3), dtype=float)
-            samples_log = np.empty((0, 3), dtype=float)
-            samples_unconstrained = np.empty((0, 3), dtype=float)
-            samples_nuts_coordinate = np.empty((0, 3), dtype=float)
+            samples_theta = np.empty((0, theta_dim), dtype=float)
+            samples_log = np.empty((0, theta_dim), dtype=float)
+            samples_unconstrained = np.empty((0, theta_dim), dtype=float)
+            samples_nuts_coordinate = np.empty((0, theta_dim), dtype=float)
             sample_diverging = np.empty((0,), dtype=bool)
             sample_accept_prob = np.empty((0,), dtype=float)
             sample_num_steps = np.empty((0,), dtype=float)
@@ -678,6 +831,7 @@ def run_realization(
             )
             diagnostics = {
                 "sampler": "none",
+                "failure_policy": getattr(model, "failure_policy", ""),
                 "nuts_coordinate": "none",
                 "acceptance_rate": np.nan,
                 "num_divergent": np.nan,
@@ -781,6 +935,7 @@ def run_realization(
             )
             diagnostics = {
                 "sampler": fit.hmc.sampler,
+                "failure_policy": getattr(model, "failure_policy", ""),
                 "nuts_coordinate": fit.hmc.nuts_coordinate,
                 "num_chains": int(fit.hmc.num_chains),
                 "nuts_chain_method": fit.hmc.nuts_chain_method,
@@ -903,8 +1058,46 @@ def _pad_stack_bool(arrays: Sequence[np.ndarray]) -> np.ndarray:
 def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult]) -> str:
     """Write machine-readable recovery arrays."""
     path = os.path.join(output_dir, "synthetic_recovery_results.npz")
+    parameter_names = _parameter_names(model)
     energy_coordinate_names = _energy_coordinate_names(model)
     ratio_metrics = [summarize_ratio_recovery_metrics(r.theta_true, r.theta_map, r.samples_theta) for r in results]
+    component_names = tuple(getattr(model, "POSTERIOR_COMPONENT_NAMES", ()))
+    component_index = {name: idx for idx, name in enumerate(component_names)}
+
+    def component_values(which: str, name: str) -> np.ndarray:
+        idx = component_index.get(name)
+        if idx is None:
+            return np.full((len(results),), np.nan, dtype=float)
+        values = []
+        for result in results:
+            arr = np.asarray(
+                result.diagnostics.get(
+                    f"posterior_components_{which}",
+                    np.full((len(component_names),), np.nan),
+                ),
+                dtype=float,
+            )
+            values.append(arr[idx] if arr.ndim == 1 and arr.size > idx else np.nan)
+        return np.asarray(values, dtype=float)
+
+    def sample_component_values(name: str) -> np.ndarray:
+        idx = component_index.get(name)
+        if idx is None:
+            return _pad_stack([np.empty((0,), dtype=float) for _ in results], ())
+        return _pad_stack(
+            [
+                np.asarray(
+                    result.diagnostics.get(
+                        "posterior_components_samples",
+                        np.empty((0, len(component_names))),
+                    ),
+                    dtype=float,
+                )[:, idx]
+                for result in results
+            ],
+            (),
+        )
+
     samples_eta_e_over_eta_m = [
         _eta_e_over_eta_m(r.samples_theta)[:, None] if r.samples_theta.size > 0 else np.empty((0, 1), dtype=float)
         for r in results
@@ -915,6 +1108,12 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         else np.empty((0, len(energy_coordinate_names)), dtype=float)
         for r in results
     ]
+    log_dndv_censored_masks = [
+        model.log_dndv_censored_mask(r.observed)
+        if hasattr(model, "log_dndv_censored_mask")
+        else np.zeros((model.observable_dim,), dtype=bool)
+        for r in results
+    ]
     np.savez(
         path,
         truth_case=np.asarray([r.truth_case for r in results], dtype=str),
@@ -923,11 +1122,23 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         truth_valid=np.asarray([r.truth_valid for r in results], dtype=bool),
         first_invalid_r_kpc=np.asarray([r.first_invalid_r_kpc for r in results], dtype=float),
         errors=np.asarray([r.error for r in results], dtype=str),
-        theta_names=np.asarray(PARAM_NAMES, dtype=str),
+        theta_names=np.asarray(parameter_names, dtype=str),
         energy_coordinate_names=np.asarray(energy_coordinate_names, dtype=str),
         observable_names=np.asarray(model.observable_names, dtype=str),
         observable_set=np.asarray(model.observable_set, dtype=str),
+        dndv_kernel=np.asarray(getattr(model, "dndv_kernel", ""), dtype=str),
+        dndv_kernel_truncate_sigma=np.asarray(getattr(model, "dndv_kernel_truncate_sigma", np.nan), dtype=float),
+        log_dndv_low_signal_policy=np.asarray(getattr(model, "log_dndv_low_signal_policy", ""), dtype=str),
+        log_dndv_censor_delta_log=np.asarray(getattr(model, "log_dndv_censor_delta_log", np.nan), dtype=float),
+        log_dndv_censor_transition=np.asarray(getattr(model, "log_dndv_censor_transition", np.nan), dtype=float),
+        log_dndv_censor_sigma=np.asarray(getattr(model, "log_dndv_censor_sigma", np.nan), dtype=float),
+        log_dndv_censor_upper_margin=np.asarray(
+            getattr(model, "log_dndv_censor_upper_margin", np.nan),
+            dtype=float,
+        ),
+        log_dndv_censored_mask=np.vstack(log_dndv_censored_masks),
         energy_coordinate=np.asarray(model.energy_coordinate, dtype=str),
+        failure_policy=np.asarray(getattr(model, "failure_policy", ""), dtype=str),
         nuts_coordinate=np.asarray([r.diagnostics.get("nuts_coordinate", "") for r in results], dtype=str),
         theta_true=np.vstack([r.theta_true for r in results]),
         energy_coordinate_true=np.vstack([model.energy_coordinates_from_theta_numpy(r.theta_true) for r in results]),
@@ -942,20 +1153,26 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
         chi2=np.asarray([r.chi2 for r in results], dtype=float),
         nlp=np.asarray([r.nlp for r in results], dtype=float),
         map_success=np.asarray([r.map_success for r in results], dtype=bool),
-        samples_theta=_pad_stack([r.samples_theta for r in results], (len(PARAM_NAMES),)),
-        samples_log=_pad_stack([r.samples_log for r in results], (len(PARAM_NAMES),)),
+        samples_theta=_pad_stack([r.samples_theta for r in results], (len(parameter_names),)),
+        samples_log=_pad_stack([r.samples_log for r in results], (len(parameter_names),)),
         samples_unconstrained=_pad_stack(
-            [np.asarray(r.diagnostics.get("samples_unconstrained", np.empty((0, 3))), dtype=float) for r in results],
-            (len(PARAM_NAMES),),
+            [
+                np.asarray(r.diagnostics.get("samples_unconstrained", np.empty((0, len(parameter_names)))), dtype=float)
+                for r in results
+            ],
+            (len(parameter_names),),
         ),
         samples_nuts_coordinate=_pad_stack(
             [
-                np.asarray(r.diagnostics.get("samples_nuts_coordinate", np.empty((0, 3))), dtype=float)
+                np.asarray(
+                    r.diagnostics.get("samples_nuts_coordinate", np.empty((0, len(parameter_names)))),
+                    dtype=float,
+                )
                 for r in results
             ],
-            (len(PARAM_NAMES),),
+            (len(parameter_names),),
         ),
-        samples_energy_coordinate=_pad_stack(samples_energy_coordinate, (len(ENERGY_COORDINATE_NAMES),)),
+        samples_energy_coordinate=_pad_stack(samples_energy_coordinate, (len(energy_coordinate_names),)),
         samples_eta_E_over_eta_M=_pad_stack(samples_eta_e_over_eta_m, (1,)),
         sample_diverging=_pad_stack_bool(
             [np.asarray(r.diagnostics.get("sample_diverging", np.empty((0,), dtype=bool))) for r in results]
@@ -976,6 +1193,21 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
             [np.asarray(r.diagnostics.get("sample_potential_energy", np.empty((0,))), dtype=float) for r in results],
             (),
         ),
+        truth_trajectory_status_code=component_values("truth", "trajectory_status_code"),
+        map_trajectory_status_code=component_values("map", "trajectory_status_code"),
+        sample_trajectory_status_code=sample_component_values("trajectory_status_code"),
+        truth_soft_reach_radius_kpc=component_values("truth", "soft_reach_radius_kpc"),
+        map_soft_reach_radius_kpc=component_values("map", "soft_reach_radius_kpc"),
+        sample_soft_reach_radius_kpc=sample_component_values("soft_reach_radius_kpc"),
+        truth_min_hot_velocity_kms=component_values("truth", "min_hot_velocity_kms"),
+        map_min_hot_velocity_kms=component_values("map", "min_hot_velocity_kms"),
+        sample_min_hot_velocity_kms=sample_component_values("min_hot_velocity_kms"),
+        truth_stall_penalty=component_values("truth", "stall_penalty"),
+        map_stall_penalty=component_values("map", "stall_penalty"),
+        sample_stall_penalty=sample_component_values("stall_penalty"),
+        truth_numerical_failure_penalty=component_values("truth", "numerical_failure_penalty"),
+        map_numerical_failure_penalty=component_values("map", "numerical_failure_penalty"),
+        sample_numerical_failure_penalty=sample_component_values("numerical_failure_penalty"),
         posterior_predictive=_pad_stack([r.posterior_predictive for r in results], (model.observable_dim,)),
         posterior_component_names=np.asarray(model.POSTERIOR_COMPONENT_NAMES, dtype=str),
         posterior_components_truth=np.vstack(
@@ -1065,9 +1297,10 @@ def write_npz(output_dir: str, model: Any, results: Sequence[RealizationResult])
     return path
 
 
-def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> str:
+def write_csv_summary(output_dir: str, model: Any, results: Sequence[RealizationResult]) -> str:
     """Write compact row-per-realization recovery summary."""
     path = os.path.join(output_dir, "synthetic_recovery_summary.csv")
+    parameter_names = _parameter_names(model)
     fieldnames = [
         "truth_case",
         "realization_id",
@@ -1075,7 +1308,14 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
         "success",
         "map_success",
         "chi2",
+        "failure_policy",
         "nuts_coordinate",
+        "truth_trajectory_status_code",
+        "map_trajectory_status_code",
+        "map_soft_reach_radius_kpc",
+        "map_min_hot_velocity_kms",
+        "map_stall_penalty",
+        "map_numerical_failure_penalty",
         "acceptance_rate",
         "num_divergent",
         "max_tree_depth_hits",
@@ -1098,7 +1338,7 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
             "truth_in_95_eta_E_over_eta_M",
         ]
     )
-    for name in PARAM_NAMES:
+    for name in parameter_names:
         fieldnames.extend(
             [
                 f"true_{name}",
@@ -1125,6 +1365,7 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
                 "success": result.success,
                 "map_success": result.map_success,
                 "chi2": result.chi2,
+                "failure_policy": result.diagnostics.get("failure_policy", ""),
                 "nuts_coordinate": result.diagnostics.get("nuts_coordinate", ""),
                 "acceptance_rate": result.diagnostics.get("acceptance_rate", np.nan),
                 "num_divergent": result.diagnostics.get("num_divergent", np.nan),
@@ -1136,6 +1377,32 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
                 "runtime_total_seconds": result.runtime_seconds.get("total", np.nan),
                 "error": result.error,
             }
+            component_names = np.asarray(result.diagnostics.get("posterior_component_names", ()), dtype=str)
+            component_index = {name: idx for idx, name in enumerate(component_names)}
+
+            def component(which: str, name: str) -> float:
+                idx = component_index.get(name)
+                if idx is None:
+                    return float("nan")
+                arr = np.asarray(
+                    result.diagnostics.get(
+                        f"posterior_components_{which}",
+                        np.full((component_names.size,), np.nan),
+                    ),
+                    dtype=float,
+                )
+                return float(arr[idx]) if arr.ndim == 1 and arr.size > idx else float("nan")
+
+            row.update(
+                {
+                    "truth_trajectory_status_code": component("truth", "trajectory_status_code"),
+                    "map_trajectory_status_code": component("map", "trajectory_status_code"),
+                    "map_soft_reach_radius_kpc": component("map", "soft_reach_radius_kpc"),
+                    "map_min_hot_velocity_kms": component("map", "min_hot_velocity_kms"),
+                    "map_stall_penalty": component("map", "stall_penalty"),
+                    "map_numerical_failure_penalty": component("map", "numerical_failure_penalty"),
+                }
+            )
             ratio_metrics = summarize_ratio_recovery_metrics(result.theta_true, result.theta_map, result.samples_theta)
             row.update(
                 {
@@ -1149,7 +1416,7 @@ def write_csv_summary(output_dir: str, results: Sequence[RealizationResult]) -> 
                     "truth_in_95_eta_E_over_eta_M": bool(ratio_metrics["truth_in_95pct_interval"]),
                 }
             )
-            for idx, name in enumerate(PARAM_NAMES):
+            for idx, name in enumerate(parameter_names):
                 row[f"true_{name}"] = result.theta_true[idx]
                 row[f"map_{name}"] = result.theta_map[idx]
                 row[f"map_error_{name}"] = result.metrics["map_error"][idx]
@@ -1234,6 +1501,8 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
     plot_dir = os.path.join(output_dir, "diagnostic_plots")
     os.makedirs(plot_dir, exist_ok=True)
 
+    parameter_names = _parameter_names(model)
+    energy_coordinate_names = _energy_coordinate_names(model)
     corner_paths: list[str] = []
     energy_corner_paths: list[str] = []
     divergent_corner_paths: list[str] = []
@@ -1248,7 +1517,7 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
             corner_path = os.path.join(plot_dir, f"{slug}_corner.png")
             plot_corner(
                 result.samples_theta,
-                labels=PARAM_NAMES,
+                labels=parameter_names,
                 output_path=corner_path,
                 truths=result.theta_true,
                 map_theta=result.theta_map,
@@ -1260,20 +1529,20 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
                 plot_divergent_overlay_corner(
                     result.samples_theta,
                     divergent,
-                    labels=PARAM_NAMES,
+                    labels=parameter_names,
                     output_path=divergent_corner_path,
                     truths=result.theta_true,
                     map_theta=result.theta_map,
                 )
                 divergent_corner_paths.append(divergent_corner_path)
-            if getattr(model, "energy_coordinate", "eta_e") == "eta_e_over_eta_m":
+            if getattr(model, "energy_coordinate", "eta_e") != "eta_e":
                 energy_corner_path = os.path.join(plot_dir, f"{slug}_energy_coordinate_corner.png")
                 samples_energy = model.energy_coordinates_from_theta_numpy(result.samples_theta)
                 truth_energy = model.energy_coordinates_from_theta_numpy(result.theta_true)
                 map_energy = model.energy_coordinates_from_theta_numpy(result.theta_map)
                 plot_corner(
                     samples_energy,
-                    labels=ENERGY_COORDINATE_NAMES,
+                    labels=energy_coordinate_names,
                     output_path=energy_corner_path,
                     truths=truth_energy,
                     map_theta=map_energy,
@@ -1287,7 +1556,7 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
                     plot_divergent_overlay_corner(
                         samples_energy,
                         divergent,
-                        labels=ENERGY_COORDINATE_NAMES,
+                        labels=energy_coordinate_names,
                         output_path=divergent_energy_corner_path,
                         truths=truth_energy,
                         map_theta=map_energy,
@@ -1304,6 +1573,21 @@ def make_diagnostic_plots(output_dir: str, model: Any, results: Sequence[Realiza
                 posterior_dndv_samples=result.posterior_predictive
                 if result.posterior_predictive.size > 0
                 else None,
+                output_path=fit_path,
+            )
+        elif model.observable_set == "log_dndv_binned":
+            observed_dndv = np.exp(result.observed)
+            map_dndv = np.exp(result.map_predicted_observables)
+            posterior_dndv = (
+                np.exp(result.posterior_predictive) if result.posterior_predictive.size > 0 else None
+            )
+            linear_covariance = result.covariance * observed_dndv[:, None] * observed_dndv[None, :]
+            plot_dndv_fit(
+                velocity_bins_kms=model.get_dndv_velocity_bins(),
+                observed_dndv=observed_dndv,
+                covariance_dndv=linear_covariance,
+                map_dndv=map_dndv,
+                posterior_dndv_samples=posterior_dndv,
                 output_path=fit_path,
             )
         else:
@@ -1340,30 +1624,52 @@ def write_metadata(
 ) -> str:
     """Write run metadata and truth-case documentation."""
     success = np.asarray([result.success for result in results], dtype=bool)
+    parameter_names = _parameter_names(model)
     metadata = {
         "created_by": "examples/inference_synthetic_recovery.py",
         "runtime_seconds": float(runtime_seconds),
         "arguments": vars(args),
-        "theta_names": list(PARAM_NAMES),
+        "theta_names": list(parameter_names),
         "truth_cases": {
             name: {"theta": list(case.theta), "description": case.description} for name, case in TRUTH_CASES.items()
         },
         "observable_set": model.observable_set,
         "observable_names": list(model.observable_names),
+        "dndv_kernel": getattr(model, "dndv_kernel", ""),
+        "dndv_kernel_truncate_sigma": getattr(model, "dndv_kernel_truncate_sigma", None),
+        "log_dndv_low_signal": {
+            "policy": getattr(model, "log_dndv_low_signal_policy", ""),
+            "censor_delta_log": getattr(model, "log_dndv_censor_delta_log", None),
+            "censor_transition": getattr(model, "log_dndv_censor_transition", None),
+            "censor_sigma": getattr(model, "log_dndv_censor_sigma", None),
+            "censor_upper_margin": getattr(model, "log_dndv_censor_upper_margin", None),
+        },
         "eta_e_parameterization": model.eta_e_parameterization,
         "energy_coordinate": model.energy_coordinate,
+        "expanded_parameters": getattr(model, "expanded_parameters", "none"),
+        "beta_chi_max_abs": getattr(model, "beta_chi_max_abs", None),
+        "mixing_chi_pivot": getattr(model, "mixing_chi_pivot", None),
+        "failure_policy": model.failure_policy,
         "nuts_coordinate": args.nuts_coordinate,
         "eta_e_softcap": {
             "center": model.eta_e_softcap_center,
             "sigma": model.eta_e_softcap_sigma,
             "transition": model.eta_e_softcap_transition,
         },
+        "stalled_wind": {
+            "velocity_floor_kms": model.stall_velocity_floor_kms,
+            "velocity_transition_kms": model.stall_velocity_transition_kms,
+            "radius_sigma_kpc": model.stall_radius_sigma_kpc,
+            "radius_transition_kpc": model.stall_radius_transition_kpc,
+        },
         "num_realizations": int(len(results)),
         "num_success": int(np.sum(success)),
         "success_fraction": float(np.mean(success)) if success.size else np.nan,
         "output_files": output_files,
         "notes": [
-            "Fitted parameters are fixed to eta_M, eta_M_cold, and eta_E.",
+            "Default fitted parameters are eta_M, eta_M_cold, and eta_E.",
+            "expanded_parameters='a_mix' adds A_mix as a restricted effective mass-exchange amplitude.",
+            "expanded_parameters='a_mix_beta_chi' adds diagnostic beta_chi_mix through A_mix * (chi / chi_pivot)^beta_chi_mix.",
             "Failures are retained as rows with success=false and NaN posterior arrays.",
             "sampler=none runs MAP only and leaves posterior interval metrics as NaN/false.",
             "Diagnostic corner plots use green dashed truth lines and red MAP lines.",
@@ -1371,7 +1677,11 @@ def write_metadata(
             "Reported MAP values optimize the log-parameter posterior; posterior samplers include the unconstrained-transform Jacobian.",
             "eta_e_parameterization='softcap' is a diagnostic mode that allows eta_E > 1 with a smooth upper-tail penalty.",
             "energy_coordinate='eta_e_over_eta_m' is a diagnostic mode that samples eta_E/eta_M but reports physical eta_M, eta_M_cold, and eta_E.",
+            "energy_coordinate='loading_ratios' is a diagnostic mode that samples eta_M, eta_M_cold/eta_M, and eta_E/eta_M while reporting physical parameters.",
+            "dndv_kernel='truncated_gaussian' and 'compact_cosine' are diagnostic support-aware kernels for testing sensitivity to Gaussian far-tail leakage.",
+            "log_dndv_low_signal_policy='censored_upper' treats low-signal log-profile bins as smooth one-sided upper limits.",
             "nuts_coordinate='map_whitened' samples local MAP-whitened coordinates and maps them back to physical outputs.",
+            "failure_policy='stalled_wind' treats stalled hot-wind trajectories as finite low-probability evaluations; 'hard_invalid' restores the legacy cliff.",
         ],
     }
     path = os.path.join(output_dir, "run_metadata.json")
@@ -1410,7 +1720,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     output_files: dict[str, Any] = {}
     output_files["npz"] = write_npz(args.output, model, results)
-    output_files["csv"] = write_csv_summary(args.output, results)
+    output_files["csv"] = write_csv_summary(args.output, model, results)
     if not args.no_diagnostic_plots:
         output_files.update(make_diagnostic_plots(args.output, model, results))
     output_files["metadata"] = write_metadata(

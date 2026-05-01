@@ -24,6 +24,9 @@ def test_default_initialization():
     assert config.v_cloud_min == 1.0
     assert config.solver_max_step_kpc == 0.3
     assert config.solver_first_step_kpc == 1e-12
+    assert config.A_mix == 1.0
+    assert config.beta_chi_mix == 0.0
+    assert config.mixing_chi_pivot == 100.0
 
 
 def test_custom_initialization():
@@ -74,6 +77,9 @@ def test_to_dict_contains_expected_keys_and_values():
     assert config_dict["v_cloud_init"] == config.v_cloud_init
     assert config_dict["v_cloud_min"] == config.v_cloud_min
     assert config_dict["sonic_point_offset"] == config.sonic_point_offset
+    assert config_dict["A_mix"] == config.A_mix
+    assert config_dict["beta_chi_mix"] == config.beta_chi_mix
+    assert config_dict["mixing_chi_pivot"] == config.mixing_chi_pivot
 
 
 def test_get_default_config_returns_new_instances():
@@ -131,6 +137,9 @@ def test_parameter_ranges_and_validation():
         {"cooling_backend": "legacy"},
         {"cooling_backend": "invalid"},
         {"Cooling_Factor": -1.0},
+        {"A_mix": 0.0},
+        {"beta_chi_mix": np.nan},
+        {"mixing_chi_pivot": 0.0},
     ],
 )
 def test_validate_rejects_invalid_values(kwargs):

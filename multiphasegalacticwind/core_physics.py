@@ -110,6 +110,9 @@ def _cloud_exchange_kernel_numba(
     ColdTurbulenceChiPower,
     geometric_factor,
     Mdot_coefficient,
+    A_mix,
+    beta_chi_mix,
+    mixing_chi_pivot,
     drag_coeff,
     f_turb0,
     Omwind,
@@ -134,6 +137,9 @@ def _cloud_exchange_kernel_numba(
     chi_turb = chi ** TurbulentVelocityChiPower
     area_boost = geometric_factor * chi ** CoolingAreaChiPower
     chi_cold_turb = chi ** ColdTurbulenceChiPower
+    chi_ratio = min(max(chi / mixing_chi_pivot, 1.0e-6), 1.0e6)
+    mixing_factor = A_mix * np.exp(beta_chi_mix * np.log(chi_ratio))
+    mdot_exchange_coefficient = Mdot_coefficient * mixing_factor
 
     for i in range(n_species):
         v_cloud_i = v_cloud[i]
@@ -169,7 +175,7 @@ def _cloud_exchange_kernel_numba(
                 ksi_factor = ksi ** 0.25
 
             Mdot_grow = (
-                Mdot_coefficient
+                mdot_exchange_coefficient
                 * 3.0
                 * M_cloud_i
                 * v_turb
@@ -177,7 +183,7 @@ def _cloud_exchange_kernel_numba(
                 / (r_cloud_safe * chi)
                 * ksi_factor
             )
-            Mdot_loss = Mdot_coefficient * 3.0 * (-M_cloud_i) * v_turb_cold / r_cloud_safe
+            Mdot_loss = mdot_exchange_coefficient * 3.0 * (-M_cloud_i) * v_turb_cold / r_cloud_safe
         else:
             Mdot_grow = 0.0
             Mdot_loss = 0.0
@@ -252,6 +258,9 @@ def Wind_Evo(r, state, params):
     TurbulentVelocityChiPower = config_dict['TurbulentVelocityChiPower']
     geometric_factor = config_dict['geometric_factor']
     Mdot_coefficient = config_dict['Mdot_coefficient']
+    A_mix = config_dict.get('A_mix', 1.0)
+    beta_chi_mix = config_dict.get('beta_chi_mix', 0.0)
+    mixing_chi_pivot = config_dict.get('mixing_chi_pivot', 100.0)
     Cooling_Factor = config_dict['Cooling_Factor']
     drag_coeff = config_dict['drag_coeff']
     f_turb0 = config_dict['f_turb0']
@@ -355,6 +364,9 @@ def Wind_Evo(r, state, params):
             ColdTurbulenceChiPower,
             geometric_factor,
             Mdot_coefficient,
+            A_mix,
+            beta_chi_mix,
+            mixing_chi_pivot,
             drag_coeff,
             f_turb0,
             Omwind,

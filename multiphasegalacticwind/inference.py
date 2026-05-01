@@ -211,24 +211,40 @@ class MomentInferenceModel:
     """Autodiff-enabled inference model for moment-based dN/dv observables."""
 
     PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
+    EXPANDED_PARAMETER_NAMES = {
+        "none": PARAM_NAMES,
+        "a_mix": (*PARAM_NAMES, "A_mix"),
+        "a_mix_beta_chi": (*PARAM_NAMES, "A_mix", "beta_chi_mix"),
+    }
     POSTERIOR_COMPONENT_NAMES = (
         "chi2",
+        "gaussian_chi2",
+        "censored_chi2",
         "prior_chi2",
         "log_transform_jacobian",
         "transform_term",
         "eta_e_softcap_penalty",
         "validity_barrier",
         "early_fail_penalty",
+        "stall_penalty",
+        "numerical_failure_penalty",
         "hard_invalid_penalty",
         "total_objective",
         "valid",
+        "trajectory_status_code",
+        "soft_reach_radius_kpc",
         "first_invalid_r_kpc",
+        "min_hot_velocity_kms",
     )
     _THETA_FLOOR = 1e-12
     _ETA_E_MAX = 0.999
     _OBS_MOMENTS3 = "m0_m1_m2"
     _OBS_SHAPE5 = "logm0_mean_sigma_skew_kurt"
     _OBS_DNDV_BINNED = "dndv_binned"
+    _OBS_LOG_DNDV_BINNED = "log_dndv_binned"
+    _DNDV_KERNEL_GAUSSIAN = 0
+    _DNDV_KERNEL_TRUNCATED_GAUSSIAN = 1
+    _DNDV_KERNEL_COMPACT_COSINE = 2
     _OBSERVABLE_SETS = {
         _OBS_MOMENTS3: ("M0", "M1", "M2"),
         _OBS_SHAPE5: ("logM0", "mean_v", "sigma_v", "skewness", "kurtosis"),
@@ -255,11 +271,26 @@ class MomentInferenceModel:
         dndv_vmin_kms: float = 0.0,
         dndv_vmax_kms: float = 1200.0,
         dndv_kernel_sigma_kms: float | None = None,
+        dndv_kernel: str = "gaussian",
+        dndv_kernel_truncate_sigma: float = 3.0,
+        log_dndv_low_signal_policy: str = "gaussian",
+        log_dndv_censor_delta_log: float = 20.0,
+        log_dndv_censor_transition: float = 0.25,
+        log_dndv_censor_sigma: float = 0.50,
+        log_dndv_censor_upper_margin: float = 1.0,
         eta_e_parameterization: str = "bounded",
         energy_coordinate: str = "eta_e",
+        expanded_parameters: str = "none",
         eta_e_softcap_center: float = 1.0,
         eta_e_softcap_sigma: float = 0.10,
         eta_e_softcap_transition: float = 0.01,
+        beta_chi_max_abs: float = 0.75,
+        mixing_chi_pivot: float | None = None,
+        failure_policy: str = "stalled_wind",
+        stall_velocity_floor_kms: float = 0.0,
+        stall_velocity_transition_kms: float = 50.0,
+        stall_radius_sigma_kpc: float = 0.25,
+        stall_radius_transition_kpc: float = 0.05,
         config: WindConfig | None = None,
         topaz_cooling_table_path: str | None = None,
     ) -> None:
@@ -288,12 +319,29 @@ class MomentInferenceModel:
         self.dndv_num_bins = int(dndv_num_bins)
         self.dndv_vmin_kms = float(dndv_vmin_kms)
         self.dndv_vmax_kms = float(dndv_vmax_kms)
+        self.dndv_kernel = self._resolve_dndv_kernel(dndv_kernel)
+        self.dndv_kernel_truncate_sigma = float(dndv_kernel_truncate_sigma)
+        self.log_dndv_low_signal_policy = self._resolve_log_dndv_low_signal_policy(log_dndv_low_signal_policy)
+        self.log_dndv_censor_delta_log = float(log_dndv_censor_delta_log)
+        self.log_dndv_censor_transition = float(log_dndv_censor_transition)
+        self.log_dndv_censor_sigma = float(log_dndv_censor_sigma)
+        self.log_dndv_censor_upper_margin = float(log_dndv_censor_upper_margin)
         self.observable_set = self._resolve_observable_set(observable_set)
         self.eta_e_parameterization = self._resolve_eta_e_parameterization(eta_e_parameterization)
         self.energy_coordinate = self._resolve_energy_coordinate(energy_coordinate)
+        self.expanded_parameters = self._resolve_expanded_parameters(expanded_parameters)
+        self.param_names = self.EXPANDED_PARAMETER_NAMES[self.expanded_parameters]
+        self.theta_dim = len(self.param_names)
+        self.beta_chi_max_abs = float(beta_chi_max_abs)
+        self.mixing_chi_pivot = None if mixing_chi_pivot is None else float(mixing_chi_pivot)
         self.eta_e_softcap_center = float(eta_e_softcap_center)
         self.eta_e_softcap_sigma = float(eta_e_softcap_sigma)
         self.eta_e_softcap_transition = float(eta_e_softcap_transition)
+        self.failure_policy = self._resolve_failure_policy(failure_policy)
+        self.stall_velocity_floor_kms = float(stall_velocity_floor_kms)
+        self.stall_velocity_transition_kms = float(stall_velocity_transition_kms)
+        self.stall_radius_sigma_kpc = float(stall_radius_sigma_kpc)
+        self.stall_radius_transition_kpc = float(stall_radius_transition_kpc)
 
         if self.integrator_mode not in {"rk2", "rk3", "rk4", "tsit5"}:
             raise ValueError("integrator_mode must be one of {'rk2', 'rk3', 'rk4', 'tsit5'}")
@@ -301,14 +349,24 @@ class MomentInferenceModel:
             raise ValueError("dndv_num_bins must be >= 6")
         if self.dndv_vmax_kms <= self.dndv_vmin_kms:
             raise ValueError("dndv_vmax_kms must exceed dndv_vmin_kms")
-        if self.energy_coordinate == "eta_e_over_eta_m" and self.eta_e_parameterization != "softcap":
-            raise ValueError("energy_coordinate='eta_e_over_eta_m' requires eta_e_parameterization='softcap'")
+        if self.energy_coordinate in {"eta_e_over_eta_m", "loading_ratios"} and self.eta_e_parameterization != "softcap":
+            raise ValueError(f"energy_coordinate='{self.energy_coordinate}' requires eta_e_parameterization='softcap'")
+        if self.beta_chi_max_abs <= 0.0:
+            raise ValueError("beta_chi_max_abs must be positive")
+        if self.mixing_chi_pivot is not None and (self.mixing_chi_pivot <= 0.0 or not np.isfinite(self.mixing_chi_pivot)):
+            raise ValueError("mixing_chi_pivot must be positive and finite")
         if self.eta_e_softcap_center <= 0.0:
             raise ValueError("eta_e_softcap_center must be positive")
         if self.eta_e_softcap_sigma <= 0.0:
             raise ValueError("eta_e_softcap_sigma must be positive")
         if self.eta_e_softcap_transition <= 0.0:
             raise ValueError("eta_e_softcap_transition must be positive")
+        if self.stall_velocity_transition_kms <= 0.0:
+            raise ValueError("stall_velocity_transition_kms must be positive")
+        if self.stall_radius_sigma_kpc <= 0.0:
+            raise ValueError("stall_radius_sigma_kpc must be positive")
+        if self.stall_radius_transition_kpc <= 0.0:
+            raise ValueError("stall_radius_transition_kpc must be positive")
 
         self.dndv_bin_edges_kms = np.linspace(
             self.dndv_vmin_kms,
@@ -322,10 +380,21 @@ class MomentInferenceModel:
         self.dndv_kernel_sigma_kms = float(dndv_kernel_sigma_kms)
         if self.dndv_kernel_sigma_kms <= 0.0:
             raise ValueError("dndv_kernel_sigma_kms must be positive")
+        if self.dndv_kernel_truncate_sigma <= 0.0:
+            raise ValueError("dndv_kernel_truncate_sigma must be positive")
+        if self.log_dndv_censor_delta_log <= 0.0:
+            raise ValueError("log_dndv_censor_delta_log must be positive")
+        if self.log_dndv_censor_transition <= 0.0:
+            raise ValueError("log_dndv_censor_transition must be positive")
+        if self.log_dndv_censor_sigma <= 0.0:
+            raise ValueError("log_dndv_censor_sigma must be positive")
+        if self.log_dndv_censor_upper_margin < 0.0:
+            raise ValueError("log_dndv_censor_upper_margin must be non-negative")
 
-        if self.observable_set == self._OBS_DNDV_BINNED:
-            self.observable_names = tuple(f"dN/dv@{v:.0f}km/s" for v in self.dndv_bin_centers_kms)
-            self.default_observable_yscale = "log"
+        if self.observable_set in {self._OBS_DNDV_BINNED, self._OBS_LOG_DNDV_BINNED}:
+            prefix = "log_dN/dv" if self.observable_set == self._OBS_LOG_DNDV_BINNED else "dN/dv"
+            self.observable_names = tuple(f"{prefix}@{v:.0f}km/s" for v in self.dndv_bin_centers_kms)
+            self.default_observable_yscale = "log" if self.observable_set == self._OBS_DNDV_BINNED else "linear"
         else:
             self.observable_names = self._OBSERVABLE_SETS[self.observable_set]
             self.default_observable_yscale = "log" if self.observable_set == self._OBS_MOMENTS3 else "linear"
@@ -338,6 +407,8 @@ class MomentInferenceModel:
 
         self.config = WindConfig() if config is None else config
         self.config.validate()
+        if self.mixing_chi_pivot is None:
+            self.mixing_chi_pivot = float(self.config.mixing_chi_pivot)
 
         self.r_star_cgs = self.r_star_kpc * kpc
         self.r_grid = jnp.asarray(
@@ -372,11 +443,15 @@ class MomentInferenceModel:
         if self.integrator_mode in {"rk2", "rk3", "rk4"}:
             self._predict_theta_fn = jax.jit(lambda theta: self._predict_theta_with_valid_fn(theta)[0])
             self._predict_raw_theta_fn = jax.jit(lambda theta: self._predict_theta_with_valid_fn(theta)[1])
-            self._predict_log_theta_fn = jax.jit(lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta)))
+            self._predict_log_theta_fn = jax.jit(
+                lambda prior_coordinate: self._predict_theta_fn(self._theta_from_prior_coordinate_jax(prior_coordinate))
+            )
         else:
             self._predict_theta_fn = lambda theta: self._predict_theta_with_valid_fn(theta)[0]
             self._predict_raw_theta_fn = lambda theta: self._predict_theta_with_valid_fn(theta)[1]
-            self._predict_log_theta_fn = lambda log_theta: self._predict_theta_fn(jnp.exp(log_theta))
+            self._predict_log_theta_fn = lambda prior_coordinate: self._predict_theta_fn(
+                self._theta_from_prior_coordinate_jax(prior_coordinate)
+            )
 
     @classmethod
     def _resolve_observable_set(cls, observable_set: str) -> str:
@@ -393,6 +468,10 @@ class MomentInferenceModel:
             "dndv": cls._OBS_DNDV_BINNED,
             "binned_dndv": cls._OBS_DNDV_BINNED,
             "full_dndv": cls._OBS_DNDV_BINNED,
+            "log_dndv_binned": cls._OBS_LOG_DNDV_BINNED,
+            "log_dndv": cls._OBS_LOG_DNDV_BINNED,
+            "binned_log_dndv": cls._OBS_LOG_DNDV_BINNED,
+            "log_profile": cls._OBS_LOG_DNDV_BINNED,
         }
         if key not in aliases:
             raise ValueError(
@@ -400,6 +479,102 @@ class MomentInferenceModel:
                 f"Expected one of {sorted(set(aliases.keys()))}, got '{observable_set}'."
             )
         return aliases[key]
+
+    @staticmethod
+    def _resolve_dndv_kernel(dndv_kernel: str) -> str:
+        key = dndv_kernel.strip().lower()
+        aliases = {
+            "gaussian": "gaussian",
+            "normal": "gaussian",
+            "truncated_gaussian": "truncated_gaussian",
+            "truncated-gaussian": "truncated_gaussian",
+            "trunc_gaussian": "truncated_gaussian",
+            "compact_cosine": "compact_cosine",
+            "compact-cosine": "compact_cosine",
+            "raised_cosine": "compact_cosine",
+            "cosine": "compact_cosine",
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported dndv_kernel. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{dndv_kernel}'."
+            )
+        return aliases[key]
+
+    @staticmethod
+    def _resolve_log_dndv_low_signal_policy(policy: str) -> str:
+        key = policy.strip().lower()
+        aliases = {
+            "gaussian": "gaussian",
+            "none": "gaussian",
+            "two_sided": "gaussian",
+            "censored_upper": "censored_upper",
+            "censored-upper": "censored_upper",
+            "upper_limit": "censored_upper",
+            "upper-limit": "censored_upper",
+            "censored": "censored_upper",
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported log_dndv_low_signal_policy. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{policy}'."
+            )
+        return aliases[key]
+
+    def log_dndv_censored_mask(self, observed_moments: Sequence[float]) -> np.ndarray:
+        """Return low-signal log-profile bins treated as censored upper limits."""
+        y_obs = np.asarray(observed_moments, dtype=float)
+        if y_obs.shape != (self.observable_dim,):
+            raise ValueError(
+                "observed_moments must match observable_set size "
+                f"{self.observable_dim} ({self.observable_names}), got shape {y_obs.shape}"
+            )
+        if self.observable_set != self._OBS_LOG_DNDV_BINNED or self.log_dndv_low_signal_policy != "censored_upper":
+            return np.zeros((self.observable_dim,), dtype=bool)
+        finite = np.isfinite(y_obs)
+        if not np.any(finite):
+            return np.zeros((self.observable_dim,), dtype=bool)
+        threshold = float(np.nanmax(y_obs[finite]) - self.log_dndv_censor_delta_log)
+        return finite & (y_obs <= threshold)
+
+    def log_dndv_censor_upper_limits(self, observed_moments: Sequence[float]) -> np.ndarray:
+        """Return log upper limits used by the censored low-signal likelihood."""
+        y_obs = np.asarray(observed_moments, dtype=float)
+        if y_obs.shape != (self.observable_dim,):
+            raise ValueError(
+                "observed_moments must match observable_set size "
+                f"{self.observable_dim} ({self.observable_names}), got shape {y_obs.shape}"
+            )
+        return y_obs + self.log_dndv_censor_upper_margin
+
+    def _observable_likelihood_setup(
+        self,
+        observed_moments: Sequence[float],
+        covariance_moments: np.ndarray,
+    ) -> dict[str, np.ndarray | bool]:
+        """Prepare static Gaussian/censored likelihood arrays."""
+        y_obs_np = np.asarray(observed_moments, dtype=float)
+        cov = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
+        censored_mask = self.log_dndv_censored_mask(y_obs_np)
+        use_censored = bool(np.any(censored_mask))
+
+        gaussian_cov_inv = np.zeros_like(cov, dtype=float)
+        if use_censored:
+            detected_mask = ~censored_mask
+            if np.any(detected_mask):
+                detected_cov = stabilize_covariance(cov[np.ix_(detected_mask, detected_mask)])
+                detected_cov_inv = np.linalg.inv(detected_cov)
+                gaussian_cov_inv[np.ix_(detected_mask, detected_mask)] = detected_cov_inv
+        else:
+            gaussian_cov_inv = np.linalg.inv(cov)
+
+        return {
+            "covariance": cov,
+            "gaussian_cov_inv": gaussian_cov_inv,
+            "censored_mask": censored_mask.astype(float),
+            "censored_upper": self.log_dndv_censor_upper_limits(y_obs_np),
+            "use_censored": use_censored,
+        }
 
     @staticmethod
     def _resolve_eta_e_parameterization(eta_e_parameterization: str) -> str:
@@ -428,11 +603,56 @@ class MomentInferenceModel:
             "eta_e_over_eta_m": "eta_e_over_eta_m",
             "specific_energy": "eta_e_over_eta_m",
             "q_e": "eta_e_over_eta_m",
+            "loading_ratios": "loading_ratios",
+            "cold_and_energy_ratios": "loading_ratios",
+            "eta_m_cold_over_eta_m_and_eta_e_over_eta_m": "loading_ratios",
+            "eta_e_over_eta_m_and_eta_m_cold_over_eta_m": "loading_ratios",
+            "q_cold_q_e": "loading_ratios",
         }
         if key not in aliases:
             raise ValueError(
                 "Unsupported energy_coordinate. "
                 f"Expected one of {sorted(set(aliases.keys()))}, got '{energy_coordinate}'."
+            )
+        return aliases[key]
+
+    @staticmethod
+    def _resolve_expanded_parameters(expanded_parameters: str) -> str:
+        key = expanded_parameters.strip().lower()
+        aliases = {
+            "none": "none",
+            "baseline": "none",
+            "three_parameter": "none",
+            "3param": "none",
+            "a_mix": "a_mix",
+            "amix": "a_mix",
+            "mixing_amplitude": "a_mix",
+            "a_mix_beta_chi": "a_mix_beta_chi",
+            "amix_beta_chi": "a_mix_beta_chi",
+            "a_mix+beta_chi": "a_mix_beta_chi",
+            "mixing_amplitude_chi": "a_mix_beta_chi",
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported expanded_parameters. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{expanded_parameters}'."
+            )
+        return aliases[key]
+
+    @staticmethod
+    def _resolve_failure_policy(failure_policy: str) -> str:
+        key = failure_policy.strip().lower()
+        aliases = {
+            "stalled_wind": "stalled_wind",
+            "stalled": "stalled_wind",
+            "smooth_stall": "stalled_wind",
+            "hard_invalid": "hard_invalid",
+            "legacy": "hard_invalid",
+        }
+        if key not in aliases:
+            raise ValueError(
+                "Unsupported failure_policy. "
+                f"Expected one of {sorted(set(aliases.keys()))}, got '{failure_policy}'."
             )
         return aliases[key]
 
@@ -458,31 +678,194 @@ class MomentInferenceModel:
         return jnp.asarray([jnp.log(m0), mean_v, sigma_v, skewness, kurtosis], dtype=jnp.float64)
 
     @staticmethod
-    def _observables_dndv_binned(v_kms, n_h_eff, r_grid, velocity_bins_kms, kernel_sigma_kms):
-        """Return Gaussian-kernel binned dN/dv over a fixed velocity grid."""
+    def _observables_dndv_binned(
+        v_kms,
+        n_h_eff,
+        r_grid,
+        velocity_bins_kms,
+        kernel_sigma_kms,
+        kernel_kind: int = _DNDV_KERNEL_GAUSSIAN,
+        truncate_sigma: float = 3.0,
+    ):
+        """Return kernel-binned dN/dv over a fixed velocity grid."""
         sigma = jnp.maximum(jnp.asarray(kernel_sigma_kms, dtype=jnp.float64), 1e-12)
         vb = jnp.asarray(velocity_bins_kms, dtype=jnp.float64)
 
         dv = (v_kms[:, :, None] - vb[None, None, :]) / sigma
-        kernel = jnp.exp(-0.5 * dv * dv) / (sigma * jnp.sqrt(2.0 * jnp.pi))
+        if int(kernel_kind) == MomentInferenceModel._DNDV_KERNEL_TRUNCATED_GAUSSIAN:
+            cutoff = jnp.asarray(truncate_sigma, dtype=jnp.float64)
+            norm = jax.lax.erf(cutoff / jnp.sqrt(2.0))
+            kernel = jnp.exp(-0.5 * dv * dv) / (sigma * jnp.sqrt(2.0 * jnp.pi) * jnp.maximum(norm, 1e-12))
+            kernel = jnp.where(jnp.abs(dv) <= cutoff, kernel, 0.0)
+        elif int(kernel_kind) == MomentInferenceModel._DNDV_KERNEL_COMPACT_COSINE:
+            abs_dv = jnp.abs(dv)
+            kernel = 0.5 * (1.0 + jnp.cos(jnp.pi * dv)) / sigma
+            kernel = jnp.where(abs_dv <= 1.0, kernel, 0.0)
+        else:
+            kernel = jnp.exp(-0.5 * dv * dv) / (sigma * jnp.sqrt(2.0 * jnp.pi))
         dndv_species = jnp.trapezoid(n_h_eff[:, :, None] * kernel, r_grid, axis=0)
         return jnp.sum(dndv_species, axis=0)
+
+    def _default_theta_numpy(self) -> np.ndarray:
+        """Return default physical parameters for the active inference dimension."""
+        theta = [0.2, 0.2, 0.8]
+        if self.expanded_parameters in {"a_mix", "a_mix_beta_chi"}:
+            theta.append(1.0)
+        if self.expanded_parameters == "a_mix_beta_chi":
+            theta.append(0.0)
+        return np.asarray(theta, dtype=float)
+
+    def _default_prior_sigma_numpy(self) -> np.ndarray:
+        """Return default prior widths in the active mixed prior coordinate."""
+        sigma = [1.5, 1.5, 0.8]
+        if self.expanded_parameters in {"a_mix", "a_mix_beta_chi"}:
+            sigma.append(0.35)
+        if self.expanded_parameters == "a_mix_beta_chi":
+            sigma.append(0.25)
+        return np.asarray(sigma, dtype=float)
+
+    def _coerce_theta_numpy(self, theta: Sequence[float], *, name: str = "theta") -> np.ndarray:
+        """Return a physical theta vector matching the active inference dimension."""
+        arr = np.asarray(theta, dtype=float)
+        if arr.shape == (self.theta_dim,):
+            return arr
+        if arr.shape == (3,) and self.theta_dim > 3:
+            default = self._default_theta_numpy()
+            default[:3] = arr
+            return default
+        raise ValueError(f"{name} must be length-{self.theta_dim}")
+
+    def _prior_coordinate_from_theta_numpy(self, theta: Sequence[float]) -> np.ndarray:
+        """Map physical theta to the mixed prior coordinate used by MAP/HMC."""
+        theta_arr = np.asarray(theta, dtype=float)
+        if theta_arr.shape[-1] != self.theta_dim:
+            if theta_arr.shape == (3,) and self.theta_dim > 3:
+                theta_arr = self._coerce_theta_numpy(theta_arr)
+            else:
+                raise ValueError(f"theta must have length-{self.theta_dim} trailing dimension")
+        coord = np.empty_like(theta_arr, dtype=float)
+        coord[..., :3] = np.log(np.maximum(theta_arr[..., :3], self._THETA_FLOOR))
+        if self.theta_dim >= 4:
+            coord[..., 3] = np.log(np.maximum(theta_arr[..., 3], self._THETA_FLOOR))
+        if self.theta_dim >= 5:
+            coord[..., 4] = theta_arr[..., 4]
+        return coord
+
+    def _theta_from_prior_coordinate_numpy(self, prior_coordinate: np.ndarray) -> np.ndarray:
+        """Map mixed prior coordinates back to physical theta."""
+        coord = np.asarray(prior_coordinate, dtype=float)
+        if coord.shape[-1] != self.theta_dim:
+            raise ValueError(f"prior_coordinate must have length-{self.theta_dim} trailing dimension")
+        out = np.empty_like(coord, dtype=float)
+        out[..., :3] = np.exp(coord[..., :3])
+        if self.theta_dim >= 4:
+            out[..., 3] = np.exp(coord[..., 3])
+        if self.theta_dim >= 5:
+            out[..., 4] = coord[..., 4]
+        return out
+
+    def _theta_from_prior_coordinate_jax(self, prior_coordinate):
+        """JAX map from mixed prior coordinates to physical theta."""
+        coord = jnp.asarray(prior_coordinate, dtype=jnp.float64)
+        values = [jnp.exp(coord[0]), jnp.exp(coord[1]), jnp.exp(coord[2])]
+        if self.theta_dim >= 4:
+            values.append(jnp.exp(coord[3]))
+        if self.theta_dim >= 5:
+            values.append(coord[4])
+        return jnp.asarray(values, dtype=jnp.float64)
+
+    def _coerce_prior_coordinate_numpy(
+        self,
+        prior_coordinate: Sequence[float] | None,
+        *,
+        default_theta: Sequence[float] | None = None,
+        name: str = "prior_mean_log",
+    ) -> np.ndarray:
+        """Coerce a prior-coordinate vector, extending old length-3 inputs in expanded modes."""
+        if prior_coordinate is None:
+            theta = self._default_theta_numpy() if default_theta is None else self._coerce_theta_numpy(default_theta)
+            return self._prior_coordinate_from_theta_numpy(theta)
+        arr = np.asarray(prior_coordinate, dtype=float)
+        if arr.shape == (self.theta_dim,):
+            return arr
+        if arr.shape == (3,) and self.theta_dim > 3:
+            default = self._prior_coordinate_from_theta_numpy(
+                self._default_theta_numpy() if default_theta is None else self._coerce_theta_numpy(default_theta)
+            )
+            default[:3] = arr
+            return default
+        raise ValueError(f"{name} must be length-{self.theta_dim}")
+
+    def _coerce_prior_sigma_numpy(self, prior_sigma_log: Sequence[float], *, name: str = "prior_sigma_log") -> np.ndarray:
+        """Coerce prior widths in the active mixed prior coordinate."""
+        arr = np.asarray(prior_sigma_log, dtype=float)
+        if arr.shape == (self.theta_dim,):
+            return arr
+        if arr.shape == (3,) and self.theta_dim > 3:
+            default = self._default_prior_sigma_numpy()
+            default[:3] = arr
+            return default
+        raise ValueError(f"{name} must be length-{self.theta_dim}")
+
+    def _jac_theta_prior_coordinate_numpy(self, theta: Sequence[float]) -> np.ndarray:
+        """Jacobian d theta / d prior-coordinate at a physical theta vector."""
+        theta_arr = self._coerce_theta_numpy(theta)
+        diag = np.ones((self.theta_dim,), dtype=float)
+        diag[:3] = theta_arr[:3]
+        if self.theta_dim >= 4:
+            diag[3] = theta_arr[3]
+        return np.diag(diag)
+
+    def parameter_names(self) -> tuple[str, ...]:
+        """Return physical parameter names for the active inference mode."""
+        return tuple(self.param_names)
+
+    def energy_coordinate_names(self) -> tuple[str, ...]:
+        """Return labels after applying any active loading-ratio diagnostic coordinates."""
+        names = list(self.param_names)
+        if self.energy_coordinate == "eta_e_over_eta_m":
+            names[2] = "eta_E_over_eta_M"
+        elif self.energy_coordinate == "loading_ratios":
+            names[1] = "eta_M_cold_over_eta_M"
+            names[2] = "eta_E_over_eta_M"
+        return tuple(names)
 
     def _theta_from_unconstrained_jax(self, unconstrained_theta):
         """Map unconstrained variables to physical theta."""
         u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
         eta_m = jax.nn.softplus(u[0]) + self._THETA_FLOOR
-        eta_m_cold = jax.nn.softplus(u[1]) + self._THETA_FLOOR
+        eta_m_cold_coordinate = jax.nn.softplus(u[1]) + self._THETA_FLOOR
+        if self.energy_coordinate == "loading_ratios":
+            eta_m_cold_over_eta_m = eta_m_cold_coordinate
+            eta_e_over_eta_m = jax.nn.softplus(u[2]) + self._THETA_FLOOR
+            eta_m_cold = eta_m * eta_m_cold_over_eta_m
+            eta_e = eta_m * eta_e_over_eta_m
+            theta = [eta_m, eta_m_cold, eta_e]
+            if self.theta_dim >= 4:
+                theta.append(jax.nn.softplus(u[3]) + self._THETA_FLOOR)
+            if self.theta_dim >= 5:
+                theta.append(self.beta_chi_max_abs * jnp.tanh(u[4]))
+            return jnp.asarray(theta, dtype=jnp.float64)
         if self.energy_coordinate == "eta_e_over_eta_m":
             eta_e_over_eta_m = jax.nn.softplus(u[2]) + self._THETA_FLOOR
             eta_e = eta_m * eta_e_over_eta_m
-            return jnp.asarray([eta_m, eta_m_cold, eta_e], dtype=jnp.float64)
+            theta = [eta_m, eta_m_cold_coordinate, eta_e]
+            if self.theta_dim >= 4:
+                theta.append(jax.nn.softplus(u[3]) + self._THETA_FLOOR)
+            if self.theta_dim >= 5:
+                theta.append(self.beta_chi_max_abs * jnp.tanh(u[4]))
+            return jnp.asarray(theta, dtype=jnp.float64)
 
         if self.eta_e_parameterization == "bounded":
             eta_e = self._ETA_E_MAX * jax.nn.sigmoid(u[2]) + self._THETA_FLOOR
         else:
             eta_e = jax.nn.softplus(u[2]) + self._THETA_FLOOR
-        return jnp.asarray([eta_m, eta_m_cold, eta_e], dtype=jnp.float64)
+        theta = [eta_m, eta_m_cold_coordinate, eta_e]
+        if self.theta_dim >= 4:
+            theta.append(jax.nn.softplus(u[3]) + self._THETA_FLOOR)
+        if self.theta_dim >= 5:
+            theta.append(self.beta_chi_max_abs * jnp.tanh(u[4]))
+        return jnp.asarray(theta, dtype=jnp.float64)
 
     def _theta_log_and_jac_log_u_jax(self, unconstrained_theta):
         """
@@ -494,6 +877,33 @@ class MomentInferenceModel:
         u = jnp.asarray(unconstrained_theta, dtype=jnp.float64)
         sig = jax.nn.sigmoid(u)
         theta = self._theta_from_unconstrained_jax(u)
+        if self.energy_coordinate == "loading_ratios":
+            eta_m_cold_over_eta_m = jax.nn.softplus(u[1]) + self._THETA_FLOOR
+            eta_e_over_eta_m = jax.nn.softplus(u[2]) + self._THETA_FLOOR
+            dlog_eta_m_du = sig[0] / jnp.maximum(theta[0], self._THETA_FLOOR)
+            dlog_cold_ratio_du = sig[1] / jnp.maximum(eta_m_cold_over_eta_m, self._THETA_FLOOR)
+            dlog_energy_ratio_du = sig[2] / jnp.maximum(eta_e_over_eta_m, self._THETA_FLOOR)
+            jac_log_u = jnp.asarray(
+                [
+                    [dlog_eta_m_du, 0.0, 0.0],
+                    [dlog_eta_m_du, dlog_cold_ratio_du, 0.0],
+                    [dlog_eta_m_du, 0.0, dlog_energy_ratio_du],
+                ],
+                dtype=jnp.float64,
+            )
+            prior_coordinate = jnp.log(theta[:3])
+            if self.theta_dim >= 4:
+                dlog_a_mix_du = sig[3] / jnp.maximum(theta[3], self._THETA_FLOOR)
+                jac_log_u = jnp.pad(jac_log_u, ((0, 1), (0, 1)))
+                jac_log_u = jac_log_u.at[3, 3].set(dlog_a_mix_du)
+                prior_coordinate = jnp.concatenate([prior_coordinate, jnp.log(theta[3:4])])
+            if self.theta_dim >= 5:
+                dbeta_du = self.beta_chi_max_abs * (1.0 - jnp.tanh(u[4]) ** 2)
+                jac_log_u = jnp.pad(jac_log_u, ((0, 1), (0, 1)))
+                jac_log_u = jac_log_u.at[4, 4].set(dbeta_du)
+                prior_coordinate = jnp.concatenate([prior_coordinate, theta[4:5]])
+            return theta, prior_coordinate, jac_log_u
+
         if self.energy_coordinate == "eta_e_over_eta_m":
             eta_e_over_eta_m = jax.nn.softplus(u[2]) + self._THETA_FLOOR
             dlog_eta_m_du = sig[0] / jnp.maximum(theta[0], self._THETA_FLOOR)
@@ -507,44 +917,79 @@ class MomentInferenceModel:
                 ],
                 dtype=jnp.float64,
             )
-            return theta, jnp.log(theta), jac_log_u
+            prior_coordinate = jnp.log(theta[:3])
+            if self.theta_dim >= 4:
+                dlog_a_mix_du = sig[3] / jnp.maximum(theta[3], self._THETA_FLOOR)
+                jac_log_u = jnp.pad(jac_log_u, ((0, 1), (0, 1)))
+                jac_log_u = jac_log_u.at[3, 3].set(dlog_a_mix_du)
+                prior_coordinate = jnp.concatenate([prior_coordinate, jnp.log(theta[3:4])])
+            if self.theta_dim >= 5:
+                dbeta_du = self.beta_chi_max_abs * (1.0 - jnp.tanh(u[4]) ** 2)
+                jac_log_u = jnp.pad(jac_log_u, ((0, 1), (0, 1)))
+                jac_log_u = jac_log_u.at[4, 4].set(dbeta_du)
+                prior_coordinate = jnp.concatenate([prior_coordinate, theta[4:5]])
+            return theta, prior_coordinate, jac_log_u
 
         if self.eta_e_parameterization == "bounded":
             deta_e_du = self._ETA_E_MAX * sig[2] * (1.0 - sig[2])
         else:
             deta_e_du = sig[2]
 
-        dtheta_du = jnp.asarray(
-            [
-                sig[0],
-                sig[1],
-                deta_e_du,
-            ],
-            dtype=jnp.float64,
-        )
-        log_theta = jnp.log(theta)
-        dlog_du = dtheta_du / jnp.maximum(theta, self._THETA_FLOOR)
-        jac_log_u = jnp.diag(dlog_du)
-        return theta, log_theta, jac_log_u
+        dcoord_du = [
+            sig[0] / jnp.maximum(theta[0], self._THETA_FLOOR),
+            sig[1] / jnp.maximum(theta[1], self._THETA_FLOOR),
+            deta_e_du / jnp.maximum(theta[2], self._THETA_FLOOR),
+        ]
+        prior_coordinate_values = [jnp.log(theta[0]), jnp.log(theta[1]), jnp.log(theta[2])]
+        if self.theta_dim >= 4:
+            dcoord_du.append(sig[3] / jnp.maximum(theta[3], self._THETA_FLOOR))
+            prior_coordinate_values.append(jnp.log(theta[3]))
+        if self.theta_dim >= 5:
+            dcoord_du.append(self.beta_chi_max_abs * (1.0 - jnp.tanh(u[4]) ** 2))
+            prior_coordinate_values.append(theta[4])
+        jac_log_u = jnp.diag(jnp.asarray(dcoord_du, dtype=jnp.float64))
+        prior_coordinate = jnp.asarray(prior_coordinate_values, dtype=jnp.float64)
+        return theta, prior_coordinate, jac_log_u
 
     _theta_log_and_dlog_du_jax = _theta_log_and_jac_log_u_jax
 
     def _unconstrained_from_theta_numpy(self, theta):
         """Inverse map for initializing unconstrained optimization/sampling state."""
         theta_arr = np.asarray(theta, dtype=float)
-        if theta_arr.shape != (3,):
-            raise ValueError("theta must be length-3")
+        theta_arr = self._coerce_theta_numpy(theta_arr)
 
         # Guard against nonphysical values in user-provided initial points.
         eta_m = np.clip(theta_arr[0], self._THETA_FLOOR * 10.0, None)
         eta_m_cold = np.clip(theta_arr[1], self._THETA_FLOOR * 10.0, None)
+        if self.energy_coordinate == "loading_ratios":
+            eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, None)
+            eta_m_cold_over_eta_m = np.clip(eta_m_cold / eta_m, self._THETA_FLOOR * 10.0, None)
+            eta_e_over_eta_m = np.clip(eta_e / eta_m, self._THETA_FLOOR * 10.0, None)
+            u = np.zeros(self.theta_dim, dtype=float)
+            u[0] = np.log(np.expm1(max(eta_m - self._THETA_FLOOR, 1e-12)))
+            u[1] = np.log(np.expm1(max(eta_m_cold_over_eta_m - self._THETA_FLOOR, 1e-12)))
+            u[2] = np.log(np.expm1(max(eta_e_over_eta_m - self._THETA_FLOOR, 1e-12)))
+            if self.theta_dim >= 4:
+                a_mix = np.clip(theta_arr[3], self._THETA_FLOOR * 10.0, None)
+                u[3] = np.log(np.expm1(max(a_mix - self._THETA_FLOOR, 1e-12)))
+            if self.theta_dim >= 5:
+                beta_frac = np.clip(theta_arr[4] / self.beta_chi_max_abs, -1.0 + 1e-10, 1.0 - 1e-10)
+                u[4] = np.arctanh(beta_frac)
+            return u
+
         if self.energy_coordinate == "eta_e_over_eta_m":
             eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, None)
             eta_e_over_eta_m = np.clip(eta_e / eta_m, self._THETA_FLOOR * 10.0, None)
-            u = np.zeros(3, dtype=float)
+            u = np.zeros(self.theta_dim, dtype=float)
             u[0] = np.log(np.expm1(max(eta_m - self._THETA_FLOOR, 1e-12)))
             u[1] = np.log(np.expm1(max(eta_m_cold - self._THETA_FLOOR, 1e-12)))
             u[2] = np.log(np.expm1(max(eta_e_over_eta_m - self._THETA_FLOOR, 1e-12)))
+            if self.theta_dim >= 4:
+                a_mix = np.clip(theta_arr[3], self._THETA_FLOOR * 10.0, None)
+                u[3] = np.log(np.expm1(max(a_mix - self._THETA_FLOOR, 1e-12)))
+            if self.theta_dim >= 5:
+                beta_frac = np.clip(theta_arr[4] / self.beta_chi_max_abs, -1.0 + 1e-10, 1.0 - 1e-10)
+                u[4] = np.arctanh(beta_frac)
             return u
 
         if self.eta_e_parameterization == "bounded":
@@ -552,7 +997,7 @@ class MomentInferenceModel:
         else:
             eta_e = np.clip(theta_arr[2], self._THETA_FLOOR * 10.0, None)
 
-        u = np.zeros(3, dtype=float)
+        u = np.zeros(self.theta_dim, dtype=float)
         u[0] = np.log(np.expm1(max(eta_m - self._THETA_FLOOR, 1e-12)))
         u[1] = np.log(np.expm1(max(eta_m_cold - self._THETA_FLOOR, 1e-12)))
 
@@ -561,6 +1006,12 @@ class MomentInferenceModel:
             u[2] = np.log(frac / (1.0 - frac))
         else:
             u[2] = np.log(np.expm1(max(eta_e - self._THETA_FLOOR, 1e-12)))
+        if self.theta_dim >= 4:
+            a_mix = np.clip(theta_arr[3], self._THETA_FLOOR * 10.0, None)
+            u[3] = np.log(np.expm1(max(a_mix - self._THETA_FLOOR, 1e-12)))
+        if self.theta_dim >= 5:
+            beta_frac = np.clip(theta_arr[4] / self.beta_chi_max_abs, -1.0 + 1e-10, 1.0 - 1e-10)
+            u[4] = np.arctanh(beta_frac)
         return u
 
     def _theta_from_unconstrained_numpy(self, unconstrained_theta):
@@ -568,25 +1019,56 @@ class MomentInferenceModel:
         u = np.asarray(unconstrained_theta, dtype=float)
         sig = 1.0 / (1.0 + np.exp(-u))
         eta_m = np.log1p(np.exp(-np.abs(u[..., 0]))) + np.maximum(u[..., 0], 0.0) + self._THETA_FLOOR
-        eta_m_cold = np.log1p(np.exp(-np.abs(u[..., 1]))) + np.maximum(u[..., 1], 0.0) + self._THETA_FLOOR
+        eta_m_cold_coordinate = (
+            np.log1p(np.exp(-np.abs(u[..., 1]))) + np.maximum(u[..., 1], 0.0) + self._THETA_FLOOR
+        )
+        if self.energy_coordinate == "loading_ratios":
+            eta_m_cold_over_eta_m = eta_m_cold_coordinate
+            eta_e_over_eta_m = (
+                np.log1p(np.exp(-np.abs(u[..., 2]))) + np.maximum(u[..., 2], 0.0) + self._THETA_FLOOR
+            )
+            eta_m_cold = eta_m * eta_m_cold_over_eta_m
+            eta_e = eta_m * eta_e_over_eta_m
+            theta = [eta_m, eta_m_cold, eta_e]
+            if self.theta_dim >= 4:
+                theta.append(np.log1p(np.exp(-np.abs(u[..., 3]))) + np.maximum(u[..., 3], 0.0) + self._THETA_FLOOR)
+            if self.theta_dim >= 5:
+                theta.append(self.beta_chi_max_abs * np.tanh(u[..., 4]))
+            return np.stack(theta, axis=-1)
+
         if self.energy_coordinate == "eta_e_over_eta_m":
             eta_e_over_eta_m = (
                 np.log1p(np.exp(-np.abs(u[..., 2]))) + np.maximum(u[..., 2], 0.0) + self._THETA_FLOOR
             )
             eta_e = eta_m * eta_e_over_eta_m
-            return np.stack([eta_m, eta_m_cold, eta_e], axis=-1)
+            theta = [eta_m, eta_m_cold_coordinate, eta_e]
+            if self.theta_dim >= 4:
+                theta.append(np.log1p(np.exp(-np.abs(u[..., 3]))) + np.maximum(u[..., 3], 0.0) + self._THETA_FLOOR)
+            if self.theta_dim >= 5:
+                theta.append(self.beta_chi_max_abs * np.tanh(u[..., 4]))
+            return np.stack(theta, axis=-1)
 
         if self.eta_e_parameterization == "bounded":
             eta_e = self._ETA_E_MAX * sig[..., 2] + self._THETA_FLOOR
         else:
             eta_e = np.log1p(np.exp(-np.abs(u[..., 2]))) + np.maximum(u[..., 2], 0.0) + self._THETA_FLOOR
-        return np.stack([eta_m, eta_m_cold, eta_e], axis=-1)
+        theta = [eta_m, eta_m_cold_coordinate, eta_e]
+        if self.theta_dim >= 4:
+            theta.append(np.log1p(np.exp(-np.abs(u[..., 3]))) + np.maximum(u[..., 3], 0.0) + self._THETA_FLOOR)
+        if self.theta_dim >= 5:
+            theta.append(self.beta_chi_max_abs * np.tanh(u[..., 4]))
+        return np.stack(theta, axis=-1)
 
     def energy_coordinates_from_theta_numpy(self, theta):
-        """Return reporting coordinates for theta, using eta_E/eta_M in ratio mode."""
+        """Return reporting coordinates for theta in the active diagnostic ratio mode."""
         theta_arr = np.asarray(theta, dtype=float)
-        if theta_arr.shape[-1] != 3:
-            raise ValueError("theta must have length-3 trailing dimension")
+        if theta_arr.shape[-1] != self.theta_dim:
+            raise ValueError(f"theta must have length-{self.theta_dim} trailing dimension")
+        if self.energy_coordinate == "loading_ratios":
+            out = np.array(theta_arr, dtype=float, copy=True)
+            out[..., 1] = out[..., 1] / np.maximum(out[..., 0], self._THETA_FLOOR)
+            out[..., 2] = out[..., 2] / np.maximum(out[..., 0], self._THETA_FLOOR)
+            return out
         if self.energy_coordinate != "eta_e_over_eta_m":
             return np.array(theta_arr, dtype=float, copy=True)
         out = np.array(theta_arr, dtype=float, copy=True)
@@ -626,6 +1108,18 @@ class MomentInferenceModel:
         radial_window_col = ((r_kpc >= r_obs_min_kpc) & (r_kpc <= r_obs_max_kpc))[:, None]
         dndv_velocity_bins = jnp.asarray(self.dndv_bin_centers_kms, dtype=jnp.float64)
         dndv_kernel_sigma = jnp.asarray(self.dndv_kernel_sigma_kms, dtype=jnp.float64)
+        dndv_kernel_kind = {
+            "gaussian": self._DNDV_KERNEL_GAUSSIAN,
+            "truncated_gaussian": self._DNDV_KERNEL_TRUNCATED_GAUSSIAN,
+            "compact_cosine": self._DNDV_KERNEL_COMPACT_COSINE,
+        }[self.dndv_kernel]
+        dndv_kernel_truncate_sigma = float(self.dndv_kernel_truncate_sigma)
+        use_stalled_wind_policy = self.failure_policy == "stalled_wind"
+        stall_velocity_floor = jnp.asarray(self.stall_velocity_floor_kms * 1e5, dtype=jnp.float64)
+        stall_velocity_transition = jnp.asarray(self.stall_velocity_transition_kms * 1e5, dtype=jnp.float64)
+        stall_radius_sigma = jnp.asarray(self.stall_radius_sigma_kpc * kpc, dtype=jnp.float64)
+        stall_radius_transition = jnp.asarray(self.stall_radius_transition_kpc * kpc, dtype=jnp.float64)
+        required_radius = jnp.asarray(self.r_max_kpc * kpc, dtype=jnp.float64)
         injection_profile_col = jnp.where(
             r_grid < injection_radius,
             (r_grid / jnp.maximum(injection_radius, 1e-30)) ** injection_power,
@@ -636,6 +1130,11 @@ class MomentInferenceModel:
         integrator_rtol = self.integrator_rtol
         integrator_atol = self.integrator_atol
         integrator_max_steps = self.integrator_max_steps
+        use_a_mix_parameter = self.expanded_parameters in {"a_mix", "a_mix_beta_chi"}
+        use_beta_chi_parameter = self.expanded_parameters == "a_mix_beta_chi"
+        static_a_mix = float(self.config.A_mix)
+        static_beta_chi_mix = float(self.config.beta_chi_mix)
+        static_mixing_chi_pivot = float(self.mixing_chi_pivot)
 
         @jax.jit
         def build_state_and_params(theta):
@@ -645,6 +1144,8 @@ class MomentInferenceModel:
                 eta_e = jnp.clip(theta[2], 1e-12, eta_e_max)
             else:
                 eta_e = jnp.maximum(theta[2], 1e-12)
+            a_mix = jnp.maximum(theta[3], 1e-12) if use_a_mix_parameter else jnp.asarray(static_a_mix, dtype=jnp.float64)
+            beta_chi_mix = theta[4] if use_beta_chi_parameter else jnp.asarray(static_beta_chi_mix, dtype=jnp.float64)
 
             mdot_hot = eta_m * sfr_cgs
             edot_hot = eta_e * (config.E_SN / (config.mstar * Msun)) * sfr_cgs
@@ -678,6 +1179,9 @@ class MomentInferenceModel:
                 TurbulentVelocityChiPower=float(config.TurbulentVelocityChiPower),
                 geometric_factor=float(config.geometric_factor),
                 Mdot_coefficient=float(config.Mdot_coefficient),
+                A_mix=a_mix,
+                beta_chi_mix=beta_chi_mix,
+                mixing_chi_pivot=static_mixing_chi_pivot,
                 Cooling_Factor=float(config.Cooling_Factor),
                 drag_coeff=float(config.drag_coeff),
                 f_turb0=float(config.f_turb0),
@@ -740,20 +1244,60 @@ class MomentInferenceModel:
             has_invalid = jnp.any(invalid_row)
             first_invalid_idx = jnp.where(has_invalid, jnp.argmax(invalid_row), y.shape[0] - 1)
             first_invalid_r = r_grid[first_invalid_idx]
+            first_finite = finite[first_invalid_idx]
+            # Finite nonphysical rows are failed/stalled wind outcomes in the
+            # inference layer; reserve status 2 for genuinely nonfinite solver
+            # failures where no local physical diagnostics can be trusted.
+            first_invalid_is_finite_failure = has_invalid & first_finite
+            trajectory_status_code = jnp.where(
+                first_invalid_is_finite_failure,
+                1.0,
+                jnp.where(has_invalid, 2.0, 0.0),
+            )
+            min_hot_velocity_kms = jnp.min(
+                jnp.nan_to_num(v_wind / 1e5, nan=-1e12, posinf=1e12, neginf=-1e12)
+            )
+
+            finite_alive = (finite & (rho_wind > 0.0) & (pressure > 0.0)).astype(jnp.float64)
+            v_alive = jax.nn.sigmoid((v_wind - stall_velocity_floor) / stall_velocity_transition)
+            alive_step = jnp.clip(finite_alive * v_alive, 0.0, 1.0)
+            alive_weight = jnp.cumprod(alive_step)
+            if not use_stalled_wind_policy:
+                alive_weight = jnp.ones_like(v_wind)
+            soft_reach_radius = r_grid[0] + jnp.trapezoid(alive_weight, r_grid)
+            reach_deficit = stall_radius_transition * jax.nn.softplus(
+                (required_radius - soft_reach_radius) / stall_radius_transition
+            )
+            stall_penalty = jnp.where(
+                (trajectory_status_code > 0.5) & (trajectory_status_code < 1.5),
+                0.5 * (reach_deficit / stall_radius_sigma) ** 2,
+                0.0,
+            )
 
             m_cloud = y[:, 4 : 4 + n_species]
             v_cloud = y[:, 4 + n_species : 4 + 2 * n_species]
+            if use_stalled_wind_policy:
+                m_cloud_obs = jnp.maximum(
+                    jnp.nan_to_num(m_cloud, nan=0.0, posinf=0.0, neginf=0.0),
+                    0.0,
+                )
+                v_cloud_obs = jnp.nan_to_num(v_cloud, nan=0.0, posinf=1e10, neginf=-1e10)
+                alive_col = alive_weight[:, None]
+            else:
+                m_cloud_obs = m_cloud
+                v_cloud_obs = v_cloud
+                alive_col = jnp.ones_like(m_cloud)
 
             ndot = params.Ndot_cloud0[None, :] * injection_profile_col
-            v_cloud_safe = jnp.maximum(v_cloud, params.v_cloud_min * 1e5)
+            v_cloud_safe = jnp.maximum(v_cloud_obs, params.v_cloud_min * 1e5)
             denom = solid_angle_r2_col * v_cloud_safe
-            rho_cloud = ndot * m_cloud / jnp.maximum(denom, 1e-60)
+            rho_cloud = ndot * m_cloud_obs / jnp.maximum(denom, 1e-60)
             n_h = rho_cloud / (1.4 * mp)
 
-            active = m_cloud >= params.M_cloud_min
-            weight = (active & radial_window_col).astype(jnp.float64)
+            active = m_cloud_obs >= params.M_cloud_min
+            weight = (active & radial_window_col).astype(jnp.float64) * alive_col
 
-            v_kms = v_cloud / 1e5
+            v_kms = v_cloud_obs / 1e5
             n_h_eff = n_h * weight
 
             m0 = jnp.sum(jnp.trapezoid(n_h_eff, r_grid, axis=0))
@@ -787,12 +1331,21 @@ class MomentInferenceModel:
                     r_grid=r_grid,
                     velocity_bins_kms=dndv_velocity_bins,
                     kernel_sigma_kms=dndv_kernel_sigma,
+                    kernel_kind=dndv_kernel_kind,
+                    truncate_sigma=dndv_kernel_truncate_sigma,
                 )
-                observables = jnp.maximum(dndv_binned, dndv_floor)
-                valid_observables = jnp.all(jnp.isfinite(observables)) & jnp.all(observables > 0.0)
-                fallback_obs = jnp.full((self.observable_dim,), dndv_floor, dtype=jnp.float64)
-                obs_finite = jnp.nan_to_num(observables, nan=0.0, posinf=1e100, neginf=-1e100)
-                obs_barrier = jnp.sum(jax.nn.softplus((dndv_floor - obs_finite) / dndv_floor))
+                dndv_safe = jnp.maximum(dndv_binned, dndv_floor)
+                if self.observable_set == self._OBS_LOG_DNDV_BINNED:
+                    observables = jnp.log(dndv_safe)
+                    valid_observables = jnp.all(jnp.isfinite(observables))
+                    fallback_obs = jnp.full((self.observable_dim,), jnp.log(dndv_floor), dtype=jnp.float64)
+                    obs_barrier = jnp.mean(jnp.where(jnp.isfinite(observables), 0.0, 1.0))
+                else:
+                    observables = dndv_safe
+                    valid_observables = jnp.all(jnp.isfinite(observables)) & jnp.all(observables > 0.0)
+                    fallback_obs = jnp.full((self.observable_dim,), dndv_floor, dtype=jnp.float64)
+                    obs_finite = jnp.nan_to_num(observables, nan=0.0, posinf=1e100, neginf=-1e100)
+                    obs_barrier = jnp.sum(jax.nn.softplus((dndv_floor - obs_finite) / dndv_floor))
 
             valid_raw = jnp.all(jnp.isfinite(raw_moments)) & (raw_moments[0] > 0.0) & (raw_moments[2] > 0.0)
             valid = valid_state & valid_raw & valid_observables
@@ -804,7 +1357,10 @@ class MomentInferenceModel:
                 rel = jnp.nan_to_num(values / scale, nan=-1.0, posinf=1e6, neginf=-1e6)
                 return jnp.where(rel > 0.0, 0.0, jax.nn.softplus(-rel))
 
-            soft_neg_v = nonpositive_barrier(v_wind, v_scale)
+            if use_stalled_wind_policy:
+                soft_neg_v = jax.nn.softplus((stall_velocity_floor - v_wind) / stall_velocity_transition)
+            else:
+                soft_neg_v = nonpositive_barrier(v_wind, v_scale)
             soft_neg_rho = nonpositive_barrier(rho_wind, rho_scale)
             soft_neg_p = nonpositive_barrier(pressure, p_scale)
             finite_violation = jnp.mean(jnp.where(finite_matrix, 0.0, 1.0))
@@ -812,19 +1368,34 @@ class MomentInferenceModel:
             barrier_value = (
                 jnp.mean(soft_neg_v + soft_neg_rho + soft_neg_p) + 10.0 * finite_violation + obs_barrier
             )
-            observables_safe = jnp.where(valid, observables, fallback_obs)
+            usable_observables = valid_observables & valid_raw & jnp.isfinite(raw_moments[0])
+            if use_stalled_wind_policy:
+                usable_observables = usable_observables & (trajectory_status_code < 1.5)
+            else:
+                usable_observables = usable_observables & valid_state
+            observables_safe = jnp.where(usable_observables, observables, fallback_obs)
 
             raw_fallback = jnp.asarray([1e-30, 1e-20, 1e-10, 1e-5, 1e0], dtype=jnp.float64)
-            raw_moments_safe = jnp.where(valid_raw & valid_state, raw_moments, raw_fallback)
-            return observables_safe, raw_moments_safe, jnp.where(valid, 1.0, 0.0), barrier_value, first_invalid_r
+            raw_moments_safe = jnp.where(usable_observables, raw_moments, raw_fallback)
+            return (
+                observables_safe,
+                raw_moments_safe,
+                jnp.where(valid, 1.0, 0.0),
+                barrier_value,
+                first_invalid_r,
+                trajectory_status_code,
+                soft_reach_radius,
+                min_hot_velocity_kms,
+                stall_penalty,
+            )
 
         if integrator_mode in {"rk2", "rk3", "rk4"}:
             return jax.jit(predict_theta_with_valid)
         return predict_theta_with_valid
 
     def predict_observables(self, theta: Sequence[float]) -> np.ndarray:
-        """Predict configured observables for linear-space parameters [eta_M, eta_M_cold, eta_E]."""
-        theta_arr = jnp.asarray(theta, dtype=jnp.float64)
+        """Predict configured observables for active physical parameters."""
+        theta_arr = jnp.asarray(self._coerce_theta_numpy(theta), dtype=jnp.float64)
         return np.asarray(self._predict_theta_fn(theta_arr), dtype=float)
 
     def predict_moments(self, theta: Sequence[float]) -> np.ndarray:
@@ -832,24 +1403,24 @@ class MomentInferenceModel:
         return self.predict_raw_moments(theta)[:3]
 
     def predict_observables_log(self, log_theta: Sequence[float]) -> np.ndarray:
-        """Predict configured observables for log-space parameters log([eta_M, eta_M_cold, eta_E])."""
+        """Predict configured observables from the active mixed prior coordinate."""
         log_theta_arr = jnp.asarray(log_theta, dtype=jnp.float64)
         return np.asarray(self._predict_log_theta_fn(log_theta_arr), dtype=float)
 
     def predict_moments_log(self, log_theta: Sequence[float]) -> np.ndarray:
-        """Predict raw [M0, M1, M2] for log-space parameters."""
+        """Predict raw [M0, M1, M2] from the active mixed prior coordinate."""
         log_theta_arr = np.asarray(log_theta, dtype=float)
-        return self.predict_moments(np.exp(log_theta_arr))
+        return self.predict_moments(self._theta_from_prior_coordinate_numpy(log_theta_arr))
 
     def predict_raw_moments(self, theta: Sequence[float]) -> np.ndarray:
         """Predict raw velocity moments [M0, M1, M2, M3, M4] regardless of observable_set."""
-        theta_arr = jnp.asarray(theta, dtype=jnp.float64)
+        theta_arr = jnp.asarray(self._coerce_theta_numpy(theta), dtype=jnp.float64)
         return np.asarray(self._predict_raw_theta_fn(theta_arr), dtype=float)
 
     def get_dndv_velocity_bins(self) -> np.ndarray:
-        """Return binned dN/dv velocity centers [km/s] for `observable_set='dndv_binned'`."""
-        if self.observable_set != self._OBS_DNDV_BINNED:
-            raise ValueError("Velocity bins are only defined for observable_set='dndv_binned'")
+        """Return binned dN/dv velocity centers [km/s] for binned profile observable sets."""
+        if self.observable_set not in {self._OBS_DNDV_BINNED, self._OBS_LOG_DNDV_BINNED}:
+            raise ValueError("Velocity bins are only defined for binned dN/dv observable sets")
         return np.asarray(self.dndv_bin_centers_kms, dtype=float)
 
     def make_negative_log_posterior(
@@ -877,23 +1448,24 @@ class MomentInferenceModel:
                 f"{self.observable_dim} ({self.observable_names}), got shape {y_obs.shape}"
             )
 
-        cov = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
-        cov_inv = jnp.asarray(np.linalg.inv(cov), dtype=jnp.float64)
+        likelihood_setup = self._observable_likelihood_setup(observed_moments, covariance_moments)
+        gaussian_cov_inv = jnp.asarray(likelihood_setup["gaussian_cov_inv"], dtype=jnp.float64)
+        censored_mask = jnp.asarray(likelihood_setup["censored_mask"], dtype=jnp.float64)
+        censored_upper = jnp.asarray(likelihood_setup["censored_upper"], dtype=jnp.float64)
+        use_censored_likelihood = bool(likelihood_setup["use_censored"])
+        censor_transition = jnp.asarray(self.log_dndv_censor_transition, dtype=jnp.float64)
+        censor_sigma = jnp.asarray(self.log_dndv_censor_sigma, dtype=jnp.float64)
 
-        if prior_mean_log is None:
-            prior_mean_log_arr = np.log(np.asarray([0.2, 0.2, 0.8], dtype=float))
-        else:
-            prior_mean_log_arr = np.asarray(prior_mean_log, dtype=float)
-        prior_sigma_log_arr = np.asarray(prior_sigma_log, dtype=float)
+        prior_mean_log_arr = self._coerce_prior_coordinate_numpy(prior_mean_log, name="prior_mean_log")
+        prior_sigma_log_arr = self._coerce_prior_sigma_numpy(prior_sigma_log, name="prior_sigma_log")
 
-        if prior_mean_log_arr.shape != (3,) or prior_sigma_log_arr.shape != (3,):
-            raise ValueError("prior_mean_log and prior_sigma_log must be length-3")
         if np.any(prior_sigma_log_arr <= 0.0):
             raise ValueError("All prior_sigma_log entries must be positive")
 
         prior_mean_log_jax = jnp.asarray(prior_mean_log_arr, dtype=jnp.float64)
         prior_sigma_log_jax = jnp.asarray(prior_sigma_log_arr, dtype=jnp.float64)
         r_max_cgs = float(self.r_max_kpc * kpc)
+        use_stalled_wind_policy = self.failure_policy == "stalled_wind"
         use_eta_e_softcap = self.eta_e_parameterization == "softcap"
         softcap_center = jnp.asarray(self.eta_e_softcap_center, dtype=jnp.float64)
         softcap_sigma = jnp.asarray(self.eta_e_softcap_sigma, dtype=jnp.float64)
@@ -901,12 +1473,27 @@ class MomentInferenceModel:
 
         predict_theta_with_valid = self._predict_theta_with_valid_fn
 
+        def likelihood_chi2_terms(observables):
+            resid = observables - y_obs
+            gaussian_chi2 = resid @ gaussian_cov_inv @ resid
+            if use_censored_likelihood:
+                censor_excess = censor_transition * jax.nn.softplus(
+                    (observables - censored_upper) / censor_transition
+                )
+                censored_chi2 = jnp.sum(censored_mask * (censor_excess / censor_sigma) ** 2)
+            else:
+                censored_chi2 = jnp.asarray(0.0, dtype=jnp.float64)
+            chi2 = gaussian_chi2 + censored_chi2
+            return chi2, gaussian_chi2, censored_chi2
+
         @jax.jit
         def nlp(unconstrained_theta):
             theta, log_theta, jac_log_u = self._theta_log_and_jac_log_u_jax(unconstrained_theta)
-            observables, _raw_moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
-            resid = observables - y_obs
-            chi2 = resid @ cov_inv @ resid
+            prediction = predict_theta_with_valid(theta)
+            observables, _raw_moments, valid, barrier_value, first_invalid_r = prediction[:5]
+            trajectory_status_code = prediction[5]
+            stall_penalty = prediction[8]
+            chi2, _gaussian_chi2, _censored_chi2 = likelihood_chi2_terms(observables)
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
             jac_sign, log_jacobian_raw = jnp.linalg.slogdet(jac_log_u)
             log_jacobian = jnp.where(jac_sign != 0.0, log_jacobian_raw, -jnp.inf)
@@ -920,17 +1507,28 @@ class MomentInferenceModel:
                 eta_e_softcap_penalty = 0.0
             smooth_penalty = 100.0 * barrier_value
             early_fail_penalty = jnp.where(
-                valid > 0.5,
+                (valid > 0.5) | use_stalled_wind_policy,
                 0.0,
                 10.0 * jax.nn.softplus((r_max_cgs - first_invalid_r) / jnp.maximum(r_max_cgs, 1e-30)),
             )
-            hard_penalty = jnp.where(valid > 0.5, 0.0, invalid_penalty)
+            numerical_failure_penalty = jnp.where(
+                use_stalled_wind_policy & (trajectory_status_code > 1.5),
+                invalid_penalty,
+                0.0,
+            )
+            hard_penalty = jnp.where(
+                use_stalled_wind_policy | (valid > 0.5),
+                0.0,
+                invalid_penalty,
+            )
             return (
                 0.5 * (chi2 + prior_chi2)
                 + transform_term
                 + eta_e_softcap_penalty
                 + smooth_penalty
                 + early_fail_penalty
+                + stall_penalty
+                + numerical_failure_penalty
                 + hard_penalty
             )
 
@@ -953,23 +1551,24 @@ class MomentInferenceModel:
                 f"{self.observable_dim} ({self.observable_names}), got shape {y_obs.shape}"
             )
 
-        cov = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
-        cov_inv = jnp.asarray(np.linalg.inv(cov), dtype=jnp.float64)
+        likelihood_setup = self._observable_likelihood_setup(observed_moments, covariance_moments)
+        gaussian_cov_inv = jnp.asarray(likelihood_setup["gaussian_cov_inv"], dtype=jnp.float64)
+        censored_mask = jnp.asarray(likelihood_setup["censored_mask"], dtype=jnp.float64)
+        censored_upper = jnp.asarray(likelihood_setup["censored_upper"], dtype=jnp.float64)
+        use_censored_likelihood = bool(likelihood_setup["use_censored"])
+        censor_transition = jnp.asarray(self.log_dndv_censor_transition, dtype=jnp.float64)
+        censor_sigma = jnp.asarray(self.log_dndv_censor_sigma, dtype=jnp.float64)
 
-        if prior_mean_log is None:
-            prior_mean_log_arr = np.log(np.asarray([0.2, 0.2, 0.8], dtype=float))
-        else:
-            prior_mean_log_arr = np.asarray(prior_mean_log, dtype=float)
-        prior_sigma_log_arr = np.asarray(prior_sigma_log, dtype=float)
+        prior_mean_log_arr = self._coerce_prior_coordinate_numpy(prior_mean_log, name="prior_mean_log")
+        prior_sigma_log_arr = self._coerce_prior_sigma_numpy(prior_sigma_log, name="prior_sigma_log")
 
-        if prior_mean_log_arr.shape != (3,) or prior_sigma_log_arr.shape != (3,):
-            raise ValueError("prior_mean_log and prior_sigma_log must be length-3")
         if np.any(prior_sigma_log_arr <= 0.0):
             raise ValueError("All prior_sigma_log entries must be positive")
 
         prior_mean_log_jax = jnp.asarray(prior_mean_log_arr, dtype=jnp.float64)
         prior_sigma_log_jax = jnp.asarray(prior_sigma_log_arr, dtype=jnp.float64)
         r_max_cgs = float(self.r_max_kpc * kpc)
+        use_stalled_wind_policy = self.failure_policy == "stalled_wind"
         use_eta_e_softcap = self.eta_e_parameterization == "softcap"
         softcap_center = jnp.asarray(self.eta_e_softcap_center, dtype=jnp.float64)
         softcap_sigma = jnp.asarray(self.eta_e_softcap_sigma, dtype=jnp.float64)
@@ -977,12 +1576,29 @@ class MomentInferenceModel:
 
         predict_theta_with_valid = self._predict_theta_with_valid_fn
 
+        def likelihood_chi2_terms(observables):
+            resid = observables - y_obs
+            gaussian_chi2 = resid @ gaussian_cov_inv @ resid
+            if use_censored_likelihood:
+                censor_excess = censor_transition * jax.nn.softplus(
+                    (observables - censored_upper) / censor_transition
+                )
+                censored_chi2 = jnp.sum(censored_mask * (censor_excess / censor_sigma) ** 2)
+            else:
+                censored_chi2 = jnp.asarray(0.0, dtype=jnp.float64)
+            chi2 = gaussian_chi2 + censored_chi2
+            return chi2, gaussian_chi2, censored_chi2
+
         @jax.jit
         def components(unconstrained_theta):
             theta, log_theta, jac_log_u = self._theta_log_and_jac_log_u_jax(unconstrained_theta)
-            observables, _raw_moments, valid, barrier_value, first_invalid_r = predict_theta_with_valid(theta)
-            resid = observables - y_obs
-            chi2 = resid @ cov_inv @ resid
+            prediction = predict_theta_with_valid(theta)
+            observables, _raw_moments, valid, barrier_value, first_invalid_r = prediction[:5]
+            trajectory_status_code = prediction[5]
+            soft_reach_radius = prediction[6]
+            min_hot_velocity_kms = prediction[7]
+            stall_penalty = prediction[8]
+            chi2, gaussian_chi2, censored_chi2 = likelihood_chi2_terms(observables)
             prior_chi2 = jnp.sum(((log_theta - prior_mean_log_jax) / prior_sigma_log_jax) ** 2)
             jac_sign, log_jacobian_raw = jnp.linalg.slogdet(jac_log_u)
             log_jacobian = jnp.where(jac_sign != 0.0, log_jacobian_raw, -jnp.inf)
@@ -996,32 +1612,50 @@ class MomentInferenceModel:
                 eta_e_softcap_penalty = 0.0
             smooth_penalty = 100.0 * barrier_value
             early_fail_penalty = jnp.where(
-                valid > 0.5,
+                (valid > 0.5) | use_stalled_wind_policy,
                 0.0,
                 10.0 * jax.nn.softplus((r_max_cgs - first_invalid_r) / jnp.maximum(r_max_cgs, 1e-30)),
             )
-            hard_penalty = jnp.where(valid > 0.5, 0.0, invalid_penalty)
+            numerical_failure_penalty = jnp.where(
+                use_stalled_wind_policy & (trajectory_status_code > 1.5),
+                invalid_penalty,
+                0.0,
+            )
+            hard_penalty = jnp.where(
+                use_stalled_wind_policy | (valid > 0.5),
+                0.0,
+                invalid_penalty,
+            )
             total_objective = (
                 0.5 * (chi2 + prior_chi2)
                 + transform_term
                 + eta_e_softcap_penalty
                 + smooth_penalty
                 + early_fail_penalty
+                + stall_penalty
+                + numerical_failure_penalty
                 + hard_penalty
             )
             return jnp.asarray(
                 [
                     chi2,
+                    gaussian_chi2,
+                    censored_chi2,
                     prior_chi2,
                     log_jacobian,
                     transform_term,
                     eta_e_softcap_penalty,
                     smooth_penalty,
                     early_fail_penalty,
+                    stall_penalty,
+                    numerical_failure_penalty,
                     hard_penalty,
                     total_objective,
                     valid,
+                    trajectory_status_code,
+                    soft_reach_radius / kpc,
                     first_invalid_r / kpc,
+                    min_hot_velocity_kms,
                 ],
                 dtype=jnp.float64,
             )
@@ -1064,8 +1698,8 @@ class MomentInferenceModel:
             return 0.5 * (h_cols + h_cols.T)
 
         unconstrained_theta = np.asarray(initial_unconstrained_theta, dtype=float)
-        if unconstrained_theta.shape != (3,):
-            raise ValueError("initial_unconstrained_theta must be length-3")
+        if unconstrained_theta.shape != (self.theta_dim,):
+            raise ValueError(f"initial_unconstrained_theta must be length-{self.theta_dim}")
 
         success = False
         message = "Maximum iterations reached before convergence"
@@ -1091,13 +1725,13 @@ class MomentInferenceModel:
             hess = 0.5 * (hess + hess.T)
             if not np.all(np.isfinite(hess)):
                 hess = np.nan_to_num(hess, nan=0.0, posinf=0.0, neginf=0.0)
-                hess = hess + 1e-6 * np.eye(3)
+                hess = hess + 1e-6 * np.eye(self.theta_dim)
 
             accepted = False
             damping = 1e-6
             for _ in range(12):
                 try:
-                    step = np.linalg.solve(hess + damping * np.eye(3), grad)
+                    step = np.linalg.solve(hess + damping * np.eye(self.theta_dim), grad)
                 except np.linalg.LinAlgError:
                     damping *= 10.0
                     continue
@@ -1144,7 +1778,10 @@ class MomentInferenceModel:
         hessian_unconstrained = compute_hessian(unconstrained_theta)
         hessian_unconstrained = np.nan_to_num(hessian_unconstrained, nan=0.0, posinf=0.0, neginf=0.0)
         hessian_unconstrained = stabilize_covariance(hessian_unconstrained, min_eig=1e-12)
-        covariance_unconstrained = np.linalg.inv(hessian_unconstrained)
+        try:
+            covariance_unconstrained = np.linalg.inv(hessian_unconstrained)
+        except np.linalg.LinAlgError:
+            covariance_unconstrained = np.linalg.pinv(hessian_unconstrained, hermitian=True)
 
         theta_map_jax, log_theta_map_jax, jac_log_u_jax = self._theta_log_and_jac_log_u_jax(
             jnp.asarray(unconstrained_theta, dtype=jnp.float64)
@@ -1155,17 +1792,34 @@ class MomentInferenceModel:
 
         covariance_log = jac_log_u @ covariance_unconstrained @ jac_log_u.T
         covariance_log = stabilize_covariance(covariance_log, min_eig=1e-14)
-        hessian_log = np.linalg.inv(covariance_log)
+        try:
+            hessian_log = np.linalg.inv(covariance_log)
+        except np.linalg.LinAlgError:
+            hessian_log = np.linalg.pinv(covariance_log, hermitian=True)
 
-        jac_theta_log = np.diag(theta_map)
+        jac_theta_log = self._jac_theta_prior_coordinate_numpy(theta_map)
         covariance_theta = jac_theta_log @ covariance_log @ jac_theta_log
         covariance_theta = stabilize_covariance(covariance_theta, min_eig=1e-20)
         correlation_theta = covariance_to_correlation(covariance_theta)
 
         predicted = self.predict_observables(theta_map)
-        cov_obs = stabilize_covariance(np.asarray(covariance_moments, dtype=float))
+        likelihood_setup = self._observable_likelihood_setup(observed_moments, covariance_moments)
         resid = predicted - np.asarray(observed_moments, dtype=float)
-        chi2 = float(resid @ np.linalg.inv(cov_obs) @ resid)
+        gaussian_chi2 = float(resid @ likelihood_setup["gaussian_cov_inv"] @ resid)
+        if bool(likelihood_setup["use_censored"]):
+            censor_excess = self.log_dndv_censor_transition * np.logaddexp(
+                0.0,
+                (predicted - likelihood_setup["censored_upper"]) / self.log_dndv_censor_transition,
+            )
+            censored_chi2 = float(
+                np.sum(
+                    likelihood_setup["censored_mask"]
+                    * (censor_excess / self.log_dndv_censor_sigma) ** 2
+                )
+            )
+        else:
+            censored_chi2 = 0.0
+        chi2 = gaussian_chi2 + censored_chi2
 
         return MAPFitResult(
             success=success,
@@ -1201,17 +1855,20 @@ class MomentInferenceModel:
         starts: list[np.ndarray] = [self._unconstrained_from_theta_numpy(np.asarray(initial_theta, dtype=float))]
 
         prior_theta = (
-            np.exp(np.asarray(prior_mean_log, dtype=float))
+            self._theta_from_prior_coordinate_numpy(self._coerce_prior_coordinate_numpy(prior_mean_log))
             if prior_mean_log is not None
-            else np.asarray([0.2, 0.2, 0.8], dtype=float)
+            else self._default_theta_numpy()
         )
         starts.append(self._unconstrained_from_theta_numpy(prior_theta))
 
         rng = np.random.default_rng(int(seed))
         base = starts[0]
-        jitter_scale = np.asarray([0.8, 0.8, 0.7], dtype=float)
+        jitter_scale = np.full((self.theta_dim,), 0.5, dtype=float)
+        jitter_scale[:3] = np.asarray([0.8, 0.8, 0.7], dtype=float)
+        if self.theta_dim >= 5:
+            jitter_scale[4] = 0.25
         while len(starts) < n_starts:
-            starts.append(base + rng.normal(loc=0.0, scale=jitter_scale, size=3))
+            starts.append(base + rng.normal(loc=0.0, scale=jitter_scale, size=self.theta_dim))
 
         return np.asarray(starts[:n_starts], dtype=float)
 
@@ -1235,19 +1892,27 @@ class MomentInferenceModel:
             seed=seed,
         )
 
-        results = [
-            self._fit_map_single_from_nlp(
-                nlp=nlp,
-                observed_moments=observed_moments,
-                covariance_moments=covariance_moments,
-                initial_unconstrained_theta=start,
-                max_iter=max_iter,
-                grad_tol=grad_tol,
-                start_index=i,
-                num_starts=int(starts.shape[0]),
-            )
-            for i, start in enumerate(starts)
-        ]
+        results: list[MAPFitResult] = []
+        failed_starts = 0
+        for i, start in enumerate(starts):
+            try:
+                results.append(
+                    self._fit_map_single_from_nlp(
+                        nlp=nlp,
+                        observed_moments=observed_moments,
+                        covariance_moments=covariance_moments,
+                        initial_unconstrained_theta=start,
+                        max_iter=max_iter,
+                        grad_tol=grad_tol,
+                        start_index=i,
+                        num_starts=int(starts.shape[0]),
+                    )
+                )
+            except (FloatingPointError, np.linalg.LinAlgError, ValueError):
+                failed_starts += 1
+
+        if not results:
+            raise np.linalg.LinAlgError("All MAP starts failed before producing a finite diagnostic result")
 
         finite = np.asarray([np.isfinite(r.nlp) and np.all(np.isfinite(r.theta_map)) for r in results], dtype=bool)
         pd = np.asarray(
@@ -1268,6 +1933,8 @@ class MomentInferenceModel:
         best = results[int(best_local_idx)]
 
         quality = "PD minimum" if valid_pd[int(best_local_idx)] else "finite minimum (non-PD Hessian fallback)"
+        if failed_starts:
+            quality = f"{quality}; skipped {failed_starts} failed start(s)"
         best.message = f"{best.message}; selected start {best.start_index + 1}/{best.num_starts} [{quality}]"
         return best
 
@@ -1337,7 +2004,7 @@ class MomentInferenceModel:
         eps = float(step_size)
         for i in range(total_steps):
             u0, grad_u0 = potential_and_grad(q)
-            p0 = rng.normal(loc=0.0, scale=np.sqrt(1.0 / inv_mass_diag), size=3)
+            p0 = rng.normal(loc=0.0, scale=np.sqrt(1.0 / inv_mass_diag), size=q.shape[0])
 
             q_prop = q.copy()
             p_prop = p0.copy()
@@ -1385,15 +2052,15 @@ class MomentInferenceModel:
 
         samples_u_arr = np.asarray(samples_log, dtype=float)
         samples_theta = self._theta_from_unconstrained_numpy(samples_u_arr)
-        samples_log_arr = np.log(np.maximum(samples_theta, self._THETA_FLOOR))
+        samples_log_arr = self._prior_coordinate_from_theta_numpy(samples_theta)
         n_kept = int(samples_u_arr.shape[0])
 
         if samples_u_arr.shape[0] > 1:
             covariance_log = stabilize_covariance(np.cov(samples_log_arr.T), min_eig=1e-12)
             covariance_theta = stabilize_covariance(np.cov(samples_theta.T), min_eig=1e-12)
         else:
-            covariance_log = np.eye(3)
-            covariance_theta = np.eye(3)
+            covariance_log = np.eye(self.theta_dim)
+            covariance_theta = np.eye(self.theta_dim)
 
         return HMCResult(
             samples_unconstrained=samples_u_arr,
@@ -1514,7 +2181,7 @@ class MomentInferenceModel:
         samples_unconstrained = samples_u_by_chain.reshape(-1, samples_u_by_chain.shape[-1])
         samples_nuts_coordinate = samples_q_by_chain.reshape(-1, samples_q_by_chain.shape[-1])
         samples_theta = self._theta_from_unconstrained_numpy(samples_unconstrained)
-        samples_log = np.log(np.maximum(samples_theta, self._THETA_FLOOR))
+        samples_log = self._prior_coordinate_from_theta_numpy(samples_theta)
 
         extra = mcmc.get_extra_fields(group_by_chain=True)
         accept_prob = np.asarray(extra.get("accept_prob"), dtype=float)
@@ -1554,8 +2221,8 @@ class MomentInferenceModel:
             covariance_log = stabilize_covariance(np.cov(samples_log.T), min_eig=1e-12)
             covariance_theta = stabilize_covariance(np.cov(samples_theta.T), min_eig=1e-12)
         else:
-            covariance_log = np.eye(3)
-            covariance_theta = np.eye(3)
+            covariance_log = np.eye(self.theta_dim)
+            covariance_theta = np.eye(self.theta_dim)
 
         nlp_batch = jax.vmap(lambda x: nlp(x))
         mean_log_posterior = float(-jnp.mean(nlp_batch(jnp.asarray(samples_unconstrained, dtype=jnp.float64))))
@@ -1789,10 +2456,12 @@ class MomentInferenceModel:
     def predict_observables_for_log_samples(self, samples_log: np.ndarray, max_samples: int = 512) -> np.ndarray:
         """Evaluate configured observables for a subset of posterior log-parameter samples."""
         arr = np.asarray(samples_log, dtype=float)
-        if arr.ndim == 3 and arr.shape[-1] == 3:
-            arr = arr.reshape(-1, 3)
-        if arr.ndim != 2 or arr.shape[1] != 3:
-            raise ValueError("samples_log must have shape (N, 3) or (chains, N, 3)")
+        if arr.ndim == 3 and arr.shape[-1] == self.theta_dim:
+            arr = arr.reshape(-1, self.theta_dim)
+        if arr.ndim != 2 or arr.shape[1] != self.theta_dim:
+            raise ValueError(
+                f"samples_log must have shape (N, {self.theta_dim}) or (chains, N, {self.theta_dim})"
+            )
 
         if arr.shape[0] > max_samples:
             idx = np.linspace(0, arr.shape[0] - 1, max_samples, dtype=int)

@@ -43,6 +43,9 @@ model = WindModel(SFR=10.0, f_turb0=0.2, Z_hot_over_Z_solar=1.0)
 | `f_turb0` | `0.1` | dimensionless | Turbulent mixing efficiency |
 | `drag_coeff` | `0.5` | dimensionless | Ram-drag coefficient |
 | `Mdot_coefficient` | `1/3` | dimensionless | Mass-transfer prefactor |
+| `A_mix` | `1.0` | dimensionless | Neutral effective multiplier on TRML/cloud mass exchange |
+| `beta_chi_mix` | `0.0` | dimensionless | Effective density-contrast tilt in `A_mix * (chi / mixing_chi_pivot)^beta_chi_mix` |
+| `mixing_chi_pivot` | `100.0` | dimensionless | Density-contrast pivot for `beta_chi_mix` |
 | `geometric_factor` | `1.0` | dimensionless | Surface-area boost factor |
 | `Cooling_Factor` | `1.0` | dimensionless | Non-negative global multiplier on cooling losses; `cooling_factor` is a legacy alias |
 | `CoolingAreaChiPower` | `0.5` | dimensionless | Exponent in cooling-area scaling with `chi` |

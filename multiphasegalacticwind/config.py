@@ -32,6 +32,7 @@ class WindConfig:
         'half_opening_angle', 'M_cloud_min', 'CoolingAreaChiPower',
         'ColdTurbulenceChiPower', 'TurbulentVelocityChiPower',
         'geometric_factor', 'Mdot_coefficient', 'Cooling_Factor',
+        'A_mix', 'beta_chi_mix', 'mixing_chi_pivot',
         'drag_coeff', 'f_turb0', 'cold_cloud_injection_radial_power',
         'cold_cloud_injection_radial_extent_frac', 'v_cloud_init',
         'v_cloud_min', 'cloud_radial_offset', 'Z_cloud_over_Z_solar',
@@ -98,6 +99,9 @@ class WindConfig:
         self.TurbulentVelocityChiPower = get_param('TurbulentVelocityChiPower', 0.0)
         self.geometric_factor = get_param('geometric_factor', 1.0)
         self.Mdot_coefficient = get_param('Mdot_coefficient', 1.0/3.0)
+        self.A_mix = get_param('A_mix', 1.0)
+        self.beta_chi_mix = get_param('beta_chi_mix', 0.0)
+        self.mixing_chi_pivot = get_param('mixing_chi_pivot', 100.0)
         self.Cooling_Factor = get_param('Cooling_Factor', 1.0)
         self.drag_coeff = get_param('drag_coeff', 0.5)
         self.f_turb0 = get_param('f_turb0', 0.1)
@@ -140,6 +144,9 @@ class WindConfig:
             'TurbulentVelocityChiPower': self.TurbulentVelocityChiPower,
             'geometric_factor': self.geometric_factor,
             'Mdot_coefficient': self.Mdot_coefficient,
+            'A_mix': self.A_mix,
+            'beta_chi_mix': self.beta_chi_mix,
+            'mixing_chi_pivot': self.mixing_chi_pivot,
             'Cooling_Factor': self.Cooling_Factor,
             'drag_coeff': self.drag_coeff,
             'f_turb0': self.f_turb0,
@@ -198,6 +205,12 @@ class WindConfig:
             raise ValueError(f"drag_coeff must be positive, got {self.drag_coeff}")
         if self.Mdot_coefficient <= 0:
             raise ValueError(f"Mdot_coefficient must be positive, got {self.Mdot_coefficient}")
+        if self.A_mix <= 0:
+            raise ValueError(f"A_mix must be positive, got {self.A_mix}")
+        if not np.isfinite(self.beta_chi_mix):
+            raise ValueError(f"beta_chi_mix must be finite, got {self.beta_chi_mix}")
+        if self.mixing_chi_pivot <= 0 or not np.isfinite(self.mixing_chi_pivot):
+            raise ValueError(f"mixing_chi_pivot must be positive and finite, got {self.mixing_chi_pivot}")
         if self.Cooling_Factor < 0:
             raise ValueError(f"Cooling_Factor must be non-negative, got {self.Cooling_Factor}")
             

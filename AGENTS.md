@@ -64,10 +64,15 @@ Notebook guidance:
   - Post-processing into observational quantities (notably `dN/dv`).
 - `multiphasegalacticwind/inference.py`
   - JAX MAP+HMC/NUTS inference for wind parameters.
-  - Currently fits only `eta_M`, `eta_M_cold`, and `eta_E`.
+  - Default production mode fits only `eta_M`, `eta_M_cold`, and `eta_E`.
   - Default `eta_E` inference remains hard-bounded below 1; optional `eta_e_parameterization="softcap"` is diagnostic only and allows `eta_E > 1` with a smooth penalty above the nominal SN-energy budget.
+  - Default inference uses `failure_policy="stalled_wind"`: hot-wind trajectories that stall or hit a finite nonphysical state before the observable radius remain finite model evaluations with stalled-trajectory diagnostics and smooth low-probability penalties. Use `failure_policy="hard_invalid"` only for legacy cliff-style comparisons.
   - Optional `energy_coordinate="eta_e_over_eta_m"` is diagnostic only; it samples the positive specific-energy ratio `eta_E/eta_M` while preserving physical priors and public outputs in `(eta_M, eta_M_cold, eta_E)`.
-  - Supports observable modes: `m0_m1_m2`, `logm0_mean_sigma_skew_kurt`, and optional `dndv_binned` (20-30 bin style likelihoods).
+  - Optional `energy_coordinate="loading_ratios"` is diagnostic only; it samples `(eta_M, eta_M_cold/eta_M, eta_E/eta_M)` while preserving physical priors and public outputs in `(eta_M, eta_M_cold, eta_E)`.
+  - Optional `expanded_parameters="a_mix"` is the restricted first expanded-inference experiment; it adds `A_mix`, a positive effective multiplier on TRML/cloud mass exchange.
+  - Optional `expanded_parameters="a_mix_beta_chi"` is diagnostic only; it adds `beta_chi_mix` through `A_mix * (chi / mixing_chi_pivot)^beta_chi_mix` to test whether density-contrast dependence is separately identifiable.
+  - Supports observable modes: `m0_m1_m2`, `logm0_mean_sigma_skew_kurt`, `dndv_binned`, and diagnostic `log_dndv_binned` for log-profile likelihoods.
+  - Binned `dN/dv` supports diagnostic support-aware kernels through `dndv_kernel="truncated_gaussian"` and `dndv_kernel="compact_cosine"`; default `dndv_kernel="gaussian"` preserves historical behavior.
   - Reported MAP estimates optimize the posterior density in log-parameter space; HMC/NUTS targets include the unconstrained-transform Jacobian.
   - Optional `nuts_coordinate="map_whitened"` is diagnostic only; it samples local MAP-whitened coordinates for NUTS while reporting the usual physical parameters.
   - Do not add deeper TRML/cloud-wind inferred parameters before prior predictive, synthetic recovery, and sensitivity studies described in `docs/inference_validation_agent_workplan.md`.
@@ -190,6 +195,9 @@ For active clouds (`M_cloud > M_cloud_min`):
 with:
 - `AreaBoost = geometric_factor * chi^{CoolingAreaChiPower}`
 - `v_turb_cold = v_turb * chi^{ColdTurbulenceChiPower}`
+- `A_chi = A_mix * (chi / mixing_chi_pivot)^{beta_chi_mix}`
+
+Both `Mdot_grow` and `Mdot_loss` are multiplied by `A_chi`. Defaults `A_mix=1` and `beta_chi_mix=0` recover the fiducial closure exactly.
 
 ## 8) Momentum and energy exchange
 Ram drag term (sign-preserving):
@@ -336,13 +344,19 @@ Current inference is a validated three-parameter surface over `eta_M`, `eta_M_co
 4. Choose one effective added parameter only after sensitivity and recovery justify it.
 5. Expand inference one parameter at a time and repeat prior predictive, recovery, and posterior predictive checks.
 
-Do not jump directly to fitting all TRML closure knobs. Parameters such as `f_turb0`, `Mdot_coefficient`, `geometric_factor`, `drag_coeff`, `CoolingAreaChiPower`, `ColdTurbulenceChiPower`, and `TurbulentVelocityChiPower` are likely degenerate. Prefer an effective first expansion such as an `A_mix` amplitude only after the baseline recovery studies pass.
+Do not jump directly to fitting all TRML closure knobs. Parameters such as `f_turb0`, `Mdot_coefficient`, `geometric_factor`, `drag_coeff`, `CoolingAreaChiPower`, `ColdTurbulenceChiPower`, and `TurbulentVelocityChiPower` are likely degenerate. The restricted first expansion is `expanded_parameters="a_mix"`; `expanded_parameters="a_mix_beta_chi"` is a staged diagnostic only after `A_mix` recovery is acceptable.
 
 The `eta_E` soft-cap parameterization is a diagnostic for near-boundary recovery failures, not a production expansion. If posterior mass above `eta_E = 1` is substantial, interpret `eta_E` as an effective energy-loading parameter and document the physical meaning before using it in Paper 2 claims.
 
-The `energy_coordinate="eta_e_over_eta_m"` mode is likewise diagnostic. It is intended to test whether high-energy synthetic recovery failures are partly caused by sampling the speed-setting direction in poor coordinates. Do not treat it as a production reparameterization until exact recovery passes with acceptable divergences, ESS/Rhat, and coverage for both `eta_E` and `eta_E/eta_M`.
+The `energy_coordinate="eta_e_over_eta_m"` mode is likewise diagnostic. It is intended to test whether high-energy synthetic recovery failures are partly caused by sampling the speed-setting direction in poor coordinates. The `energy_coordinate="loading_ratios"` mode extends this idea to the cold-loading direction by sampling `(eta_M, eta_M_cold/eta_M, eta_E/eta_M)`. Do not treat either as a production reparameterization until exact recovery passes with acceptable divergences, ESS/Rhat, and coverage for `eta_E`, `eta_E/eta_M`, and any active cold-loading ratio.
 
 The `nuts_coordinate="map_whitened"` mode is a sampler diagnostic for local posterior geometry, not a physics-model change. Use it to decide whether NUTS failures are caused by poor local scaling around the MAP before changing physical parameters or observables.
+
+The default stalled-wind inference policy is an inference-layer treatment of failed trajectories, not a change to the ODE physics. It reports `trajectory_status_code`, `soft_reach_radius_kpc`, `min_hot_velocity_kms`, `stall_penalty`, and `numerical_failure_penalty` so finite failed/stalled winds can be interpreted as low-probability physical outcomes instead of hard sampler cliffs.
+
+The `observable_set="log_dndv_binned"` mode is diagnostic. It uses the same binned `dN/dv` forward model as `dndv_binned`, but fits `log(dN/dv)` to test whether linear-profile dynamic range is causing posterior geometry failures. Its default `log_dndv_low_signal_policy="gaussian"` preserves the correlated Gaussian likelihood. The opt-in `log_dndv_low_signal_policy="censored_upper"` treats low-signal bins as smooth one-sided upper limits, using bins below `max(log dN/dv) - log_dndv_censor_delta_log`; this is intended for edge/non-detection regions where precise two-sided log constraints create artificial posterior curvature. Do not use it for production claims until exact synthetic recovery passes.
+
+The `dndv_kernel="truncated_gaussian"` and `dndv_kernel="compact_cosine"` options are support-aware diagnostics for binned `dN/dv`. They are intended to test whether Gaussian far-tail leakage outside the physically populated cloud velocities is driving posterior geometry failures. The production default remains the historical Gaussian kernel until exact synthetic recovery and observational-window tests justify a change.
 
 ---
 

@@ -1,0 +1,33 @@
+Create a clean launch-geometry schematic for a multiphase galactic wind model, suitable for an AASTeX two-column astrophysics paper figure.
+
+Use a restrained scientific style on a white background with muted colors and serif/math-style labels. No axes, no legend box, no decorative gradients except the source-region glow, and no data-like plotting elements.
+
+Composition:
+- Put a compact star-forming launch region on the left.
+- The launch region should have a warm yellow radial gradient glow, fading outward inside a thin dashed circular launch/sonic radius.
+- At the center, place a larger starburst/source symbol, clearly visible and about 1.5-2x more prominent than before.
+- Do not write "source" or "source region" inside the circle.
+- Draw a straight bicone/wind cone opening to the right from the launch region.
+- The bicone boundaries must be straight radial lines, not curved, and the opening angle must stay constant with radius.
+- Let the bicone extend beyond the right/top/bottom canvas edges so the outflow clearly continues to large radius.
+- Use a pale blue transparent fill for the wind cone and muted blue-gray outlines/streamlines.
+- Draw one or a few straight radial hot-wind arrows inside the cone, pointing outward, but do not let any arrow pass through the central source symbol.
+
+Labels:
+- Label the galaxy/star-formation inputs near the launch region: SFR, eta_M,hot, and eta_E,hot.
+- Clearly label r_star with a simple radius marker from the central source to the dashed launch circle.
+- Clearly label Omega_wind as the bicone solid angle using a clean opening-angle arc near the launch point.
+- Do not include Mdot_hot or Edot_hot arrows.
+- Do not include the isothermal potential or Phi(r) label.
+- Move labels away from crowded intersections and use clean leader lines where needed.
+
+Clouds:
+- Place several embedded cool cloud species inside the wind cone as small muted colored circles of different sizes.
+- Make it visually clear that different circle sizes correspond to different initial cloud masses M_cl,i.
+- Use a small label "cloud species, M_cl,i" with a leader line pointing directly to representative clouds.
+- Keep cloud colors subdued so they read as conceptual species, not data categories.
+
+Overall:
+- Sparse, publication-ready, physically clear.
+- The visual hierarchy should emphasize the central source, r_star, Omega_wind, and the straight bicone geometry.
+- Avoid clutter and overlapping text.

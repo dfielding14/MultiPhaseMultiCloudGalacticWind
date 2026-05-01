@@ -93,6 +93,9 @@ def test_cloud_loss_enthalpy_uses_sound_speed_squared_once():
         0.0,
         0.0,
         1.0 / 3.0,
+        1.0,
+        0.0,
+        100.0,
         0.0,
         0.1,
         4.0 * np.pi,
@@ -107,3 +110,57 @@ def test_cloud_loss_enthalpy_uses_sound_speed_squared_once():
     overcounted = 0.5 * v_cloud * v_cloud + (gamma / (gamma - 1.0)) * cs_cl_sq
     assert recovered_cloud_bernoulli == pytest.approx(expected)
     assert recovered_cloud_bernoulli != pytest.approx(overcounted)
+
+
+def test_effective_mixing_amplitude_and_chi_scaling_modify_mass_exchange():
+    r = 1.0 * kpc
+    v_wind = 1.0e7
+    rho_wind = 1.0e-26
+    rho_cloud = 1.0e-24
+    chi = rho_cloud / rho_wind
+    m_cloud = 1.0 * Msun
+    v_cloud = 4.0e6
+    mu = 0.62
+    cs_cl_sq = gamma * kb * 1.0e4 / (mu * mp)
+
+    def mass_derivative(a_mix: float, beta_chi: float, pivot: float = 100.0) -> float:
+        result = _cloud_exchange_kernel_numba(
+            r,
+            0.0,
+            v_wind,
+            rho_wind,
+            Z_solar,
+            0.0,
+            0.0,
+            cs_cl_sq,
+            rho_cloud,
+            chi,
+            np.array([1.0e-6]),
+            np.array([m_cloud]),
+            np.array([v_cloud]),
+            np.array([0.3 * Z_solar]),
+            np.array([1.0e30]),
+            0.5 * kpc,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0 / 3.0,
+            a_mix,
+            beta_chi,
+            pivot,
+            0.0,
+            0.1,
+            4.0 * np.pi,
+            1.0e5,
+        )
+        return float(result[4][0])
+
+    baseline = mass_derivative(1.0, 0.0)
+    boosted = mass_derivative(2.0, 0.0)
+    chi_tilt = mass_derivative(1.0, 0.25, pivot=10.0)
+
+    assert boosted == pytest.approx(2.0 * baseline)
+    assert chi_tilt == pytest.approx(baseline * (chi / 10.0) ** 0.25)

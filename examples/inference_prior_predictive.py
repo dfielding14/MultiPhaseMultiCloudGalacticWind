@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prior predictive atlas for the current three-parameter inference model."""
+"""Prior predictive atlas for baseline and restricted expanded inference models."""
 
 from __future__ import annotations
 
@@ -25,11 +25,14 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "inference_prior_predictive")
 DEFAULT_CLASSY_PROFILES_PATH = os.path.join(REPO_ROOT, "multiphasegalacticwind", "data", "classy_profiles.npz")
 PARAM_NAMES = ("eta_M", "eta_M_cold", "eta_E")
+EXPANDED_PARAMETER_CHOICES = ("none", "a_mix", "a_mix_beta_chi")
 ETA_E_MAX = 0.999
 DEFAULT_PRIOR_BOUNDS = {
     "eta_M": (0.03, 3.0),
     "eta_M_cold": (0.001, 10.0),
     "eta_E": (0.05, ETA_E_MAX),
+    "A_mix": (0.5, 2.0),
+    "beta_chi_mix": (-0.5, 0.5),
 }
 DNDV_PLOT_YMIN = 1.0e12
 
@@ -115,6 +118,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--integrator-rtol", type=float, default=1e-5)
     parser.add_argument("--integrator-atol", type=float, default=1e-8)
     parser.add_argument("--integrator-max-steps", type=int, default=131072)
+    parser.add_argument("--expanded-parameters", choices=EXPANDED_PARAMETER_CHOICES, default="none")
+    parser.add_argument("--beta-chi-max-abs", type=float, default=0.75)
+    parser.add_argument("--mixing-chi-pivot", type=float, default=100.0)
 
     parser.add_argument("--dndv-num-bins", type=int, default=25)
     parser.add_argument("--dndv-vmin-kms", type=float, default=0.0)
@@ -124,6 +130,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=float,
         default=None,
         help="Gaussian kernel width for dN/dv projection [km/s]. Default: half-bin width.",
+    )
+    parser.add_argument(
+        "--dndv-kernel",
+        choices=["gaussian", "truncated_gaussian", "compact_cosine"],
+        default="gaussian",
+        help="Velocity kernel for binned dN/dv projection.",
+    )
+    parser.add_argument(
+        "--dndv-kernel-truncate-sigma",
+        type=float,
+        default=3.0,
+        help="Finite support |dv| cutoff in sigma units for --dndv-kernel truncated_gaussian.",
     )
     parser.add_argument(
         "--no-usetex",
@@ -144,27 +162,53 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.num_samples < 1:
         parser.error("--num-samples must be >= 1")
+    if args.dndv_kernel_truncate_sigma <= 0.0:
+        parser.error("--dndv-kernel-truncate-sigma must be positive")
+    if args.beta_chi_max_abs <= 0.0:
+        parser.error("--beta-chi-max-abs must be positive")
+    if args.mixing_chi_pivot <= 0.0:
+        parser.error("--mixing-chi-pivot must be positive")
     return args
 
 
-def sample_prior(rng: np.random.Generator, num_samples: int) -> np.ndarray:
-    """Draw log-uniform samples for [eta_M, eta_M_cold, eta_E]."""
+def parameter_names_for_mode(expanded_parameters: str) -> tuple[str, ...]:
+    """Return active parameter names for a prior-predictive mode."""
+    if expanded_parameters == "a_mix":
+        return (*PARAM_NAMES, "A_mix")
+    if expanded_parameters == "a_mix_beta_chi":
+        return (*PARAM_NAMES, "A_mix", "beta_chi_mix")
+    return PARAM_NAMES
+
+
+def sample_prior(
+    rng: np.random.Generator,
+    num_samples: int,
+    expanded_parameters: str = "none",
+    beta_chi_max_abs: float = 0.75,
+) -> np.ndarray:
+    """Draw samples for the active prior-predictive parameter set."""
     if num_samples < 1:
         raise ValueError("num_samples must be >= 1")
 
-    samples = np.empty((int(num_samples), len(PARAM_NAMES)), dtype=float)
-    for i, name in enumerate(PARAM_NAMES):
+    parameter_names = parameter_names_for_mode(expanded_parameters)
+    samples = np.empty((int(num_samples), len(parameter_names)), dtype=float)
+    for i, name in enumerate(parameter_names):
         lo, hi = DEFAULT_PRIOR_BOUNDS[name]
-        log_lo = np.log10(lo)
-        log_hi = np.log10(hi)
-        samples[:, i] = 10.0 ** rng.uniform(log_lo, log_hi, size=int(num_samples))
+        if name == "beta_chi_mix":
+            lo = max(float(lo), -float(beta_chi_max_abs))
+            hi = min(float(hi), float(beta_chi_max_abs))
+            samples[:, i] = rng.uniform(lo, hi, size=int(num_samples))
+        else:
+            log_lo = np.log10(lo)
+            log_hi = np.log10(hi)
+            samples[:, i] = 10.0 ** rng.uniform(log_lo, log_hi, size=int(num_samples))
 
     samples[:, 2] = np.minimum(samples[:, 2], np.nextafter(ETA_E_MAX, 0.0))
     return samples
 
 
 def build_model(args: argparse.Namespace):
-    """Construct the current three-parameter inference forward model."""
+    """Construct the active inference forward model."""
     from multiphasegalacticwind.inference import MomentInferenceModel
 
     return MomentInferenceModel(
@@ -181,11 +225,16 @@ def build_model(args: argparse.Namespace):
         integrator_rtol=args.integrator_rtol,
         integrator_atol=args.integrator_atol,
         integrator_max_steps=args.integrator_max_steps,
+        expanded_parameters=args.expanded_parameters,
+        beta_chi_max_abs=args.beta_chi_max_abs,
+        mixing_chi_pivot=args.mixing_chi_pivot,
         observable_set=args.observable_set,
         dndv_num_bins=args.dndv_num_bins,
         dndv_vmin_kms=args.dndv_vmin_kms,
         dndv_vmax_kms=args.dndv_vmax_kms,
         dndv_kernel_sigma_kms=args.dndv_kernel_sigma_kms,
+        dndv_kernel=args.dndv_kernel,
+        dndv_kernel_truncate_sigma=args.dndv_kernel_truncate_sigma,
     )
 
 
@@ -205,8 +254,9 @@ def _empty_result(model: Any, theta: np.ndarray, sample_id: int, error: str) -> 
 def evaluate_sample(model: Any, theta: Sequence[float], sample_id: int) -> SampleResult:
     """Evaluate one parameter vector and return validity plus observables."""
     theta_arr = np.asarray(theta, dtype=float)
-    if theta_arr.shape != (3,):
-        return _empty_result(model, theta_arr, sample_id, f"theta must have shape (3,), got {theta_arr.shape}")
+    theta_dim = len(model.parameter_names()) if hasattr(model, "parameter_names") else len(PARAM_NAMES)
+    if theta_arr.shape != (theta_dim,):
+        return _empty_result(model, theta_arr, sample_id, f"theta must have shape ({theta_dim},), got {theta_arr.shape}")
 
     try:
         import jax.numpy as jnp
@@ -218,9 +268,8 @@ def evaluate_sample(model: Any, theta: Sequence[float], sample_id: int) -> Sampl
             valid = bool(np.all(np.isfinite(observables)) and np.all(np.isfinite(raw_moments)) and raw_moments[0] > 0.0)
             first_invalid_r_kpc = np.nan
         else:
-            observables_jax, raw_jax, valid_jax, _barrier, first_invalid_r = predictor(
-                jnp.asarray(theta_arr, dtype=jnp.float64)
-            )
+            prediction = predictor(jnp.asarray(theta_arr, dtype=jnp.float64))
+            observables_jax, raw_jax, valid_jax, _barrier, first_invalid_r = prediction[:5]
             observables = np.asarray(observables_jax, dtype=float)
             raw_moments = np.asarray(raw_jax, dtype=float)
             valid = bool(float(np.asarray(valid_jax)) > 0.5)
@@ -308,10 +357,11 @@ def write_npz(output_dir: str, model: Any, results: Sequence[SampleResult]) -> s
     """Write machine-readable sample arrays."""
     arrays = _arrays_from_results(results)
     path = os.path.join(output_dir, "prior_predictive_samples.npz")
+    parameter_names = model.parameter_names() if hasattr(model, "parameter_names") else PARAM_NAMES
     np.savez(
         path,
         **arrays,
-        theta_names=np.asarray(PARAM_NAMES, dtype=str),
+        theta_names=np.asarray(parameter_names, dtype=str),
         observable_names=np.asarray(model.observable_names, dtype=str),
         observable_set=np.asarray(model.observable_set, dtype=str),
     )
@@ -320,12 +370,11 @@ def write_npz(output_dir: str, model: Any, results: Sequence[SampleResult]) -> s
 
 def write_csv_summary(output_dir: str, model: Any, results: Sequence[SampleResult]) -> str:
     """Write a compact one-row-per-sample CSV summary."""
+    parameter_names = model.parameter_names() if hasattr(model, "parameter_names") else PARAM_NAMES
     observable_columns = [_observable_column_name(name) for name in model.observable_names]
     fieldnames = [
         "sample_id",
-        "eta_M",
-        "eta_M_cold",
-        "eta_E",
+        *parameter_names,
         "valid",
         "first_invalid_r_kpc",
         "observable_set",
@@ -354,9 +403,6 @@ def write_csv_summary(output_dir: str, model: Any, results: Sequence[SampleResul
             raw = np.asarray(result.raw_moments, dtype=float)
             row: dict[str, Any] = {
                 "sample_id": result.sample_id,
-                "eta_M": result.theta[0],
-                "eta_M_cold": result.theta[1],
-                "eta_E": result.theta[2],
                 "valid": result.valid,
                 "first_invalid_r_kpc": result.first_invalid_r_kpc,
                 "observable_set": model.observable_set,
@@ -370,6 +416,8 @@ def write_csv_summary(output_dir: str, model: Any, results: Sequence[SampleResul
                 "L_interface_cgs": result.L_interface_cgs,
                 "error": result.error,
             }
+            for name, value in zip(parameter_names, result.theta):
+                row[name] = value
             for name, value in zip(observable_columns, result.observables):
                 row[name] = value
             writer.writerow(row)
@@ -593,9 +641,12 @@ def write_metadata(
         "created_by": "examples/inference_prior_predictive.py",
         "runtime_seconds": float(runtime_seconds),
         "arguments": vars(args),
-        "theta_names": list(PARAM_NAMES),
+        "theta_names": list(model.parameter_names()) if hasattr(model, "parameter_names") else list(PARAM_NAMES),
         "prior_family": "log-uniform",
         "prior_bounds": DEFAULT_PRIOR_BOUNDS,
+        "expanded_parameters": getattr(model, "expanded_parameters", "none"),
+        "mixing_chi_pivot": getattr(model, "mixing_chi_pivot", None),
+        "beta_chi_max_abs": getattr(model, "beta_chi_max_abs", None),
         "observable_set": model.observable_set,
         "observable_names": list(model.observable_names),
         "num_samples": int(len(results)),
@@ -625,7 +676,12 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     rng = np.random.default_rng(args.seed)
     model = build_model(args)
-    theta_samples = sample_prior(rng, args.num_samples)
+    theta_samples = sample_prior(
+        rng,
+        args.num_samples,
+        expanded_parameters=args.expanded_parameters,
+        beta_chi_max_abs=args.beta_chi_max_abs,
+    )
     classy_profiles = load_classy_profiles(args.classy_profiles_path) if args.overlay_classy else None
 
     results: list[SampleResult] = []

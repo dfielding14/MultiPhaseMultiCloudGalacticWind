@@ -14,3 +14,6 @@ paper/*
 !paper/writing_style_guide.md
 !paper/paper2_inference_validation/
 !paper/paper2_inference_validation/**
+
+# Keep macOS metadata ignored after paper-tree re-includes.
+**/.DS_Store

@@ -12,6 +12,8 @@ from multiphasegalacticwind.inference import (
     covariance_to_correlation,
     resolve_nuts_chain_method,
 )
+from multiphasegalacticwind.constants import kpc
+from multiphasegalacticwind.config import WindConfig
 from multiphasegalacticwind.jax_physics import has_diffrax
 
 
@@ -298,7 +300,47 @@ def test_ratio_energy_coordinate_transform_roundtrip_and_validation():
         )
 
 
-def test_ratio_energy_coordinate_objective_is_finite():
+def test_loading_ratio_coordinate_transform_roundtrip_and_validation():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        eta_e_parameterization="softcap",
+        energy_coordinate="loading_ratios",
+    )
+
+    theta = np.array([0.10, 0.35, 0.98], dtype=float)
+    u = model._unconstrained_from_theta_numpy(theta)
+    theta_roundtrip = model._theta_from_unconstrained_numpy(u)
+    energy_coords = model.energy_coordinates_from_theta_numpy(theta_roundtrip)
+
+    assert np.allclose(theta_roundtrip, theta)
+    assert np.allclose(energy_coords, np.array([0.10, 3.50, 9.80]))
+
+    theta_jax, log_theta_jax, jac_log_u_jax = model._theta_log_and_jac_log_u_jax(u)
+    assert np.allclose(np.asarray(theta_jax), theta)
+    assert np.allclose(np.asarray(log_theta_jax), np.log(theta))
+    assert np.linalg.det(np.asarray(jac_log_u_jax)) > 0.0
+
+    with pytest.raises(ValueError, match="requires eta_e_parameterization='softcap'"):
+        MomentInferenceModel(
+            sfr=2.0,
+            r_star_kpc=0.12,
+            v_circ=100.0,
+            r_max_kpc=2.0,
+            step_kpc=0.2,
+            n_cloud_species=2,
+            cloud_mass_range=(10.0, 1e3),
+            energy_coordinate="loading_ratios",
+        )
+
+
+@pytest.mark.parametrize("energy_coordinate", ["eta_e_over_eta_m", "loading_ratios"])
+def test_ratio_energy_coordinate_objective_is_finite(energy_coordinate):
     model = MomentInferenceModel(
         sfr=2.0,
         r_star_kpc=0.12,
@@ -309,7 +351,7 @@ def test_ratio_energy_coordinate_objective_is_finite():
         cloud_mass_range=(10.0, 1e3),
         observable_set="logm0_mean_sigma_skew_kurt",
         eta_e_parameterization="softcap",
-        energy_coordinate="eta_e_over_eta_m",
+        energy_coordinate=energy_coordinate,
     )
 
     theta_true = np.array([0.10, 0.25, 0.98], dtype=float)
@@ -327,7 +369,8 @@ def test_ratio_energy_coordinate_objective_is_finite():
     assert np.isfinite(float(nlp(model._unconstrained_from_theta_numpy(theta_true))))
 
 
-def test_ratio_energy_coordinate_hmc_smoke():
+@pytest.mark.parametrize("energy_coordinate", ["eta_e_over_eta_m", "loading_ratios"])
+def test_ratio_energy_coordinate_hmc_smoke(energy_coordinate):
     model = MomentInferenceModel(
         sfr=2.0,
         r_star_kpc=0.12,
@@ -337,7 +380,7 @@ def test_ratio_energy_coordinate_hmc_smoke():
         n_cloud_species=2,
         cloud_mass_range=(10.0, 1e3),
         eta_e_parameterization="softcap",
-        energy_coordinate="eta_e_over_eta_m",
+        energy_coordinate=energy_coordinate,
     )
 
     theta_true = np.array([0.12, 0.10, 1.05], dtype=float)
@@ -362,9 +405,111 @@ def test_ratio_energy_coordinate_hmc_smoke():
 
     assert np.all(np.isfinite(fit.map.theta_map))
     assert np.all(np.isfinite(fit.hmc.samples_theta))
-    ratio_samples = model.energy_coordinates_from_theta_numpy(fit.hmc.samples_theta)[:, 2]
-    assert np.all(np.isfinite(ratio_samples))
-    assert np.all(ratio_samples > 0.0)
+    coordinate_samples = model.energy_coordinates_from_theta_numpy(fit.hmc.samples_theta)
+    assert np.all(np.isfinite(coordinate_samples))
+    assert np.all(coordinate_samples[:, 2] > 0.0)
+    if energy_coordinate == "loading_ratios":
+        assert np.all(coordinate_samples[:, 1] > 0.0)
+
+
+def test_a_mix_and_beta_chi_forward_defaults_preserve_baseline():
+    common = dict(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        observable_set="logm0_mean_sigma_skew_kurt",
+    )
+    theta3 = np.array([0.20, 0.15, 0.85], dtype=float)
+    baseline = MomentInferenceModel(**common)
+    expanded = MomentInferenceModel(**common, expanded_parameters="a_mix_beta_chi")
+
+    obs3 = baseline.predict_observables(theta3)
+    obs5 = expanded.predict_observables(np.array([0.20, 0.15, 0.85, 1.0, 0.0], dtype=float))
+    assert np.allclose(obs5, obs3, rtol=1e-10, atol=1e-40)
+
+    changed = expanded.predict_observables(np.array([0.20, 0.15, 0.85, 1.4, 0.25], dtype=float))
+    assert np.all(np.isfinite(changed))
+    assert not np.allclose(changed, obs3, rtol=1e-4, atol=1e-12)
+
+    config_model = MomentInferenceModel(**common, config=WindConfig(A_mix=1.4, beta_chi_mix=0.25))
+    config_changed = config_model.predict_observables(theta3)
+    assert np.all(np.isfinite(config_changed))
+    assert not np.allclose(config_changed, obs3, rtol=1e-4, atol=1e-12)
+
+
+def test_expanded_parameter_transform_roundtrip_prior_and_validation():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        expanded_parameters="a_mix_beta_chi",
+        beta_chi_max_abs=0.75,
+    )
+    theta = np.array([0.20, 0.12, 0.82, 1.35, -0.20], dtype=float)
+    u = model._unconstrained_from_theta_numpy(theta)
+    roundtrip = model._theta_from_unconstrained_numpy(u)
+    prior_coordinate = model._prior_coordinate_from_theta_numpy(roundtrip)
+
+    assert model.parameter_names() == ("eta_M", "eta_M_cold", "eta_E", "A_mix", "beta_chi_mix")
+    assert np.allclose(roundtrip, theta)
+    assert np.allclose(prior_coordinate[:4], np.log(theta[:4]))
+    assert np.isclose(prior_coordinate[4], theta[4])
+
+    theta_jax, coord_jax, jac_jax = model._theta_log_and_jac_log_u_jax(u)
+    assert np.allclose(np.asarray(theta_jax), theta)
+    assert np.allclose(np.asarray(coord_jax), prior_coordinate)
+    assert np.linalg.det(np.asarray(jac_jax)) > 0.0
+
+    with pytest.raises(ValueError, match="expanded_parameters"):
+        MomentInferenceModel(sfr=2.0, r_star_kpc=0.12, expanded_parameters="all_microphysics")
+
+
+def test_a_mix_expanded_map_and_hmc_smoke():
+    model = MomentInferenceModel(
+        sfr=2.0,
+        r_star_kpc=0.12,
+        v_circ=100.0,
+        r_max_kpc=2.0,
+        step_kpc=0.2,
+        n_cloud_species=2,
+        cloud_mass_range=(10.0, 1e3),
+        expanded_parameters="a_mix",
+    )
+
+    theta_true = np.array([0.20, 0.12, 0.85, 1.15], dtype=float)
+    moments_true = model.predict_moments(theta_true)
+    covariance = build_covariance(0.18 * moments_true, np.eye(3))
+    prior_mean = model._prior_coordinate_from_theta_numpy(np.array([0.20, 0.12, 0.80, 1.0], dtype=float))
+
+    fit = model.fit_posterior(
+        observed_moments=moments_true,
+        covariance_moments=covariance,
+        initial_theta=theta_true,
+        prior_mean_log=prior_mean,
+        prior_sigma_log=(1.4, 1.4, 0.8, 0.35),
+        map_max_iter=4,
+        map_num_starts=1,
+        hmc_num_warmup=4,
+        hmc_num_samples=6,
+        hmc_step_size=0.01,
+        hmc_leapfrog_steps=4,
+        sampler="hmc",
+        seed=29,
+    )
+
+    assert fit.map.theta_map.shape == (4,)
+    assert fit.hmc.samples_theta.shape == (6, 4)
+    assert fit.hmc.samples_log.shape == (6, 4)
+    assert np.all(np.isfinite(fit.hmc.samples_theta))
+    assert np.all(fit.hmc.samples_theta[:, 3] > 0.0)
 
 
 def test_map_whitened_nuts_smoke_components_and_npz_diagnostics(tmp_path):
@@ -512,10 +657,97 @@ def test_map_whitened_nuts_smoke_components_and_npz_diagnostics(tmp_path):
             "posterior_components_truth",
             "posterior_components_map",
             "posterior_components_samples",
+            "log_dndv_low_signal_policy",
+            "log_dndv_censored_mask",
         ):
             assert key in data.files
         assert data["sample_diverging"].shape == (1, 6)
         assert data["posterior_components_samples"].shape[2] == len(model.POSTERIOR_COMPONENT_NAMES)
+        for key in (
+            "failure_policy",
+            "truth_trajectory_status_code",
+            "map_trajectory_status_code",
+            "sample_trajectory_status_code",
+            "map_soft_reach_radius_kpc",
+            "map_stall_penalty",
+            "map_numerical_failure_penalty",
+        ):
+            assert key in data.files
+
+
+def test_stalled_wind_policy_makes_known_bad_leaf_finite():
+    common_kwargs = dict(
+        sfr=20.0,
+        r_star_kpc=0.3,
+        v_circ=150.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=4,
+        cloud_mass_range=(10.0, 1.0e4),
+        observable_set="dndv_binned",
+        dndv_num_bins=32,
+        dndv_vmin_kms=0.0,
+        dndv_vmax_kms=1600.0,
+        eta_e_parameterization="softcap",
+        energy_coordinate="eta_e_over_eta_m",
+    )
+    model = MomentInferenceModel(**common_kwargs)
+    legacy_model = MomentInferenceModel(**common_kwargs, failure_policy="hard_invalid")
+
+    theta_truth = np.array([0.1, 0.35, 0.98], dtype=float)
+    theta_bad_leaf = np.array([0.09144991046377486, 0.3797144686587329, 1.0082027618085596], dtype=float)
+    theta_previous_leaf = np.array([0.09145198540982885, 0.3791091179062511, 1.0092752170880355], dtype=float)
+
+    prediction = model._predict_theta_with_valid_fn(theta_bad_leaf)
+    observables, raw, valid, _barrier, first_invalid_r = prediction[:5]
+    trajectory_status_code = float(np.asarray(prediction[5]))
+    first_invalid_r_kpc = float(np.asarray(first_invalid_r) / kpc)
+    soft_reach_radius_kpc = float(np.asarray(prediction[6]) / kpc)
+    min_hot_velocity_kms = float(np.asarray(prediction[7]))
+    stall_penalty = float(np.asarray(prediction[8]))
+
+    assert float(np.asarray(valid)) == 0.0
+    assert trajectory_status_code == 1.0
+    assert 0.70 < first_invalid_r_kpc < 0.80
+    assert 0.60 < soft_reach_radius_kpc < 0.80
+    assert min_hot_velocity_kms < 0.0
+    assert np.isfinite(stall_penalty)
+    assert stall_penalty > 0.0
+    assert np.all(np.isfinite(np.asarray(observables)))
+    assert np.all(np.isfinite(np.asarray(raw)))
+
+    truth_obs = model.predict_observables(theta_truth)
+    legacy_truth_obs = legacy_model.predict_observables(theta_truth)
+    assert np.allclose(truth_obs, legacy_truth_obs, rtol=1e-10, atol=1e-40)
+
+    previous_prediction = model._predict_theta_with_valid_fn(theta_previous_leaf)
+    assert float(np.asarray(previous_prediction[2])) == 1.0
+    assert float(np.asarray(previous_prediction[5])) == 0.0
+    assert float(np.asarray(previous_prediction[8])) == 0.0
+
+    covariance = build_covariance(np.maximum(0.1 * truth_obs, 1e-30), np.eye(truth_obs.size))
+    components = model.make_negative_log_posterior_components(
+        observed_moments=truth_obs,
+        covariance_moments=covariance,
+        prior_mean_log=np.log(np.array([0.2, 0.2, 0.9], dtype=float)),
+        prior_sigma_log=(1.4, 1.4, 1.2),
+    )(model._unconstrained_from_theta_numpy(theta_bad_leaf))
+    component = dict(zip(model.POSTERIOR_COMPONENT_NAMES, np.asarray(components, dtype=float)))
+    assert np.isfinite(component["total_objective"])
+    assert component["trajectory_status_code"] == 1.0
+    assert component["hard_invalid_penalty"] == 0.0
+    assert component["numerical_failure_penalty"] == 0.0
+    assert component["stall_penalty"] > 0.0
+
+    legacy_components = legacy_model.make_negative_log_posterior_components(
+        observed_moments=legacy_truth_obs,
+        covariance_moments=covariance,
+        prior_mean_log=np.log(np.array([0.2, 0.2, 0.9], dtype=float)),
+        prior_sigma_log=(1.4, 1.4, 1.2),
+    )(legacy_model._unconstrained_from_theta_numpy(theta_bad_leaf))
+    legacy_component = dict(zip(legacy_model.POSTERIOR_COMPONENT_NAMES, np.asarray(legacy_components, dtype=float)))
+    assert legacy_component["trajectory_status_code"] == 1.0
+    assert legacy_component["hard_invalid_penalty"] == 1.0e6
 
 
 def test_softcap_posterior_smoke_and_eta_e_tail_probability():
@@ -571,6 +803,8 @@ def test_dndv_binned_observable_mode_predicts_and_fits():
         dndv_vmin_kms=0.0,
         dndv_vmax_kms=900.0,
         dndv_kernel_sigma_kms=35.0,
+        dndv_kernel="truncated_gaussian",
+        dndv_kernel_truncate_sigma=3.0,
     )
 
     theta_true = np.array([0.20, 0.12, 0.90], dtype=float)
@@ -605,6 +839,202 @@ def test_dndv_binned_observable_mode_predicts_and_fits():
     assert fit.map.predicted_moments.shape == (12,)
     assert np.all(np.isfinite(fit.map.predicted_moments))
     assert fit.hmc.samples_theta.shape == (10, 3)
+
+
+def test_support_aware_dndv_kernels_suppress_far_tails():
+    r_grid = np.array([0.0, 1.0], dtype=float)
+    v_kms = np.array([[100.0], [100.0]], dtype=float)
+    n_h_eff = np.ones((2, 1), dtype=float)
+    velocity_bins = np.array([100.0, 250.0], dtype=float)
+    sigma = 25.0
+
+    gaussian = np.asarray(
+        MomentInferenceModel._observables_dndv_binned(
+            v_kms,
+            n_h_eff,
+            r_grid,
+            velocity_bins,
+            sigma,
+            kernel_kind=MomentInferenceModel._DNDV_KERNEL_GAUSSIAN,
+        )
+    )
+    truncated = np.asarray(
+        MomentInferenceModel._observables_dndv_binned(
+            v_kms,
+            n_h_eff,
+            r_grid,
+            velocity_bins,
+            sigma,
+            kernel_kind=MomentInferenceModel._DNDV_KERNEL_TRUNCATED_GAUSSIAN,
+            truncate_sigma=3.0,
+        )
+    )
+    compact = np.asarray(
+        MomentInferenceModel._observables_dndv_binned(
+            v_kms,
+            n_h_eff,
+            r_grid,
+            velocity_bins,
+            sigma,
+            kernel_kind=MomentInferenceModel._DNDV_KERNEL_COMPACT_COSINE,
+        )
+    )
+
+    assert gaussian[0] > 0.0
+    assert gaussian[1] > 0.0
+    assert truncated[0] > 0.0
+    assert truncated[1] == 0.0
+    assert compact[0] > 0.0
+    assert compact[1] == 0.0
+
+    with pytest.raises(ValueError, match="Unsupported dndv_kernel"):
+        MomentInferenceModel(
+            sfr=3.0,
+            r_star_kpc=0.20,
+            observable_set="dndv_binned",
+            dndv_kernel="not_a_kernel",
+        )
+
+
+def test_log_dndv_binned_observable_mode_is_finite_and_map_fits():
+    model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=3,
+        cloud_mass_range=(10.0, 1e4),
+        cloud_alpha=2.0,
+        observable_set="log_dndv_binned",
+        dndv_num_bins=12,
+        dndv_vmin_kms=0.0,
+        dndv_vmax_kms=900.0,
+        dndv_kernel_sigma_kms=35.0,
+        dndv_kernel="truncated_gaussian",
+        dndv_kernel_truncate_sigma=3.0,
+    )
+    linear_model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=3,
+        cloud_mass_range=(10.0, 1e4),
+        cloud_alpha=2.0,
+        observable_set="dndv_binned",
+        dndv_num_bins=12,
+        dndv_vmin_kms=0.0,
+        dndv_vmax_kms=900.0,
+        dndv_kernel_sigma_kms=35.0,
+        dndv_kernel="truncated_gaussian",
+        dndv_kernel_truncate_sigma=3.0,
+    )
+
+    theta_true = np.array([0.20, 0.12, 0.90], dtype=float)
+    obs_true = model.predict_observables(theta_true)
+    linear_obs_true = linear_model.predict_observables(theta_true)
+
+    assert obs_true.shape == (12,)
+    assert np.all(np.isfinite(obs_true))
+    assert np.allclose(np.exp(obs_true), linear_obs_true, rtol=1e-10, atol=1e-40)
+    assert model.get_dndv_velocity_bins().shape == (12,)
+
+    idx = np.arange(obs_true.size)
+    sigma = np.full(obs_true.size, np.log1p(0.12), dtype=float)
+    corr = 0.6 ** np.abs(idx[:, None] - idx[None, :])
+    covariance = build_covariance(sigma, corr)
+    observed = obs_true + 0.03 * np.cos(0.4 * idx)
+
+    fit = model.fit_map(
+        observed_moments=observed,
+        covariance_moments=covariance,
+        initial_theta=(0.2, 0.2, 0.8),
+        max_iter=8,
+        map_num_starts=2,
+        seed=13,
+    )
+    assert fit.predicted_moments.shape == (12,)
+    assert np.all(np.isfinite(fit.predicted_moments))
+    assert np.all(fit.theta_map > 0.0)
+
+
+def test_log_dndv_censored_upper_likelihood_masks_low_signal_bins():
+    model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        v_circ=120.0,
+        r_max_kpc=6.0,
+        step_kpc=0.08,
+        n_cloud_species=3,
+        cloud_mass_range=(10.0, 1e4),
+        cloud_alpha=2.0,
+        observable_set="log_dndv_binned",
+        dndv_num_bins=12,
+        dndv_vmin_kms=0.0,
+        dndv_vmax_kms=900.0,
+        dndv_kernel_sigma_kms=35.0,
+        log_dndv_low_signal_policy="censored_upper",
+        log_dndv_censor_delta_log=12.0,
+        log_dndv_censor_transition=0.10,
+        log_dndv_censor_sigma=0.50,
+        log_dndv_censor_upper_margin=1.0,
+    )
+    theta_true = np.array([0.20, 0.12, 0.90], dtype=float)
+    obs_true = model.predict_observables(theta_true)
+    mask = model.log_dndv_censored_mask(obs_true)
+    assert mask.shape == obs_true.shape
+    assert np.any(mask)
+    assert not np.all(mask)
+
+    idx = np.arange(obs_true.size)
+    sigma = np.full(obs_true.size, np.log1p(0.12), dtype=float)
+    covariance = build_covariance(sigma, 0.4 ** np.abs(idx[:, None] - idx[None, :]))
+    component_fn = model.make_negative_log_posterior_components(
+        observed_moments=obs_true,
+        covariance_moments=covariance,
+        include_transform_jacobian=False,
+    )
+    truth_components = dict(
+        zip(
+            model.POSTERIOR_COMPONENT_NAMES,
+            np.asarray(component_fn(model._unconstrained_from_theta_numpy(theta_true)), dtype=float),
+        )
+    )
+    assert truth_components["censored_chi2"] < 1.0e-2
+    assert truth_components["gaussian_chi2"] < 1.0e-8
+
+    stricter_upper_limits = obs_true.copy()
+    stricter_upper_limits[mask] -= 2.0
+    component_fn = model.make_negative_log_posterior_components(
+        observed_moments=stricter_upper_limits,
+        covariance_moments=covariance,
+        include_transform_jacobian=False,
+    )
+    strict_components = dict(
+        zip(
+            model.POSTERIOR_COMPONENT_NAMES,
+            np.asarray(component_fn(model._unconstrained_from_theta_numpy(theta_true)), dtype=float),
+        )
+    )
+    assert strict_components["censored_chi2"] > truth_components["censored_chi2"] + 1.0
+    assert strict_components["chi2"] >= strict_components["censored_chi2"]
+
+    gaussian_model = MomentInferenceModel(
+        sfr=3.0,
+        r_star_kpc=0.20,
+        observable_set="log_dndv_binned",
+        log_dndv_low_signal_policy="gaussian",
+    )
+    assert not np.any(gaussian_model.log_dndv_censored_mask(np.zeros(gaussian_model.observable_dim)))
+    with pytest.raises(ValueError, match="Unsupported log_dndv_low_signal_policy"):
+        MomentInferenceModel(
+            sfr=3.0,
+            r_star_kpc=0.20,
+            observable_set="log_dndv_binned",
+            log_dndv_low_signal_policy="not_a_policy",
+        )
 
 
 def test_map_and_nuts_smoke_on_synthetic_moments():

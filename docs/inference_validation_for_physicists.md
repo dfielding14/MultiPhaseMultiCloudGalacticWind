@@ -400,13 +400,13 @@ A_mix multiplies f_turb0
 A_mix multiplies geometric_factor
 ```
 
-The cleanest first implementation is probably:
+The implementation decision is:
 
 ```text
-A_mix -> Mdot_coefficient
+A_chi = A_mix * (chi / 100)^beta_chi_mix
 ```
 
-because it changes the mass-exchange amplitude without changing the turbulent velocity diagnostic itself.
+with `beta_chi_mix = 0` in the first `A_mix`-only experiment. This changes the mass-exchange amplitude without changing the turbulent velocity diagnostic itself.
 
 Second candidate:
 
@@ -416,10 +416,10 @@ drag_coeff
 
 This controls momentum exchange and may leave a distinct imprint on velocity-profile shape.
 
-Only later consider an effective chi exponent:
+Only after `A_mix` passes exact recovery, consider the effective chi-tilt diagnostic:
 
 ```text
-chi_power_eff
+beta_chi_mix
 ```
 
 Do not start by fitting all three chi exponents separately.
@@ -441,7 +441,8 @@ Then separately test:
 eta_M
 eta_M_cold
 eta_E
-drag_coeff
+A_mix
+beta_chi_mix
 ```
 
 Only then consider:

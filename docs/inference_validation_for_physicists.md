@@ -378,6 +378,18 @@ not worth fitting
 
 This stage tells us what the data could plausibly constrain.
 
+Important cloud-population caveat:
+
+```text
+cloud_alpha
+cloud_mass_min
+cloud_mass_max
+```
+
+These affect the injected cloud population, not only the local cloud-wind interaction. A steeper `cloud_alpha` or a lower `cloud_mass_min` emphasizes smaller clouds that mix and disrupt more easily. A shallower `cloud_alpha` or a higher `cloud_mass_max` emphasizes massive clouds that survive farther. Those changes can look like changes in `eta_M_cold` or `A_mix`.
+
+So the next step should not fit the cloud mass distribution directly. Keep it fixed for the first `A_mix` validation gate, then run a robustness check over reasonable slopes and mass limits before making production claims.
+
 ### Stage 4: Define Effective Deeper Parameters
 
 Avoid fitting every ad hoc subgrid knob directly.

@@ -246,6 +246,38 @@ The covariance-whitened projection gives two useful diagnostics:
 
 This means a one-object posterior that adds a broad microphysics parameter would still trade strongly against `eta_M`, `eta_M_cold`, and `eta_E`, but the trade is not exact. A restricted effective mixing-amplitude test is therefore more justified than it looked under the old max-cosine metric, provided it gets its own prior predictive and synthetic-recovery gate.
 
+## Cloud Mass Distribution Caveat
+
+The screen includes `cloud_alpha`, and the result is informative:
+
+- shape-five max shift: `0.335`
+- observed-window log-profile max distance: `13.3`
+- minimum valid fraction: `0.933`
+- maximum loading-subspace fraction: `0.995`
+- maximum orthogonal residual: `36.1`
+
+This means the cloud mass-spectrum slope has real observable leverage, but its leading effect is mostly loading-like. Physically, this is expected. A steeper cloud spectrum weights small clouds more heavily; small clouds mix, decelerate, and disrupt more readily. A shallower spectrum weights massive clouds more heavily; massive clouds survive farther and can carry cold column to different velocities. These effects can mimic changes in `eta_M_cold` and in the effective mixing amplitude `A_mix`.
+
+The cloud mass limits are an additional hidden systematic. Changing `cloud_mass_min` or `cloud_mass_max` changes the physical cloud population, but with only four cloud species it also changes the numerical quadrature of that population. That means a mass-limit test is not just "another microphysics knob"; it also checks whether the discretized cloud population is stable enough for inference.
+
+Decision for this step:
+
+```text
+Do not infer cloud_alpha, cloud_mass_min, or cloud_mass_max yet.
+Treat the fiducial cloud mass distribution as a fixed model assumption for the next A_mix gate.
+Require a later robustness check over reasonable cloud mass ranges and slopes before production expanded-inference claims.
+```
+
+Suggested robustness grid after the first `A_mix` recovery gate:
+
+```text
+cloud_alpha = 1.5, 2.0, 2.5
+cloud_mass_min = 1, 10, 100 Msun
+cloud_mass_max = 1e3, 1e4, 1e5 Msun
+```
+
+This should be a forward-model or exact-recovery robustness check around the restricted `A_mix` experiment, not a blocker before the first `A_mix` validation run.
+
 ## Decision
 
 Step 7 is complete enough to make the immediate expanded-inference decision:

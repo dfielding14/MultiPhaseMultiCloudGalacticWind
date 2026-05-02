@@ -867,6 +867,7 @@ Minimum scope:
 - run exact synthetic recovery for ordinary truth cases before treating `strong_wings` as a stress test,
 - compare against the baseline three-parameter recovery,
 - confirm that `A_mix` is not purely prior-dominated and does not simply absorb unresolved high-energy geometry,
+- keep `cloud_alpha`, `cloud_mass_min`, and `cloud_mass_max` fixed for the first gate, but plan a follow-up robustness grid over reasonable cloud mass distributions before production expanded-inference claims,
 - update `docs/inference_expanded_parameter_decision.md`, `docs/inference_validation_for_physicists.md`, and Paper 2 only after the recovery results exist.
 
 Carry the synthetic-recovery caveat forward: the `strong_wings` high-specific-energy case remains a useful stress test but not a production posterior claim. The TRML screen may use it as a diagnostic case, but it should not rely on noisy `strong_wings` recovery or expanded inference.

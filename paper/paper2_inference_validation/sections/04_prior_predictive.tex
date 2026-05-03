@@ -1,49 +1,228 @@
 \section{Prior Predictive Checks}
 \label{sec:prior_predictive}
 
-% Outline:
-% - State the question: what range of observables does the model produce before seeing data?
-% - Describe the baseline prior ranges for eta_M, eta_M,cold, and eta_E.
-% - Show the valid/failure fraction and where failures occur in parameter space.
-% - Present distributions of column scale, mean velocity, velocity width, and profile shape.
-% - Compare the prior predictive envelope to the scale of CLASSY-like observations.
-% - Use this section to motivate any narrowing of priors before synthetic recovery.
-% - End with a clear decision: whether the baseline prior is scientifically useful enough for input recovery.
+A prior predictive check asks what the model predicts before it is conditioned
+on any particular observation.  This is the first test of whether the inference
+problem is well posed.  A formally valid posterior is not useful if the prior
+places most of its weight on wind solutions that stall near launch, or if the
+finite solutions occupy an observable range unrelated to real cool outflows.  In
+this section we therefore sample the baseline three-loading prior, run the same
+JAX forward model used by the inference calculations, and ask three questions:
+what fraction of the prior produces valid observables, where do failures occur
+in parameter space, and what range of column-density velocity profiles is
+produced by the valid draws?
+
+\subsection{Baseline prior volume}
+\label{subsec:prior_predictive_setup}
+
+The atlas reported here uses only the three baseline inference parameters,
+\begin{equation}
+\theta
+=
+\left(\eta_M,\ \eta_{M,\rm cold},\ \eta_E\right).
+\end{equation}
+For this exploratory check we draw the two mass loadings from log-uniform ranges
+\begin{equation}
+0.03 < \eta_M < 3,\qquad
+10^{-3} < \eta_{M,\rm cold} < 10,
+\end{equation}
+and draw the hot energy loading from
+\begin{equation}
+0.05 < \eta_E < 0.999 .
+\end{equation}
+These bounds are intentionally broad.  They are not meant to be the final prior
+for any individual galaxy, nor are they identical to the Gaussian prior used in
+the later MAP and sampling calculations.  Their purpose is more basic: they
+expose the physically useful region of the current model and reveal whether
+broad but superficially reasonable loading combinations produce stalled or
+non-finite winds.
+
+Unless stated otherwise, the prior predictive runs use a fiducial galaxy with
+$\dot M_\star=20\,M_\odot\,{\rm yr}^{-1}$, $r_\star=0.3\,{\rm kpc}$, and
+$v_{\rm circ}=150\,{\rm km\,s^{-1}}$.  The forward model is integrated to
+$30\,{\rm kpc}$ with 13 cloud-mass species spanning $1$--$10^6\,M_\odot$ and
+the fiducial cloud mass-spectrum slope $\alpha_{\rm cl}=2$.  For each draw we
+record the observable vector, the raw velocity moments, a validity flag, and the
+first radius at which the trajectory becomes invalid.  Invalid samples remain
+in the atlas tables, but their observables are not included in the valid
+predictive distributions.  This setup is closer to the intended production
+forward model than the reduced CPU grid used later for exact synthetic recovery.
+The comparison is therefore useful but not one-to-one: the prior predictive
+atlas asks what the full fiducial model can produce, while the exact recovery
+tests use a shorter, cheaper grid for repeated sampler diagnostics.
+
+The same atlas machinery already supports the restricted expanded coordinates
+discussed later, including
+$(\eta_M,\eta_{M,\rm cold},\eta_E,A_{\rm mix})$ and the staged
+$\beta_{\chi,\rm mix}$ diagnostic.  Those runs are not included in this section.
+They constitute the next validation gate after the baseline three-loading
+model has been tested.
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/prior_predictive_validity.png}
 \caption{
-Preliminary prior predictive validity map for the baseline three-parameter inference model.
-The samples are drawn from broad exploratory priors on the hot mass loading, cold mass loading, and hot energy loading.
-Green points mark parameter combinations that produce finite, physically valid observables, while red points mark failed integrations or invalid observable vectors.
-This figure is meant to identify where the prior places probability on physically useful winds before any comparison with data.
+Prior predictive validity map for the baseline three-parameter inference model.
+The samples are drawn from broad exploratory priors on the hot mass loading,
+cold mass loading, and hot energy loading.
+Green points mark parameter combinations that produce finite, physically valid
+observables, while red points mark stalled integrations, nonphysical
+trajectories, or invalid observable vectors.
+The purpose of the figure is to identify where the prior places probability on
+physically useful winds before any comparison with data.
 }
 \label{fig:prior_predictive_validity}
 \end{figure*}
+
+Figure~\ref{fig:prior_predictive_validity} shows the basic validity structure.
+In the 200-sample shape-summary atlas, 84 samples produce finite observables,
+for a valid fraction of 0.42.  In the independent 100-sample binned-profile
+atlas used for the $dN/dv$ envelope below, 50 samples are valid.  These are
+finite-sample estimates, not calibrated occurrence rates.  The two runs use
+different random draws and observable vectors, so the exact fraction should not
+be over-interpreted.  The robust result is the geometry of the valid region.
+Invalid samples are not distributed randomly through the prior.  They are
+concentrated toward larger cold loading and, more weakly, toward larger hot mass
+loading.  In the shape-summary atlas, the median valid cold loading is
+$\eta_{M,\rm cold}\simeq 0.013$, whereas the median invalid cold loading is
+$\eta_{M,\rm cold}\simeq 0.78$.  The corresponding medians for the hot mass
+loading are $\eta_M\simeq 0.11$ and $\eta_M\simeq 0.51$.
+
+This is the expected physical behavior.  Large cold loading increases the cool
+mass that must be accelerated and mixed, while large hot mass loading raises
+the density of the hot wind and strengthens radiative losses.  High
+$\eta_E/\eta_M$ can help the wind reach large velocity, but it does not by
+itself guarantee a valid cool absorber because the same loading factors also
+set the density, cooling time, drag, and cloud survival.  Some of these
+solutions therefore cool, decelerate, or become non-finite soon after launch.
+The median first invalid radius in the shape atlas is only
+$0.32\,{\rm kpc}$, just outside the adopted launch radius.  Thus the validity
+map is already a physical result: a broad phenomenological loading prior spends
+substantial volume on systems that do not produce a useful large-radius absorber
+in this model.
+
+\subsection{Observable range of valid winds}
+\label{subsec:prior_predictive_observables}
+
+The valid subset spans a broad but interpretable range of cool-phase
+observables.  In the shape-summary atlas the total column scale covers
+$M_0\simeq 3.6\times10^{17}$ to
+$2.4\times10^{20}\,{\rm cm}^{-2}$, with a median
+$M_0\simeq 8.8\times10^{18}\,{\rm cm}^{-2}$.  The central 68 percent of valid
+draws span $1.3\times10^{18}$--$4.0\times10^{19}\,{\rm cm}^{-2}$.  The mean
+outflow velocity ranges from about $260$ to
+$650\,{\rm km\,s^{-1}}$, with a median near $390\,{\rm km\,s^{-1}}$ and a
+central 68 percent range of $330$--$510\,{\rm km\,s^{-1}}$.  The velocity width
+ranges from about $60$ to $250\,{\rm km\,s^{-1}}$, with the central 68 percent
+between roughly $130$ and $200\,{\rm km\,s^{-1}}$.  These ranges are not tuned
+to any individual absorber.  They show that the baseline prior generates both
+weak and strong cool columns, as well as both narrow and moderately broad
+profiles, before any likelihood is applied.
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/prior_predictive_observable_histograms.png}
 \caption{
-Preliminary prior predictive distributions for three compact observable summaries computed from valid baseline samples.
-The panels show the total column scale, mean velocity, and velocity width implied by the broad exploratory prior.
-These distributions define the range of cool-phase absorption signatures that the current model expects before seeing the data, and therefore set the scale for the synthetic recovery tests that follow.
+Prior predictive distributions for three compact observable summaries computed
+from valid baseline samples.
+The panels show the total column scale, mean velocity, and velocity width
+implied by the broad exploratory prior.
+These distributions define the range of cool-phase absorption signatures that
+the current model expects before seeing the data, and therefore set the scale
+for the synthetic recovery tests that follow.
 }
 \label{fig:prior_predictive_observable_histograms}
 \end{figure*}
+
+Figure~\ref{fig:prior_predictive_observable_histograms} shows the same result
+graphically.  The distributions are broad, but they are not featureless.  The
+valid prior does not simply map into arbitrary combinations of column and
+velocity.  High-column profiles require enough cold material to survive to the
+observable radius, but not so much that the cold phase drains the hot flow.
+High-velocity profiles require large specific energy, but the energy loading
+alone does not determine the profile because $\eta_M$ sets both the launch speed
+through $\eta_E/\eta_M$ and the density scale that controls cooling and
+coupling.  This coupling is the first indication that the posterior will contain
+curved degeneracies rather than independent constraints on the three loading
+parameters.
+
+\subsection{Profile-level envelope}
+\label{subsec:prior_predictive_dndv}
+
+The compact summaries are useful for quick validation, but absorption data are
+ultimately profile measurements.  We therefore repeat the prior predictive
+exercise with a binned $dN/dv$ observable and compare the resulting envelope to
+processed CLASSY profiles in Figure~\ref{fig:prior_predictive_dndv_envelope}.
+The model envelope is still evaluated for one fixed fiducial galaxy, whereas
+the gray profiles span galaxies with different star formation rates, sizes,
+stellar masses, and circular velocities.  This is not a fit and should not be
+read as a rejection test.  It is a scale check: does the prior generate cool
+absorbers with columns and velocities in the same broad regime as the data that
+will eventually be modeled object by object?
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.82\textwidth]{figures/prior_predictive_dndv_envelope.png}
 \caption{
-Preliminary prior predictive envelope for the binned column-density velocity profile.
-Thin gray curves show the processed CLASSY profiles after mapping blueshifted velocities to positive outflow speeds.
-The shaded regions show the central prior-predictive spread among valid samples, and the solid blue curve shows the median model profile.
-This comparison is intentionally imperfect: the blue prior predictive distribution is evaluated for one fixed fiducial galaxy with $\mathrm{SFR}=20\,M_\odot\,\mathrm{yr}^{-1}$, $r_\star=0.3\,\mathrm{kpc}$, and $v_{\rm circ}=150\,\mathrm{km}\,\mathrm{s}^{-1}$, while the gray curves span the full CLASSY sample with different galaxy properties.
-The apparent vertical offset should therefore be read as a warning about this non-conditioned prior check, not as evidence that the model cannot fit individual CLASSY profiles.
-The lower plotting limit is set to $10^{12}\,\mathrm{cm}^{-2}\,(\mathrm{km}\,\mathrm{s}^{-1})^{-1}$ to show the low-column prior tails without extending to the numerical floor used for model bookkeeping.
-This profile-level check complements the moment-based summaries in Figure~\ref{fig:prior_predictive_observable_histograms} by asking whether the prior generates plausible velocity structure rather than only plausible low-order moments.
+Prior predictive envelope for the binned column-density velocity profile.
+Thin gray curves show the processed CLASSY profiles after mapping blueshifted
+velocities to positive outflow speeds.
+The shaded regions show the central prior-predictive spread among valid samples,
+and the solid blue curve shows the median model profile.
+The model envelope is evaluated for one fixed fiducial galaxy with
+$\mathrm{SFR}=20\,M_\odot\,\mathrm{yr}^{-1}$,
+$r_\star=0.3\,\mathrm{kpc}$, and
+$v_{\rm circ}=150\,\mathrm{km}\,\mathrm{s}^{-1}$, while the gray curves span
+the full CLASSY sample with different galaxy properties.
+The apparent vertical offset should therefore be read as a warning about this
+non-conditioned prior check, not as evidence that the model cannot fit
+individual CLASSY profiles.
+The envelope shown here uses the historical Gaussian velocity kernel.
+The lower plotting limit is set to
+$10^{12}\,\mathrm{cm}^{-2}\,(\mathrm{km}\,\mathrm{s}^{-1})^{-1}$ to show the
+low-column prior tails without extending to the numerical floor used for model
+bookkeeping.
+This profile-level check complements the moment-based summaries in
+Figure~\ref{fig:prior_predictive_observable_histograms} by asking whether the
+prior generates plausible velocity structure rather than only plausible
+low-order moments.
 }
 \label{fig:prior_predictive_dndv_envelope}
 \end{figure*}
+
+The profile envelope reinforces two points.  First, the model naturally
+populates the velocity range where cool outflow absorption is measured.  The
+valid prior samples produce profiles with substantial column over several
+hundred ${\rm km\,s^{-1}}$, and some draws generate extended high-velocity
+wings.  Second, the low-signal edges of the profile are intrinsically delicate.
+The model has finite support set by the cloud velocities and survival radii,
+while a Gaussian binning kernel can leak small amounts of column outside that
+support.  This detail is nearly invisible in moment summaries but becomes
+important for log-profile likelihoods, where tiny columns in edge bins can
+carry large apparent residuals.  This is why the support-aware kernels and
+low-signal log-profile treatments are kept as diagnostics until exact recovery
+tests show that they improve inference for physical reasons rather than by
+hiding edge-bin tension.
+
+\subsection{Decision for the baseline inference}
+\label{subsec:prior_predictive_decision}
+
+The baseline prior predictive check passes the limited test needed to proceed
+to synthetic recovery.  The valid prior produces cool-column scales, velocities,
+and widths in a physically relevant regime, and the invalid samples fail in
+interpretable regions of loading space rather than through unexplained numerical
+pathologies.  At the same time, the check also shows why the rest of the paper
+must remain a validation study.  The broad prior is too permissive to be treated
+as a final object-level prior, and the validity structure is sharp enough that
+sampler behavior can be affected by failed or stalled winds if those cases are
+handled as hard cliffs.
+
+We therefore use the prior predictive atlas as a gate, not as a final tuning
+step.  It justifies exact synthetic recovery for the three loading parameters,
+but it does not justify adding cloud-wind microphysics parameters yet.  The
+implementation can already generate a restricted $A_{\rm mix}$ atlas, but the
+scientific claim has not been earned until that four-parameter prior predictive
+check is run and interpreted.  In particular, the $A_{\rm mix}$ experiment
+discussed later must show that adding an effective mixing amplitude does not
+simply enlarge the invalid region or absorb cloud-population assumptions that
+are already visible in the baseline prior predictive map.

@@ -1,9 +1,199 @@
 \section{Inference Framework}
 \label{sec:inference_framework}
 
-% Outline:
-% - Explain inference in forward-model language: parameters map to observables, and the likelihood measures agreement with data.
-% - Define priors, likelihoods, posteriors, and posterior predictive checks in physics terms.
-% - Specify the baseline likelihood assumptions and covariance choices.
-% - Describe MAP and posterior sampling only as much as needed to interpret the validation tests.
-% - Make the key point: the goal is not to fit as many parameters as possible, but to learn which physical degrees of freedom are identifiable.
+The forward model in Section~\ref{sec:model} maps wind and cloud parameters
+into an observable column-density velocity profile.  The inverse problem is more
+subtle.  A measured profile does not uniquely determine the mass loading, energy
+loading, cloud survival history, and turbulent mixing strength.  Different
+physical choices can produce similar low-order velocity moments, and some
+directions in parameter space may be controlled more by the prior or by the
+validity boundary of the wind solution than by the data themselves.  The
+inference framework is therefore designed to answer a restricted question:
+which combinations of physical parameters are identifiable from a given set of
+cool-gas observables?
+
+\subsection{Parameter Space}
+\label{subsec:inference_parameters}
+
+The baseline inference problem keeps the fitted parameter set deliberately
+small.  For a fixed galaxy and a fixed cloud-wind closure, we fit
+\begin{equation}
+\theta
+=
+\left(\eta_M,\ \eta_{M,\rm cold},\ \eta_E\right).
+\label{eq:baseline_theta}
+\end{equation}
+The galaxy inputs include $\dot M_\star$, $r_\star$, $v_{\rm circ}$, and the
+assumed wind opening angle.  The remaining model controls, including the
+turbulent velocity normalization, drag coefficient, cloud mass spectrum, and
+mixing-layer scalings, are held fixed in the baseline inference problem.  This
+choice follows the launch scalings in Section~\ref{subsec:model_launch}:
+$\eta_E/\eta_M$ sets the characteristic hot-wind specific energy, $\eta_M$
+sets the density scale at fixed specific energy, and
+$\eta_{M,\rm cold}$ sets the initial cool-column budget.  These are the first
+quantities that must be recoverable before any deeper cloud-wind parameter can
+be interpreted.
+
+We also implement two restricted expanded parameterizations, but they are not
+used as production models in this paper unless they pass their own validation
+gates.  The first adds one effective cloud-mixing amplitude,
+\begin{equation}
+\theta
+=
+\left(\eta_M,\ \eta_{M,\rm cold},\ \eta_E,\ A_{\rm mix}\right),
+\end{equation}
+where $A_{\rm mix}$ multiplies the cloud growth and loss terms.  The staged
+second diagnostic adds a density-contrast tilt,
+\begin{equation}
+A_\chi = A_{\rm mix}
+\left({\chi\over \chi_{\rm pivot}}\right)^{\beta_{\chi,\rm mix}}.
+\end{equation}
+The fiducial model is recovered for $A_{\rm mix}=1$ and
+$\beta_{\chi,\rm mix}=0$.  This restricted structure is important: it tests one
+effective mixing direction at a time rather than fitting all turbulent
+radiative mixing-layer closure parameters simultaneously.
+
+\subsection{Observable Vectors}
+\label{subsec:inference_observables}
+
+The model prediction is an observable vector
+\begin{equation}
+{\bf y}_{\rm mod}(\theta)
+=
+{\cal F}(\theta;\ {\bf x}_{\rm gal}, {\bf q}_{\rm cl}),
+\end{equation}
+where ${\bf x}_{\rm gal}$ denotes the fixed galaxy inputs and
+${\bf q}_{\rm cl}$ denotes the fixed cloud-wind and mixing-layer controls.  The
+validation program uses several choices of ${\bf y}$.  The most compact option
+uses the first three velocity moments of the cool-gas profile,
+\begin{equation}
+M_n = \int v^n {dN\over dv}\,dv,\qquad n=0,1,2 .
+\end{equation}
+The main synthetic-recovery tests use a more interpretable five-component shape
+summary,
+\begin{equation}
+{\bf y}_{\rm shape}
+=
+\left(\ln M_0,\ \langle v\rangle,\ \sigma_v,\ {\rm skew}_v,\ {\rm kurt}_v\right),
+\end{equation}
+where the last four quantities are computed from the same $dN/dv$ distribution.
+This summary keeps the total column scale, characteristic velocity, width, and
+asymmetry of the absorption profile while remaining cheap enough for repeated
+validation sweeps.
+
+The most information-rich option is the binned profile itself.  In that case
+the observable vector is either $dN/dv$ evaluated on fixed velocity bins, or
+$\ln(dN/dv)$ after applying a small numerical floor.  The binned profile keeps
+localized information in the wings and at the velocity support edges.  It is
+therefore the right diagnostic for cases in which the five shape summaries are
+too compressed, but it also makes the covariance model more important.  Adjacent
+velocity bins are correlated by line-spread functions, continuum placement,
+profile processing, and by the model kernel used to place cloud material onto
+the velocity grid.
+
+\subsection{Likelihood and Priors}
+\label{subsec:inference_likelihood}
+
+For a data vector ${\bf y}_{\rm obs}$ with covariance matrix ${\bf C}$, define
+$\Delta{\bf y}={\bf y}_{\rm obs}-{\bf y}_{\rm mod}(\theta)$.  The baseline
+likelihood is Gaussian,
+\begin{equation}
+-2\ln {\cal L}
+=
+\Delta{\bf y}^T{\bf C}^{-1}\Delta{\bf y}
++ {\rm const}.
+\label{eq:gaussian_likelihood}
+\end{equation}
+The covariance is part of the physical model of the data, not a numerical
+detail.  For moment summaries it sets the relative weight of column scale,
+velocity scale, and profile shape.  For binned $dN/dv$, it controls how much
+localized profile structure can drive the fit.  In diagnostic log-profile runs
+we also allow low-signal bins to be treated as smooth one-sided upper limits.
+This option is useful for testing whether support-edge bins are driving
+posterior geometry, but it is not a production likelihood until exact recovery
+passes with that choice.
+
+The posterior combines this likelihood with a prior on a simple coordinate
+$\psi(\theta)$.  For the baseline parameters,
+\begin{equation}
+\psi =
+\left(\ln\eta_M,\ \ln\eta_{M,\rm cold},\ \ln\eta_E\right).
+\end{equation}
+When $A_{\rm mix}$ is active, $\ln A_{\rm mix}$ is appended to this vector.  If
+the staged $\beta_{\chi,\rm mix}$ diagnostic is active, that parameter is added
+linearly rather than logarithmically.  The fitted prior used in the MAP and
+sampling calculations is a Gaussian in this coordinate,
+\begin{equation}
+-2\ln p(\theta)
+=
+\sum_i
+\left[
+{\psi_i(\theta)-\psi_{0,i}\over \sigma_{\psi,i}}
+\right]^2
++{\rm const}.
+\label{eq:prior_coordinate}
+\end{equation}
+The prior predictive checks in Section~\ref{sec:prior_predictive} use a
+separate broad exploratory distribution.  The distinction matters: prior
+predictive checks ask what the model can produce before fitting, whereas
+Equations~\ref{eq:gaussian_likelihood} and \ref{eq:prior_coordinate} define the
+posterior target used in input-recovery and data-fitting calculations.
+
+With these definitions,
+\begin{equation}
+p(\theta\mid{\bf y}_{\rm obs})
+\propto
+{\cal L}({\bf y}_{\rm obs}\mid\theta)\,
+p(\theta).
+\end{equation}
+
+\subsection{Optimization, Sampling, and Validity}
+\label{subsec:inference_sampling}
+
+All positive components of $\theta$ are mapped from unconstrained variables
+before optimization or sampling.  For MAP estimates we report the maximum
+posterior density in the prior coordinate $\psi$, not the maximum in an arbitrary
+unconstrained sampler coordinate.  For HMC or NUTS, the target includes the
+Jacobian of the map from unconstrained variables to $\psi$, so that the samples
+represent the intended posterior measure.  The reported outputs are always
+transformed back to physical parameters such as
+$(\eta_M,\eta_{M,\rm cold},\eta_E)$.
+
+The default energy-loading parameterization enforces $0<\eta_E<0.999$,
+representing the nominal supernova-energy budget.  Several diagnostics relax or
+reparameterize this direction.  The soft-cap mode allows $\eta_E>1$ with a
+smooth penalty above the nominal budget.  The specific-energy coordinate samples
+$\eta_E/\eta_M$, and the loading-ratio coordinate samples both
+$\eta_{M,\rm cold}/\eta_M$ and $\eta_E/\eta_M$, while still reporting the
+physical loading factors.  These are sampler and identifiability diagnostics,
+not new production interpretations.  They test whether high-energy recovery
+problems are caused by the physics in the observables, by the hard energy
+ceiling, or by a poor coordinate for the speed-setting direction.  A local
+MAP-whitened NUTS coordinate is used in the same spirit: it changes the sampler
+geometry, not the physical model.
+
+The inference implementation also distinguishes physical stalled winds from numerical
+failures.  A trajectory is invalid if it becomes non-finite or loses positive
+hot velocity, density, or pressure before the required radius.  Under the
+default stalled-wind policy, finite nonphysical or stalled trajectories remain
+finite model evaluations with a smooth reach-radius penalty and recorded
+diagnostics, including the trajectory status code, soft reach radius, minimum
+hot velocity, stall penalty, and numerical-failure penalty.  Genuinely
+non-finite solver failures remain numerical failures and receive the numerical
+failure penalty.  The legacy hard-invalid policy is retained only for
+comparisons with the older cliff-like posterior.
+
+\subsection{Validation Logic}
+\label{subsec:inference_validation_logic}
+
+The validation sequence follows directly from the framework above.  A prior
+predictive check asks whether draws from the prior generate finite and plausible
+observables before seeing any data.  Synthetic input recovery asks whether the
+posterior recovers known parameters when the data are generated by the model
+itself.  A posterior predictive check asks whether posterior samples reproduce
+the observed profile, not merely the fitted summary statistics.  Finally, the
+microphysics sensitivity screen asks which fixed cloud-wind parameters move the
+observables in directions that cannot already be mimicked by changing the three
+loadings.  The goal is therefore not to infer the largest possible parameter
+set.  The goal is to add physical degrees of freedom only when the observables
+demonstrably contain the information needed to constrain them.

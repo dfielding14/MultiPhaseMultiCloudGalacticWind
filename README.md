@@ -35,10 +35,11 @@ Repository structure:
 - `multiphasegalacticwind/observables.py`
   - Observable mappings such as `dN/dv` and velocity moments.
 - `multiphasegalacticwind/inference.py`
-  - MAP + Hessian + HMC inference utilities.
-  - Current fitted parameters are (`eta_M`, `eta_M_cold`, `eta_E`).
-  - Supported observable modes include raw moments, transformed shape moments, and binned `dN/dv`.
-  - Corner-plot and moment-fit visualization helpers.
+  - MAP + Hessian + HMC/NUTS inference utilities.
+  - Default production fitted parameters are (`eta_M`, `eta_M_cold`, `eta_E`).
+  - Supported observable modes include raw moments, transformed shape moments, binned `dN/dv`, and diagnostic log-profile likelihoods.
+  - Diagnostic coordinate/physics options include soft-capped `eta_E`, loading-ratio coordinates, support-aware `dN/dv` kernels, and restricted expanded models through `expanded_parameters="a_mix"` and `"a_mix_beta_chi"`.
+  - Corner-plot, observable-fit, and diagnostic visualization helpers.
 - `multiphasegalacticwind/config.py`
   - Configurable physics/numerical controls via `WindConfig`.
   - Unknown config keywords raise `ValueError`; documented aliases include `metallicity` and `cooling_factor`.
@@ -68,8 +69,12 @@ For implementation equations and units, see `AGENTS.md`.
 - `docs/inference_validation_roadmap.md` - landing page for the inference validation roadmap.
 - `docs/inference_validation_for_physicists.md` - inference validation guide for physicists, especially inference novices.
 - `docs/inference_validation_agent_workplan.md` - implementation workplan for agents building prior predictive checks, synthetic recovery, TRML sensitivity studies, and expanded inference.
+- `docs/inference_synthetic_recovery_report.md` - current three-parameter exact synthetic recovery status and high-energy caveats.
+- `docs/trml_sensitivity_report.md` - one-at-a-time turbulent radiative mixing layer and cloud-wind sensitivity screen.
+- `docs/inference_expanded_parameter_decision.md` - decision note selecting restricted `A_mix` as the first expanded-inference experiment.
 - `docs/jax_inference_improvements.md` - detailed JAX inference notes and improvement ideas.
 - `docs/h100_gpu_migration_playbook.md` - GPU migration notes for larger inference workloads.
+- `paper/paper2_inference_validation/paper2_inference_validation.tex` - tracked Paper 2 manuscript source.
 
 ## Units
 User-facing API (`WindModel`/`Solution`) mainly uses:
@@ -124,7 +129,7 @@ cov = build_covariance([0.8e19, 0.4e22, 0.2e25])
 fit = model.fit_posterior(
     observed_moments=observed,
     covariance_moments=cov,
-    initial_theta=(0.2, 0.2, 1.0),
+    initial_theta=(0.2, 0.2, 0.8),
     sampler="nuts",
     num_chains=4,
     hmc_num_warmup=1000,
@@ -133,7 +138,10 @@ fit = model.fit_posterior(
 print(fit.map.theta_map)
 ```
 
-Current inference deliberately fits only `eta_M`, `eta_M_cold`, and `eta_E`. The plan for adding deeper turbulent radiative mixing layer or cloud-wind interaction parameters is documented in `docs/inference_validation_for_physicists.md` and `docs/inference_validation_agent_workplan.md`; the next implementation step is a three-parameter prior predictive atlas, not a broad TRML parameter expansion.
+Current production inference deliberately fits only `eta_M`, `eta_M_cold`, and `eta_E`. The three-parameter prior predictive atlas, exact synthetic-recovery diagnostics, and one-at-a-time TRML/cloud-wind sensitivity screen are now in place at the current diagnostic level. The main caveat is the high-specific-energy `strong_wings` recovery case: it is useful as a stress test, but it is not a clean production NUTS pass and should not be used for precise claims about `eta_E` near the nominal energy ceiling.
+
+The next inference-validation step is the restricted expanded model
+`expanded_parameters="a_mix"`, where `A_mix` is a single effective multiplier on cloud mass exchange. This is intentionally not a broad fit of all turbulent radiative mixing layer closure knobs. The staged `expanded_parameters="a_mix_beta_chi"` mode is diagnostic only and should wait until the `A_mix` prior-predictive and exact-recovery gate passes. See `docs/inference_expanded_parameter_decision.md` and `docs/inference_validation_agent_workplan.md`.
 
 ## Running Tests
 From repository root:
@@ -155,6 +163,9 @@ python examples/config_customization_example.py
 python examples/event_diagnostics_example.py
 python examples/fit_observational_moments.py --help
 python examples/inference_case_study.py --quick
+python examples/inference_prior_predictive.py --num-samples 20 --no-usetex
+python examples/inference_synthetic_recovery.py --help
+python examples/trml_sensitivity_screen.py --help
 ```
 
 ## Development Priorities
